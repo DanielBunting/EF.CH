@@ -1,0 +1,322 @@
+using System.Collections.Concurrent;
+using System.Text.Json;
+using System.Text.RegularExpressions;
+using EF.CH.Storage.Internal.TypeMappings;
+using Microsoft.EntityFrameworkCore.Storage;
+
+namespace EF.CH.Storage.Internal;
+
+/// <summary>
+/// Type mapping source for ClickHouse.
+/// Maps CLR types to ClickHouse store types and vice versa.
+/// </summary>
+public partial class ClickHouseTypeMappingSource : RelationalTypeMappingSource
+{
+    /// <summary>
+    /// Direct mappings from CLR types to ClickHouse type mappings.
+    /// </summary>
+    private static readonly Dictionary<Type, RelationalTypeMapping> ClrTypeMappings = new()
+    {
+        // Signed integers
+        [typeof(sbyte)] = new ClickHouseInt8TypeMapping(),
+        [typeof(short)] = new ClickHouseInt16TypeMapping(),
+        [typeof(int)] = new ClickHouseInt32TypeMapping(),
+        [typeof(long)] = new ClickHouseInt64TypeMapping(),
+
+        // Unsigned integers
+        [typeof(byte)] = new ClickHouseUInt8TypeMapping(),
+        [typeof(ushort)] = new ClickHouseUInt16TypeMapping(),
+        [typeof(uint)] = new ClickHouseUInt32TypeMapping(),
+        [typeof(ulong)] = new ClickHouseUInt64TypeMapping(),
+
+        // Floating point
+        [typeof(float)] = new ClickHouseFloat32TypeMapping(),
+        [typeof(double)] = new ClickHouseFloat64TypeMapping(),
+
+        // Decimal (default precision)
+        [typeof(decimal)] = new ClickHouseDecimalTypeMapping(18, 4),
+
+        // String
+        [typeof(string)] = new ClickHouseStringTypeMapping(),
+
+        // Boolean
+        [typeof(bool)] = new ClickHouseBoolTypeMapping(),
+
+        // GUID
+        [typeof(Guid)] = new ClickHouseGuidTypeMapping(),
+
+        // DateTime types
+        [typeof(DateTime)] = new ClickHouseDateTimeTypeMapping(3),
+        [typeof(DateTimeOffset)] = new ClickHouseDateTimeOffsetTypeMapping(3),
+        [typeof(DateOnly)] = new ClickHouseDateTypeMapping(),
+
+        // JSON
+        [typeof(JsonElement)] = new ClickHouseTypeMapping("JSON", typeof(JsonElement)),
+        [typeof(JsonDocument)] = new ClickHouseTypeMapping("JSON", typeof(JsonDocument)),
+    };
+
+    /// <summary>
+    /// Mappings from ClickHouse store type names (case-insensitive) to type mappings.
+    /// Includes aliases for MySQL compatibility.
+    /// </summary>
+    private static readonly Dictionary<string, RelationalTypeMapping> StoreTypeMappings =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            // Signed integers
+            ["Int8"] = new ClickHouseInt8TypeMapping(),
+            ["Int16"] = new ClickHouseInt16TypeMapping(),
+            ["Int32"] = new ClickHouseInt32TypeMapping(),
+            ["Int64"] = new ClickHouseInt64TypeMapping(),
+
+            // Unsigned integers
+            ["UInt8"] = new ClickHouseUInt8TypeMapping(),
+            ["UInt16"] = new ClickHouseUInt16TypeMapping(),
+            ["UInt32"] = new ClickHouseUInt32TypeMapping(),
+            ["UInt64"] = new ClickHouseUInt64TypeMapping(),
+
+            // MySQL-style aliases
+            ["TINYINT"] = new ClickHouseInt8TypeMapping(),
+            ["SMALLINT"] = new ClickHouseInt16TypeMapping(),
+            ["INT"] = new ClickHouseInt32TypeMapping(),
+            ["INTEGER"] = new ClickHouseInt32TypeMapping(),
+            ["BIGINT"] = new ClickHouseInt64TypeMapping(),
+
+            // Floating point
+            ["Float32"] = new ClickHouseFloat32TypeMapping(),
+            ["Float64"] = new ClickHouseFloat64TypeMapping(),
+            ["FLOAT"] = new ClickHouseFloat32TypeMapping(),
+            ["DOUBLE"] = new ClickHouseFloat64TypeMapping(),
+
+            // String types
+            ["String"] = new ClickHouseStringTypeMapping(),
+            ["VARCHAR"] = new ClickHouseStringTypeMapping(),
+            ["TEXT"] = new ClickHouseStringTypeMapping(),
+            ["CHAR"] = new ClickHouseStringTypeMapping(),
+
+            // Boolean
+            ["Bool"] = new ClickHouseBoolTypeMapping(),
+            ["Boolean"] = new ClickHouseBoolTypeMapping(),
+
+            // UUID
+            ["UUID"] = new ClickHouseGuidTypeMapping(),
+
+            // Date/Time
+            ["Date"] = new ClickHouseDateTypeMapping(),
+            ["Date32"] = new ClickHouseDate32TypeMapping(),
+
+            // JSON
+            ["JSON"] = new ClickHouseTypeMapping("JSON", typeof(JsonElement)),
+        };
+
+    /// <summary>
+    /// Cache for dynamically created type mappings.
+    /// </summary>
+    private readonly ConcurrentDictionary<string, RelationalTypeMapping?> _storeTypeMappingCache = new();
+
+    public ClickHouseTypeMappingSource(TypeMappingSourceDependencies dependencies,
+        RelationalTypeMappingSourceDependencies relationalDependencies)
+        : base(dependencies, relationalDependencies)
+    {
+    }
+
+    /// <summary>
+    /// Finds a type mapping for the given CLR type.
+    /// </summary>
+    protected override RelationalTypeMapping? FindMapping(in RelationalTypeMappingInfo mappingInfo)
+    {
+        var clrType = mappingInfo.ClrType;
+        var storeTypeName = mappingInfo.StoreTypeName;
+
+        // If we have a store type name, try to parse and match it
+        if (storeTypeName is not null)
+        {
+            var mapping = FindMappingByStoreType(storeTypeName, clrType);
+            if (mapping is not null)
+            {
+                return mapping;
+            }
+        }
+
+        // If we have a CLR type, use the direct mapping
+        if (clrType is not null)
+        {
+            // Handle nullable types by unwrapping
+            var underlyingType = Nullable.GetUnderlyingType(clrType) ?? clrType;
+
+            if (ClrTypeMappings.TryGetValue(underlyingType, out var mapping))
+            {
+                // For nullable types, wrap in Nullable() in ClickHouse
+                if (Nullable.GetUnderlyingType(clrType) is not null)
+                {
+                    return mapping.WithStoreTypeAndSize($"Nullable({mapping.StoreType})", null);
+                }
+                return mapping;
+            }
+
+            // Handle enums as their underlying type
+            if (underlyingType.IsEnum)
+            {
+                var enumUnderlyingType = Enum.GetUnderlyingType(underlyingType);
+                if (ClrTypeMappings.TryGetValue(enumUnderlyingType, out var enumMapping))
+                {
+                    return enumMapping;
+                }
+            }
+        }
+
+        return base.FindMapping(mappingInfo);
+    }
+
+    /// <summary>
+    /// Finds a type mapping by parsing the ClickHouse store type name.
+    /// </summary>
+    private RelationalTypeMapping? FindMappingByStoreType(string storeTypeName, Type? clrType)
+    {
+        // Check cache first
+        if (_storeTypeMappingCache.TryGetValue(storeTypeName, out var cached))
+        {
+            return cached;
+        }
+
+        var mapping = ParseStoreType(storeTypeName, clrType);
+        _storeTypeMappingCache.TryAdd(storeTypeName, mapping);
+        return mapping;
+    }
+
+    /// <summary>
+    /// Parses a ClickHouse store type name and returns the appropriate mapping.
+    /// </summary>
+    private RelationalTypeMapping? ParseStoreType(string storeTypeName, Type? clrType)
+    {
+        // Trim whitespace
+        storeTypeName = storeTypeName.Trim();
+
+        // Check simple types first
+        if (StoreTypeMappings.TryGetValue(storeTypeName, out var simpleMapping))
+        {
+            return simpleMapping;
+        }
+
+        // Handle Nullable(T)
+        var nullableMatch = NullableRegex().Match(storeTypeName);
+        if (nullableMatch.Success)
+        {
+            var innerType = nullableMatch.Groups[1].Value;
+            var innerMapping = ParseStoreType(innerType, clrType);
+            if (innerMapping is not null)
+            {
+                return innerMapping.WithStoreTypeAndSize($"Nullable({innerMapping.StoreType})", null);
+            }
+        }
+
+        // Handle DateTime64(precision) or DateTime64(precision, timezone)
+        var dateTime64Match = DateTime64Regex().Match(storeTypeName);
+        if (dateTime64Match.Success)
+        {
+            var precision = int.Parse(dateTime64Match.Groups[1].Value);
+            var timezone = dateTime64Match.Groups.Count > 2 && dateTime64Match.Groups[2].Success
+                ? dateTime64Match.Groups[2].Value.Trim('\'', '"')
+                : null;
+
+            return new ClickHouseDateTimeTypeMapping(precision, timezone);
+        }
+
+        // Handle Decimal(P, S)
+        var decimalMatch = DecimalRegex().Match(storeTypeName);
+        if (decimalMatch.Success)
+        {
+            var precision = int.Parse(decimalMatch.Groups[1].Value);
+            var scale = int.Parse(decimalMatch.Groups[2].Value);
+            return new ClickHouseDecimalTypeMapping(precision, scale);
+        }
+
+        // Handle Decimal32(S), Decimal64(S), Decimal128(S)
+        var decimal32Match = Decimal32Regex().Match(storeTypeName);
+        if (decimal32Match.Success)
+        {
+            var scale = int.Parse(decimal32Match.Groups[1].Value);
+            return new ClickHouseDecimal32TypeMapping(scale);
+        }
+
+        var decimal64Match = Decimal64Regex().Match(storeTypeName);
+        if (decimal64Match.Success)
+        {
+            var scale = int.Parse(decimal64Match.Groups[1].Value);
+            return new ClickHouseDecimal64TypeMapping(scale);
+        }
+
+        var decimal128Match = Decimal128Regex().Match(storeTypeName);
+        if (decimal128Match.Success)
+        {
+            var scale = int.Parse(decimal128Match.Groups[1].Value);
+            return new ClickHouseDecimal128TypeMapping(scale);
+        }
+
+        // Handle FixedString(N)
+        var fixedStringMatch = FixedStringRegex().Match(storeTypeName);
+        if (fixedStringMatch.Success)
+        {
+            var length = int.Parse(fixedStringMatch.Groups[1].Value);
+            return new ClickHouseFixedStringTypeMapping(length);
+        }
+
+        // Handle LowCardinality(T)
+        var lowCardinalityMatch = LowCardinalityRegex().Match(storeTypeName);
+        if (lowCardinalityMatch.Success)
+        {
+            var innerType = lowCardinalityMatch.Groups[1].Value;
+            var innerMapping = ParseStoreType(innerType, clrType);
+            if (innerMapping is not null)
+            {
+                // LowCardinality doesn't change the CLR type, just the storage
+                return innerMapping.WithStoreTypeAndSize($"LowCardinality({innerMapping.StoreType})", null);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Gets the relational type mapping for a given CLR type.
+    /// </summary>
+    public RelationalTypeMapping? GetMapping(Type type)
+    {
+        var underlyingType = Nullable.GetUnderlyingType(type) ?? type;
+
+        if (ClrTypeMappings.TryGetValue(underlyingType, out var mapping))
+        {
+            if (Nullable.GetUnderlyingType(type) is not null)
+            {
+                return mapping.WithStoreTypeAndSize($"Nullable({mapping.StoreType})", null);
+            }
+            return mapping;
+        }
+
+        return null;
+    }
+
+    // Regex patterns for parsing ClickHouse type names
+    [GeneratedRegex(@"^Nullable\((.+)\)$", RegexOptions.IgnoreCase)]
+    private static partial Regex NullableRegex();
+
+    [GeneratedRegex(@"^DateTime64\((\d+)(?:\s*,\s*'?([^']+)'?)?\)$", RegexOptions.IgnoreCase)]
+    private static partial Regex DateTime64Regex();
+
+    [GeneratedRegex(@"^Decimal\((\d+)\s*,\s*(\d+)\)$", RegexOptions.IgnoreCase)]
+    private static partial Regex DecimalRegex();
+
+    [GeneratedRegex(@"^Decimal32\((\d+)\)$", RegexOptions.IgnoreCase)]
+    private static partial Regex Decimal32Regex();
+
+    [GeneratedRegex(@"^Decimal64\((\d+)\)$", RegexOptions.IgnoreCase)]
+    private static partial Regex Decimal64Regex();
+
+    [GeneratedRegex(@"^Decimal128\((\d+)\)$", RegexOptions.IgnoreCase)]
+    private static partial Regex Decimal128Regex();
+
+    [GeneratedRegex(@"^FixedString\((\d+)\)$", RegexOptions.IgnoreCase)]
+    private static partial Regex FixedStringRegex();
+
+    [GeneratedRegex(@"^LowCardinality\((.+)\)$", RegexOptions.IgnoreCase)]
+    private static partial Regex LowCardinalityRegex();
+}
