@@ -54,4 +54,28 @@ public static class ClickHouseAnnotationNames
     /// The sign column for CollapsingMergeTree.
     /// </summary>
     public const string SignColumn = Prefix + "SignColumn";
+
+    #region Materialized Views
+
+    /// <summary>
+    /// Marks this entity as a materialized view.
+    /// </summary>
+    public const string MaterializedView = Prefix + "MaterializedView";
+
+    /// <summary>
+    /// The source table name for the materialized view.
+    /// </summary>
+    public const string MaterializedViewSource = Prefix + "MaterializedViewSource";
+
+    /// <summary>
+    /// The SELECT query for the materialized view.
+    /// </summary>
+    public const string MaterializedViewQuery = Prefix + "MaterializedViewQuery";
+
+    /// <summary>
+    /// Whether to use POPULATE when creating the materialized view.
+    /// </summary>
+    public const string MaterializedViewPopulate = Prefix + "MaterializedViewPopulate";
+
+    #endregion
 }

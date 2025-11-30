@@ -29,6 +29,7 @@ public class ClickHouseOptionsExtension : RelationalOptionsExtension
 {
     private bool _useQuerySplitting;
     private bool _useKeylessEntitiesByDefault;
+    private ClickHouseDeleteStrategy _deleteStrategy = ClickHouseDeleteStrategy.Lightweight;
     private DbContextOptionsExtensionInfo? _info;
 
     /// <summary>
@@ -46,6 +47,7 @@ public class ClickHouseOptionsExtension : RelationalOptionsExtension
     {
         _useQuerySplitting = copyFrom._useQuerySplitting;
         _useKeylessEntitiesByDefault = copyFrom._useKeylessEntitiesByDefault;
+        _deleteStrategy = copyFrom._deleteStrategy;
     }
 
     /// <summary>
@@ -65,6 +67,12 @@ public class ClickHouseOptionsExtension : RelationalOptionsExtension
     /// This is useful for append-only ClickHouse tables where EF Core change tracking isn't needed.
     /// </summary>
     public virtual bool UseKeylessEntitiesByDefault => _useKeylessEntitiesByDefault;
+
+    /// <summary>
+    /// Gets the DELETE strategy to use for ClickHouse operations.
+    /// Defaults to <see cref="ClickHouseDeleteStrategy.Lightweight"/>.
+    /// </summary>
+    public virtual ClickHouseDeleteStrategy DeleteStrategy => _deleteStrategy;
 
     /// <summary>
     /// Creates a copy with the specified connection string.
@@ -109,6 +117,17 @@ public class ClickHouseOptionsExtension : RelationalOptionsExtension
     {
         var clone = (ClickHouseOptionsExtension)Clone();
         clone._useKeylessEntitiesByDefault = useKeylessEntities;
+        return clone;
+    }
+
+    /// <summary>
+    /// Creates a copy with the specified delete strategy.
+    /// </summary>
+    /// <param name="deleteStrategy">The delete strategy to use.</param>
+    public virtual ClickHouseOptionsExtension WithDeleteStrategy(ClickHouseDeleteStrategy deleteStrategy)
+    {
+        var clone = (ClickHouseOptionsExtension)Clone();
+        clone._deleteStrategy = deleteStrategy;
         return clone;
     }
 
@@ -202,6 +221,7 @@ public class ClickHouseOptionsExtension : RelationalOptionsExtension
             hashCode.Add(base.GetServiceProviderHashCode());
             hashCode.Add(Extension.UseQuerySplitting);
             hashCode.Add(Extension.UseKeylessEntitiesByDefault);
+            hashCode.Add(Extension.DeleteStrategy);
             return hashCode.ToHashCode();
         }
 
@@ -209,7 +229,8 @@ public class ClickHouseOptionsExtension : RelationalOptionsExtension
             => other is ExtensionInfo otherInfo
                && base.ShouldUseSameServiceProvider(other)
                && Extension.UseQuerySplitting == otherInfo.Extension.UseQuerySplitting
-               && Extension.UseKeylessEntitiesByDefault == otherInfo.Extension.UseKeylessEntitiesByDefault;
+               && Extension.UseKeylessEntitiesByDefault == otherInfo.Extension.UseKeylessEntitiesByDefault
+               && Extension.DeleteStrategy == otherInfo.Extension.DeleteStrategy;
 
         public override void PopulateDebugInfo(IDictionary<string, string> debugInfo)
         {
@@ -219,6 +240,7 @@ public class ClickHouseOptionsExtension : RelationalOptionsExtension
             debugInfo["ClickHouse:QuerySplitting"] = Extension.UseQuerySplitting.ToString();
             debugInfo["ClickHouse:KeylessEntitiesByDefault"] = Extension.UseKeylessEntitiesByDefault.ToString();
             debugInfo["ClickHouse:MaxBatchSize"] = Extension.MaxBatchSize.ToString()!;
+            debugInfo["ClickHouse:DeleteStrategy"] = Extension.DeleteStrategy.ToString();
         }
     }
 }

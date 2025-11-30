@@ -13,6 +13,7 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     private readonly ISqlGenerationHelper _sqlGenerationHelper;
     private readonly IRelationalTypeMappingSource _typeMappingSource;
     private readonly HashSet<string> _visitedParameters = new();
+    private bool _inDeleteContext;
 
     public ClickHouseQuerySqlGenerator(
         QuerySqlGeneratorDependencies dependencies,
@@ -141,6 +142,55 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     {
         // Handle ClickHouse-specific function naming
         return base.VisitSqlFunction(sqlFunctionExpression);
+    }
+
+    /// <summary>
+    /// Generates DELETE statement for ClickHouse.
+    /// ClickHouse does not support table aliases in DELETE statements.
+    /// </summary>
+    protected override Expression VisitDelete(DeleteExpression deleteExpression)
+    {
+        var selectExpression = deleteExpression.SelectExpression;
+        var table = deleteExpression.Table;
+
+        // ClickHouse DELETE syntax: DELETE FROM "table" WHERE ...
+        // Note: No table alias support
+        Sql.Append("DELETE FROM ");
+        Sql.Append(_sqlGenerationHelper.DelimitIdentifier(table.Name, table.Schema));
+
+        if (selectExpression.Predicate != null)
+        {
+            Sql.AppendLine().Append("WHERE ");
+
+            // Set flag to suppress table qualifiers in column references
+            _inDeleteContext = true;
+            try
+            {
+                Visit(selectExpression.Predicate);
+            }
+            finally
+            {
+                _inDeleteContext = false;
+            }
+        }
+
+        return deleteExpression;
+    }
+
+    /// <summary>
+    /// Generates column reference.
+    /// In DELETE context, omits table alias since ClickHouse DELETE doesn't support aliases.
+    /// </summary>
+    protected override Expression VisitColumn(ColumnExpression columnExpression)
+    {
+        if (_inDeleteContext)
+        {
+            // In DELETE context, use unqualified column name
+            Sql.Append(_sqlGenerationHelper.DelimitIdentifier(columnExpression.Name));
+            return columnExpression;
+        }
+
+        return base.VisitColumn(columnExpression);
     }
 }
 

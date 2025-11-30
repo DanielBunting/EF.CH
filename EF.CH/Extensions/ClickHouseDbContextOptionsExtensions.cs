@@ -195,6 +195,30 @@ public class ClickHouseDbContextOptionsBuilder
         return this;
     }
 
+    /// <summary>
+    /// Configures the DELETE strategy for ClickHouse operations.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Lightweight</b> (default): Uses <c>DELETE FROM ... WHERE ...</c> syntax.
+    /// Rows are marked as deleted immediately and filtered from queries.
+    /// Physical deletion occurs during background merges. Returns affected row count.
+    /// </para>
+    /// <para>
+    /// <b>Mutation</b>: Uses <c>ALTER TABLE ... DELETE WHERE ...</c> syntax.
+    /// Asynchronous operation that rewrites data parts. Does not return affected row count.
+    /// Use for bulk maintenance operations only.
+    /// </para>
+    /// </remarks>
+    /// <param name="strategy">The delete strategy to use.</param>
+    /// <returns>The same builder instance for method chaining.</returns>
+    public virtual ClickHouseDbContextOptionsBuilder UseDeleteStrategy(ClickHouseDeleteStrategy strategy)
+    {
+        var extension = GetOrCreateExtension().WithDeleteStrategy(strategy);
+        ((IDbContextOptionsBuilderInfrastructure)_optionsBuilder).AddOrUpdateExtension(extension);
+        return this;
+    }
+
     private ClickHouseOptionsExtension GetOrCreateExtension()
         => _optionsBuilder.Options.FindExtension<ClickHouseOptionsExtension>()
            ?? new ClickHouseOptionsExtension();

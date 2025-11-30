@@ -1,4 +1,6 @@
+using System.Linq.Expressions;
 using EF.CH.Metadata;
+using EF.CH.Query.Internal;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Migrations;
@@ -22,7 +24,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
     }
 
     /// <summary>
-    /// Generates CREATE TABLE with ClickHouse ENGINE clause.
+    /// Generates CREATE TABLE or CREATE MATERIALIZED VIEW with ClickHouse ENGINE clause.
     /// </summary>
     protected override void Generate(
         CreateTableOperation operation,
@@ -32,6 +34,21 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
     {
         ArgumentNullException.ThrowIfNull(operation);
         ArgumentNullException.ThrowIfNull(builder);
+
+        // Check if this is a materialized view
+        var entityType = model?.GetEntityTypes()
+            .FirstOrDefault(e => e.GetTableName() == operation.Name
+                              && (e.GetSchema() ?? model.GetDefaultSchema()) == operation.Schema);
+
+        var isMaterializedView = GetAnnotation<bool?>(operation, ClickHouseAnnotationNames.MaterializedView)
+                              ?? GetEntityAnnotation<bool?>(entityType, ClickHouseAnnotationNames.MaterializedView)
+                              ?? false;
+
+        if (isMaterializedView)
+        {
+            GenerateMaterializedView(operation, entityType, model, builder, terminate);
+            return;
+        }
 
         builder
             .Append("CREATE TABLE ")
@@ -53,6 +70,151 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         {
             builder.AppendLine(Dependencies.SqlGenerationHelper.StatementTerminator);
             EndStatement(builder);
+        }
+    }
+
+    /// <summary>
+    /// Generates CREATE MATERIALIZED VIEW statement.
+    /// </summary>
+    private void GenerateMaterializedView(
+        CreateTableOperation operation,
+        IEntityType? entityType,
+        IModel? model,
+        MigrationCommandListBuilder builder,
+        bool terminate)
+    {
+        var viewQuery = GetAnnotation<string>(operation, ClickHouseAnnotationNames.MaterializedViewQuery)
+                     ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.MaterializedViewQuery);
+        var populate = GetAnnotation<bool?>(operation, ClickHouseAnnotationNames.MaterializedViewPopulate)
+                    ?? GetEntityAnnotation<bool?>(entityType, ClickHouseAnnotationNames.MaterializedViewPopulate)
+                    ?? false;
+
+        // If no raw SQL query, check for LINQ expression
+        if (string.IsNullOrEmpty(viewQuery) && entityType != null && model != null)
+        {
+            viewQuery = TranslateMaterializedViewExpression(entityType, model);
+        }
+
+        if (string.IsNullOrEmpty(viewQuery))
+        {
+            throw new InvalidOperationException(
+                $"Materialized view '{operation.Name}' must have a view query defined via AsMaterializedViewRaw() or AsMaterializedView().");
+        }
+
+        builder
+            .Append("CREATE MATERIALIZED VIEW ")
+            .Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name, operation.Schema));
+
+        builder.AppendLine();
+
+        // Add ENGINE clause (materialized views need storage engine too)
+        GenerateEngineClauseForView(operation, entityType, model, builder);
+
+        // POPULATE clause - backfills existing data from source table
+        if (populate)
+        {
+            builder.AppendLine();
+            builder.Append("POPULATE");
+        }
+
+        // AS SELECT query
+        builder.AppendLine();
+        builder.Append("AS ");
+        builder.Append(viewQuery);
+
+        if (terminate)
+        {
+            builder.AppendLine(Dependencies.SqlGenerationHelper.StatementTerminator);
+            EndStatement(builder);
+        }
+    }
+
+    /// <summary>
+    /// Generates the ENGINE clause for materialized views (without column definitions).
+    /// </summary>
+    private void GenerateEngineClauseForView(
+        CreateTableOperation operation,
+        IEntityType? entityType,
+        IModel? model,
+        MigrationCommandListBuilder builder)
+    {
+        var engine = GetAnnotation<string>(operation, ClickHouseAnnotationNames.Engine)
+                  ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.Engine)
+                  ?? "MergeTree";
+        var orderBy = GetAnnotation<string[]>(operation, ClickHouseAnnotationNames.OrderBy)
+                   ?? GetEntityAnnotation<string[]>(entityType, ClickHouseAnnotationNames.OrderBy);
+        var partitionBy = GetAnnotation<string>(operation, ClickHouseAnnotationNames.PartitionBy)
+                       ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.PartitionBy);
+        var primaryKey = GetAnnotation<string[]>(operation, ClickHouseAnnotationNames.PrimaryKey)
+                      ?? GetEntityAnnotation<string[]>(entityType, ClickHouseAnnotationNames.PrimaryKey);
+        var ttl = GetAnnotation<string>(operation, ClickHouseAnnotationNames.Ttl)
+               ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.Ttl);
+        var versionColumn = GetAnnotation<string>(operation, ClickHouseAnnotationNames.VersionColumn)
+                         ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.VersionColumn);
+        var settings = GetAnnotation<IDictionary<string, string>>(operation, ClickHouseAnnotationNames.Settings)
+                    ?? GetEntityAnnotation<IDictionary<string, string>>(entityType, ClickHouseAnnotationNames.Settings);
+
+        builder.Append("ENGINE = ");
+
+        // Generate engine with parameters
+        switch (engine)
+        {
+            case "ReplacingMergeTree" when !string.IsNullOrEmpty(versionColumn):
+                builder.Append($"ReplacingMergeTree({Dependencies.SqlGenerationHelper.DelimitIdentifier(versionColumn)})");
+                break;
+            default:
+                builder.Append(engine);
+                if (engine.EndsWith("MergeTree", StringComparison.OrdinalIgnoreCase))
+                {
+                    builder.Append("()");
+                }
+                break;
+        }
+
+        // PARTITION BY
+        if (!string.IsNullOrEmpty(partitionBy))
+        {
+            builder.AppendLine();
+            builder.Append($"PARTITION BY {partitionBy}");
+        }
+
+        // ORDER BY (required for MergeTree family)
+        if (orderBy is { Length: > 0 })
+        {
+            builder.AppendLine();
+            builder.Append("ORDER BY (");
+            builder.Append(string.Join(", ", orderBy.Select(c => Dependencies.SqlGenerationHelper.DelimitIdentifier(c))));
+            builder.Append(")");
+        }
+        else if (engine.EndsWith("MergeTree", StringComparison.OrdinalIgnoreCase))
+        {
+            // Default ORDER BY tuple() for views without explicit ordering
+            builder.AppendLine();
+            builder.Append("ORDER BY tuple()");
+        }
+
+        // PRIMARY KEY (optional, defaults to ORDER BY)
+        if (primaryKey is { Length: > 0 })
+        {
+            builder.AppendLine();
+            builder.Append("PRIMARY KEY (");
+            builder.Append(string.Join(", ", primaryKey.Select(c => Dependencies.SqlGenerationHelper.DelimitIdentifier(c))));
+            builder.Append(")");
+        }
+
+        // TTL
+        if (!string.IsNullOrEmpty(ttl))
+        {
+            builder.AppendLine();
+            builder.Append($"TTL {ttl}");
+        }
+
+        // SETTINGS
+        if (settings is { Count: > 0 })
+        {
+            builder.AppendLine();
+            builder.Append("SETTINGS ");
+            builder.Append(string.Join(", ", settings.Select(kvp => $"{kvp.Key} = {kvp.Value}")));
         }
     }
 
@@ -522,6 +684,56 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         {
             builder.AppendLine(Dependencies.SqlGenerationHelper.StatementTerminator);
             EndStatement(builder);
+        }
+    }
+
+    /// <summary>
+    /// Translates a stored LINQ expression to ClickHouse SQL for materialized views.
+    /// </summary>
+    private static string? TranslateMaterializedViewExpression(IEntityType entityType, IModel model)
+    {
+        const string expressionAnnotation = "ClickHouse:MaterializedViewExpression";
+
+        var annotation = entityType.FindAnnotation(expressionAnnotation);
+        if (annotation?.Value is not LambdaExpression expression)
+            return null;
+
+        var sourceTableName = GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.MaterializedViewSource);
+        if (string.IsNullOrEmpty(sourceTableName))
+            return null;
+
+        // Get the source and result types from the expression
+        var funcType = expression.Type;
+        if (!funcType.IsGenericType || funcType.GetGenericTypeDefinition() != typeof(Func<,>))
+            return null;
+
+        var genericArgs = funcType.GetGenericArguments();
+        // genericArgs[0] = IQueryable<TSource>, genericArgs[1] = IQueryable<TResult>
+        var sourceQueryableType = genericArgs[0];
+        var resultQueryableType = genericArgs[1];
+
+        if (!sourceQueryableType.IsGenericType || !resultQueryableType.IsGenericType)
+            return null;
+
+        var sourceType = sourceQueryableType.GetGenericArguments()[0];
+
+        // Create the translator and translate the expression
+        var translator = new MaterializedViewSqlTranslator(model, sourceTableName);
+
+        // Use reflection to call the generic Translate method
+        var translateMethod = typeof(MaterializedViewSqlTranslator)
+            .GetMethod(nameof(MaterializedViewSqlTranslator.Translate))!
+            .MakeGenericMethod(sourceType, entityType.ClrType);
+
+        try
+        {
+            return (string?)translateMethod.Invoke(translator, [expression]);
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException(
+                $"Failed to translate materialized view expression for entity '{entityType.Name}': {ex.Message}",
+                ex);
         }
     }
 
