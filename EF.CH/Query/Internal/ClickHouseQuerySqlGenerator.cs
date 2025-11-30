@@ -12,6 +12,7 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
 {
     private readonly ISqlGenerationHelper _sqlGenerationHelper;
     private readonly IRelationalTypeMappingSource _typeMappingSource;
+    private readonly HashSet<string> _visitedParameters = new();
 
     public ClickHouseQuerySqlGenerator(
         QuerySqlGeneratorDependencies dependencies,
@@ -39,6 +40,16 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
             storeType.EndsWith(")"))
         {
             storeType = storeType.Substring(9, storeType.Length - 10);
+        }
+
+        // Register the parameter with EF Core's command builder (only once per parameter name)
+        if (_visitedParameters.Add(parameterName) && typeMapping != null)
+        {
+            Sql.AddParameter(
+                parameterName,
+                _sqlGenerationHelper.GenerateParameterName(parameterName),
+                typeMapping,
+                sqlParameterExpression.IsNullable);
         }
 
         // Generate ClickHouse parameter format: {name:Type}

@@ -1,3 +1,5 @@
+using System.Data.Common;
+using ClickHouse.Client.ADO;
 using Microsoft.EntityFrameworkCore.Storage;
 
 namespace EF.CH.Storage.Internal;
@@ -5,6 +7,7 @@ namespace EF.CH.Storage.Internal;
 /// <summary>
 /// ClickHouse implementation of IRelationalDatabaseCreator.
 /// ClickHouse databases are created automatically, so most operations are no-ops or simplified.
+/// ClickHouse does not support transactions, so we execute DDL commands directly.
 /// </summary>
 public class ClickHouseDatabaseCreator : RelationalDatabaseCreator
 {
@@ -16,6 +19,21 @@ public class ClickHouseDatabaseCreator : RelationalDatabaseCreator
         : base(dependencies)
     {
         _connection = connection;
+    }
+
+    /// <summary>
+    /// Creates a connection to the server without specifying a database,
+    /// for operations like CREATE/DROP DATABASE.
+    /// </summary>
+    private DbConnection CreateMasterConnection()
+    {
+        var connectionString = _connection.ConnectionString;
+        // Replace the Database parameter to connect to system database
+        var builder = new ClickHouseConnectionStringBuilder(connectionString)
+        {
+            Database = "system"
+        };
+        return new ClickHouseConnection(builder.ToString());
     }
 
     public override bool Exists()
@@ -88,88 +106,137 @@ public class ClickHouseDatabaseCreator : RelationalDatabaseCreator
 
     public override void Create()
     {
-        // ClickHouse databases are typically created via connection string or externally
-        // For now, we'll try to create it using a command
-        using var command = _connection.DbConnection.CreateCommand();
-
         var database = _connection.DbConnection.Database;
-        if (!string.IsNullOrEmpty(database))
-        {
-            command.CommandText = $"CREATE DATABASE IF NOT EXISTS \"{database}\"";
+        if (string.IsNullOrEmpty(database))
+            return;
 
-            // Need to connect to default database first
-            _connection.Open();
-            try
-            {
-                command.ExecuteNonQuery();
-            }
-            finally
-            {
-                _connection.Close();
-            }
+        // Use a master connection (connected to 'system' database) to create the target database
+        using var masterConnection = CreateMasterConnection();
+        using var command = masterConnection.CreateCommand();
+        command.CommandText = $"CREATE DATABASE IF NOT EXISTS \"{database}\"";
+
+        masterConnection.Open();
+        try
+        {
+            command.ExecuteNonQuery();
+        }
+        finally
+        {
+            masterConnection.Close();
         }
     }
 
     public override async Task CreateAsync(CancellationToken cancellationToken = default)
     {
-        await using var command = _connection.DbConnection.CreateCommand();
-
         var database = _connection.DbConnection.Database;
-        if (!string.IsNullOrEmpty(database))
-        {
-            command.CommandText = $"CREATE DATABASE IF NOT EXISTS \"{database}\"";
+        if (string.IsNullOrEmpty(database))
+            return;
 
-            await _connection.OpenAsync(cancellationToken);
-            try
-            {
-                await command.ExecuteNonQueryAsync(cancellationToken);
-            }
-            finally
-            {
-                await _connection.CloseAsync();
-            }
+        // Use a master connection (connected to 'system' database) to create the target database
+        await using var masterConnection = CreateMasterConnection();
+        await using var command = masterConnection.CreateCommand();
+        command.CommandText = $"CREATE DATABASE IF NOT EXISTS \"{database}\"";
+
+        await masterConnection.OpenAsync(cancellationToken);
+        try
+        {
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        finally
+        {
+            await masterConnection.CloseAsync();
         }
     }
 
     public override void Delete()
     {
-        using var command = _connection.DbConnection.CreateCommand();
-
         var database = _connection.DbConnection.Database;
-        if (!string.IsNullOrEmpty(database))
-        {
-            command.CommandText = $"DROP DATABASE IF EXISTS \"{database}\"";
+        if (string.IsNullOrEmpty(database))
+            return;
 
-            _connection.Open();
-            try
-            {
-                command.ExecuteNonQuery();
-            }
-            finally
-            {
-                _connection.Close();
-            }
+        // Use a master connection (connected to 'system' database) to drop the target database
+        using var masterConnection = CreateMasterConnection();
+        using var command = masterConnection.CreateCommand();
+        command.CommandText = $"DROP DATABASE IF EXISTS \"{database}\"";
+
+        masterConnection.Open();
+        try
+        {
+            command.ExecuteNonQuery();
+        }
+        finally
+        {
+            masterConnection.Close();
         }
     }
 
     public override async Task DeleteAsync(CancellationToken cancellationToken = default)
     {
-        await using var command = _connection.DbConnection.CreateCommand();
-
         var database = _connection.DbConnection.Database;
-        if (!string.IsNullOrEmpty(database))
-        {
-            command.CommandText = $"DROP DATABASE IF EXISTS \"{database}\"";
+        if (string.IsNullOrEmpty(database))
+            return;
 
-            await _connection.OpenAsync(cancellationToken);
-            try
+        // Use a master connection (connected to 'system' database) to drop the target database
+        await using var masterConnection = CreateMasterConnection();
+        await using var command = masterConnection.CreateCommand();
+        command.CommandText = $"DROP DATABASE IF EXISTS \"{database}\"";
+
+        await masterConnection.OpenAsync(cancellationToken);
+        try
+        {
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        finally
+        {
+            await masterConnection.CloseAsync();
+        }
+    }
+
+    /// <summary>
+    /// Creates all tables for the current model in the database.
+    /// ClickHouse does not support transactions, so we execute each command directly.
+    /// </summary>
+    public override void CreateTables()
+    {
+        var commands = GetCreateTablesCommands();
+
+        _connection.Open();
+        try
+        {
+            foreach (var command in commands)
             {
-                await command.ExecuteNonQueryAsync(cancellationToken);
+                using var dbCommand = _connection.DbConnection.CreateCommand();
+                dbCommand.CommandText = command.CommandText;
+                dbCommand.ExecuteNonQuery();
             }
-            finally
+        }
+        finally
+        {
+            _connection.Close();
+        }
+    }
+
+    /// <summary>
+    /// Asynchronously creates all tables for the current model in the database.
+    /// ClickHouse does not support transactions, so we execute each command directly.
+    /// </summary>
+    public override async Task CreateTablesAsync(CancellationToken cancellationToken = default)
+    {
+        var commands = GetCreateTablesCommands();
+
+        await _connection.OpenAsync(cancellationToken);
+        try
+        {
+            foreach (var command in commands)
             {
-                await _connection.CloseAsync();
+                await using var dbCommand = _connection.DbConnection.CreateCommand();
+                dbCommand.CommandText = command.CommandText;
+                await dbCommand.ExecuteNonQueryAsync(cancellationToken);
             }
+        }
+        finally
+        {
+            await _connection.CloseAsync();
         }
     }
 }
