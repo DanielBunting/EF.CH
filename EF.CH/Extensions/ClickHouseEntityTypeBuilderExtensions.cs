@@ -280,6 +280,171 @@ public static class ClickHouseEntityTypeBuilderExtensions
         return builder.UseAggregatingMergeTree(columns);
     }
 
+    #region CollapsingMergeTree
+
+    /// <summary>
+    /// Configures the entity to use a CollapsingMergeTree engine.
+    /// </summary>
+    /// <remarks>
+    /// CollapsingMergeTree is designed to track state changes where rows can be "cancelled"
+    /// by inserting a row with the opposite sign. During background merges, ClickHouse
+    /// removes pairs of rows with opposite signs and matching ORDER BY keys.
+    ///
+    /// The sign column must be Int8 with values +1 (state row) or -1 (cancel row).
+    /// </remarks>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="signColumnExpression">Expression selecting the sign column (Int8/sbyte with +1 or -1).</param>
+    /// <param name="orderByExpression">Expression selecting the ORDER BY columns.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    /// <example>
+    /// <code>
+    /// entity.UseCollapsingMergeTree(
+    ///     signColumn: x => x.Sign,
+    ///     orderBy: x => new { x.UserId, x.EventTime });
+    /// </code>
+    /// </example>
+    public static EntityTypeBuilder<TEntity> UseCollapsingMergeTree<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        Expression<Func<TEntity, sbyte>> signColumnExpression,
+        Expression<Func<TEntity, object>> orderByExpression)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(signColumnExpression);
+        ArgumentNullException.ThrowIfNull(orderByExpression);
+
+        var signColumn = ExpressionExtensions.GetPropertyName(signColumnExpression);
+        var orderByColumns = ExpressionExtensions.GetPropertyNames(orderByExpression);
+
+        if (orderByColumns.Length == 0)
+        {
+            throw new ArgumentException("At least one ORDER BY column is required for CollapsingMergeTree.", nameof(orderByExpression));
+        }
+
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, "CollapsingMergeTree");
+        builder.HasAnnotation(ClickHouseAnnotationNames.SignColumn, signColumn);
+        builder.HasAnnotation(ClickHouseAnnotationNames.OrderBy, orderByColumns);
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Configures the entity to use a CollapsingMergeTree engine with string column names.
+    /// </summary>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="signColumn">The name of the sign column.</param>
+    /// <param name="orderByColumns">The columns for ORDER BY clause.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    public static EntityTypeBuilder UseCollapsingMergeTree(
+        this EntityTypeBuilder builder,
+        string signColumn,
+        params string[] orderByColumns)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(signColumn);
+        ArgumentNullException.ThrowIfNull(orderByColumns);
+
+        if (orderByColumns.Length == 0)
+        {
+            throw new ArgumentException("At least one ORDER BY column is required for CollapsingMergeTree.", nameof(orderByColumns));
+        }
+
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, "CollapsingMergeTree");
+        builder.HasAnnotation(ClickHouseAnnotationNames.SignColumn, signColumn);
+        builder.HasAnnotation(ClickHouseAnnotationNames.OrderBy, orderByColumns);
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Configures the entity to use a VersionedCollapsingMergeTree engine.
+    /// </summary>
+    /// <remarks>
+    /// VersionedCollapsingMergeTree extends CollapsingMergeTree to handle out-of-order inserts.
+    /// It uses a version column to correctly collapse rows even when they arrive in different order.
+    ///
+    /// The sign column must be Int8 with values +1 (state row) or -1 (cancel row).
+    /// The version column should be an incrementing value (typically UInt8, UInt16, UInt32, UInt64).
+    /// </remarks>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <typeparam name="TVersion">The version column type.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="signColumnExpression">Expression selecting the sign column (Int8/sbyte with +1 or -1).</param>
+    /// <param name="versionColumnExpression">Expression selecting the version column.</param>
+    /// <param name="orderByExpression">Expression selecting the ORDER BY columns.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    /// <example>
+    /// <code>
+    /// entity.UseVersionedCollapsingMergeTree(
+    ///     signColumn: x => x.Sign,
+    ///     versionColumn: x => x.Version,
+    ///     orderBy: x => new { x.UserId, x.EventTime });
+    /// </code>
+    /// </example>
+    public static EntityTypeBuilder<TEntity> UseVersionedCollapsingMergeTree<TEntity, TVersion>(
+        this EntityTypeBuilder<TEntity> builder,
+        Expression<Func<TEntity, sbyte>> signColumnExpression,
+        Expression<Func<TEntity, TVersion>> versionColumnExpression,
+        Expression<Func<TEntity, object>> orderByExpression)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(signColumnExpression);
+        ArgumentNullException.ThrowIfNull(versionColumnExpression);
+        ArgumentNullException.ThrowIfNull(orderByExpression);
+
+        var signColumn = ExpressionExtensions.GetPropertyName(signColumnExpression);
+        var versionColumn = ExpressionExtensions.GetPropertyName(versionColumnExpression);
+        var orderByColumns = ExpressionExtensions.GetPropertyNames(orderByExpression);
+
+        if (orderByColumns.Length == 0)
+        {
+            throw new ArgumentException("At least one ORDER BY column is required for VersionedCollapsingMergeTree.", nameof(orderByExpression));
+        }
+
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, "VersionedCollapsingMergeTree");
+        builder.HasAnnotation(ClickHouseAnnotationNames.SignColumn, signColumn);
+        builder.HasAnnotation(ClickHouseAnnotationNames.VersionColumn, versionColumn);
+        builder.HasAnnotation(ClickHouseAnnotationNames.OrderBy, orderByColumns);
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Configures the entity to use a VersionedCollapsingMergeTree engine with string column names.
+    /// </summary>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="signColumn">The name of the sign column.</param>
+    /// <param name="versionColumn">The name of the version column.</param>
+    /// <param name="orderByColumns">The columns for ORDER BY clause.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    public static EntityTypeBuilder UseVersionedCollapsingMergeTree(
+        this EntityTypeBuilder builder,
+        string signColumn,
+        string versionColumn,
+        params string[] orderByColumns)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(signColumn);
+        ArgumentException.ThrowIfNullOrWhiteSpace(versionColumn);
+        ArgumentNullException.ThrowIfNull(orderByColumns);
+
+        if (orderByColumns.Length == 0)
+        {
+            throw new ArgumentException("At least one ORDER BY column is required for VersionedCollapsingMergeTree.", nameof(orderByColumns));
+        }
+
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, "VersionedCollapsingMergeTree");
+        builder.HasAnnotation(ClickHouseAnnotationNames.SignColumn, signColumn);
+        builder.HasAnnotation(ClickHouseAnnotationNames.VersionColumn, versionColumn);
+        builder.HasAnnotation(ClickHouseAnnotationNames.OrderBy, orderByColumns);
+
+        return builder;
+    }
+
+    #endregion
+
     #region Partition By
 
     /// <summary>
