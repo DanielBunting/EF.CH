@@ -210,7 +210,10 @@ public partial class ClickHouseTypeMappingSource : RelationalTypeMappingSource
     /// <summary>
     /// Finds a type mapping by parsing the ClickHouse store type name.
     /// </summary>
-    private RelationalTypeMapping? FindMappingByStoreType(string storeTypeName, Type? clrType)
+    /// <param name="storeTypeName">The ClickHouse store type name (e.g., "Nullable(String)", "Array(Int32)")</param>
+    /// <param name="clrType">Optional CLR type hint</param>
+    /// <returns>The type mapping, or null if not found</returns>
+    internal RelationalTypeMapping? FindMappingByStoreType(string storeTypeName, Type? clrType = null)
     {
         // Check cache first
         if (_storeTypeMappingCache.TryGetValue(storeTypeName, out var cached))

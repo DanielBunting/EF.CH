@@ -1,4 +1,5 @@
 using EF.CH.Infrastructure;
+using EF.CH.Scaffolding.Internal;
 using Microsoft.EntityFrameworkCore.Design;
 using Microsoft.EntityFrameworkCore.Migrations.Design;
 using Microsoft.EntityFrameworkCore.Scaffolding;
@@ -28,6 +29,7 @@ public class ClickHouseDesignTimeServices : IDesignTimeServices
         new EntityFrameworkRelationalDesignServicesBuilder(services)
             .TryAdd<IAnnotationCodeGenerator, ClickHouseAnnotationCodeGenerator>()
             .TryAdd<IProviderConfigurationCodeGenerator, ClickHouseCodeGenerator>()
+            .TryAdd<IDatabaseModelFactory, ClickHouseDatabaseModelFactory>()
             .TryAddCoreServices();
 #pragma warning restore EF1001
 
