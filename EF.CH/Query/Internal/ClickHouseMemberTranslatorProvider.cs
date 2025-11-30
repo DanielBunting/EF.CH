@@ -21,6 +21,8 @@ public class ClickHouseMemberTranslatorProvider : RelationalMemberTranslatorProv
             new ClickHouseDateTimeMemberTranslator(sqlExpressionFactory),
             new ClickHouseDateOnlyMemberTranslator(sqlExpressionFactory),
             new ClickHouseGuidMemberTranslator(sqlExpressionFactory),
+            new ClickHouseArrayMemberTranslator(sqlExpressionFactory),
+            new ClickHouseMapMemberTranslator(sqlExpressionFactory),
         ]);
     }
 }

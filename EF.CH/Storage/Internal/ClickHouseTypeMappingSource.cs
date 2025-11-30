@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Net;
+using System.Numerics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using EF.CH.Storage.Internal.TypeMappings;
@@ -22,12 +24,17 @@ public partial class ClickHouseTypeMappingSource : RelationalTypeMappingSource
         [typeof(short)] = new ClickHouseInt16TypeMapping(),
         [typeof(int)] = new ClickHouseInt32TypeMapping(),
         [typeof(long)] = new ClickHouseInt64TypeMapping(),
+        [typeof(Int128)] = new ClickHouseInt128TypeMapping(),
 
         // Unsigned integers
         [typeof(byte)] = new ClickHouseUInt8TypeMapping(),
         [typeof(ushort)] = new ClickHouseUInt16TypeMapping(),
         [typeof(uint)] = new ClickHouseUInt32TypeMapping(),
         [typeof(ulong)] = new ClickHouseUInt64TypeMapping(),
+        [typeof(UInt128)] = new ClickHouseUInt128TypeMapping(),
+
+        // Large integers (BigInteger maps to Int256 by default)
+        [typeof(BigInteger)] = new ClickHouseInt256TypeMapping(),
 
         // Floating point
         [typeof(float)] = new ClickHouseFloat32TypeMapping(),
@@ -49,10 +56,17 @@ public partial class ClickHouseTypeMappingSource : RelationalTypeMappingSource
         [typeof(DateTime)] = new ClickHouseDateTimeTypeMapping(3),
         [typeof(DateTimeOffset)] = new ClickHouseDateTimeOffsetTypeMapping(3),
         [typeof(DateOnly)] = new ClickHouseDateTypeMapping(),
+        [typeof(TimeOnly)] = new ClickHouseTimeTypeMapping(),
+        [typeof(TimeSpan)] = new ClickHouseTimeSpanTypeMapping(),
 
         // JSON
         [typeof(JsonElement)] = new ClickHouseTypeMapping("JSON", typeof(JsonElement)),
         [typeof(JsonDocument)] = new ClickHouseTypeMapping("JSON", typeof(JsonDocument)),
+
+        // IP Address types
+        [typeof(ClickHouseIPv4)] = new ClickHouseIPv4TypeMapping(),
+        [typeof(ClickHouseIPv6)] = new ClickHouseIPv6TypeMapping(),
+        [typeof(IPAddress)] = new ClickHouseIPAddressTypeMapping(),
     };
 
     /// <summary>
@@ -67,12 +81,16 @@ public partial class ClickHouseTypeMappingSource : RelationalTypeMappingSource
             ["Int16"] = new ClickHouseInt16TypeMapping(),
             ["Int32"] = new ClickHouseInt32TypeMapping(),
             ["Int64"] = new ClickHouseInt64TypeMapping(),
+            ["Int128"] = new ClickHouseInt128TypeMapping(),
+            ["Int256"] = new ClickHouseInt256TypeMapping(),
 
             // Unsigned integers
             ["UInt8"] = new ClickHouseUInt8TypeMapping(),
             ["UInt16"] = new ClickHouseUInt16TypeMapping(),
             ["UInt32"] = new ClickHouseUInt32TypeMapping(),
             ["UInt64"] = new ClickHouseUInt64TypeMapping(),
+            ["UInt128"] = new ClickHouseUInt128TypeMapping(),
+            ["UInt256"] = new ClickHouseUInt256TypeMapping(),
 
             // MySQL-style aliases
             ["TINYINT"] = new ClickHouseInt8TypeMapping(),
@@ -103,9 +121,14 @@ public partial class ClickHouseTypeMappingSource : RelationalTypeMappingSource
             // Date/Time
             ["Date"] = new ClickHouseDateTypeMapping(),
             ["Date32"] = new ClickHouseDate32TypeMapping(),
+            ["Time"] = new ClickHouseTimeTypeMapping(),
 
             // JSON
             ["JSON"] = new ClickHouseTypeMapping("JSON", typeof(JsonElement)),
+
+            // IP Address types
+            ["IPv4"] = new ClickHouseIPv4TypeMapping(),
+            ["IPv6"] = new ClickHouseIPv6TypeMapping(),
         };
 
     /// <summary>
@@ -153,14 +176,31 @@ public partial class ClickHouseTypeMappingSource : RelationalTypeMappingSource
                 return mapping;
             }
 
-            // Handle enums as their underlying type
+            // Handle enums - map to ClickHouse Enum8/Enum16
             if (underlyingType.IsEnum)
             {
-                var enumUnderlyingType = Enum.GetUnderlyingType(underlyingType);
-                if (ClrTypeMappings.TryGetValue(enumUnderlyingType, out var enumMapping))
-                {
-                    return enumMapping;
-                }
+                return new ClickHouseEnumTypeMapping(underlyingType);
+            }
+
+            // Handle array types (T[] or List<T>)
+            var arrayMapping = FindArrayMapping(underlyingType);
+            if (arrayMapping is not null)
+            {
+                return arrayMapping;
+            }
+
+            // Handle dictionary types (Dictionary<K,V>)
+            var mapMapping = FindMapMapping(underlyingType);
+            if (mapMapping is not null)
+            {
+                return mapMapping;
+            }
+
+            // Handle tuple types (ValueTuple and Tuple)
+            var tupleMapping = FindTupleMapping(underlyingType);
+            if (tupleMapping is not null)
+            {
+                return tupleMapping;
             }
         }
 
@@ -273,7 +313,143 @@ public partial class ClickHouseTypeMappingSource : RelationalTypeMappingSource
             }
         }
 
+        // Handle Array(T)
+        var arrayMatch = ArrayRegex().Match(storeTypeName);
+        if (arrayMatch.Success)
+        {
+            var elementType = arrayMatch.Groups[1].Value;
+            var elementMapping = ParseStoreType(elementType, null);
+            if (elementMapping is not null)
+            {
+                // Default to T[] for array CLR type
+                var arrayClrType = clrType ?? elementMapping.ClrType.MakeArrayType();
+                return new ClickHouseArrayTypeMapping(arrayClrType, elementMapping);
+            }
+        }
+
+        // Handle Map(K, V)
+        var mapMatch = MapRegex().Match(storeTypeName);
+        if (mapMatch.Success)
+        {
+            var keyType = mapMatch.Groups[1].Value.Trim();
+            var valueType = mapMatch.Groups[2].Value.Trim();
+            var keyMapping = ParseStoreType(keyType, null);
+            var valueMapping = ParseStoreType(valueType, null);
+            if (keyMapping is not null && valueMapping is not null)
+            {
+                // Default to Dictionary<K, V> for map CLR type
+                var mapClrType = clrType ?? typeof(Dictionary<,>).MakeGenericType(keyMapping.ClrType, valueMapping.ClrType);
+                return new ClickHouseMapTypeMapping(mapClrType, keyMapping, valueMapping);
+            }
+        }
+
+        // Handle Tuple(T1, T2, ...)
+        var tupleMatch = TupleRegex().Match(storeTypeName);
+        if (tupleMatch.Success)
+        {
+            var innerContent = tupleMatch.Groups[1].Value;
+            var elementTypes = ParseTupleElements(innerContent);
+            var elementMappings = new List<RelationalTypeMapping>();
+
+            foreach (var elementType in elementTypes)
+            {
+                var elementMapping = ParseStoreType(elementType.Trim(), null);
+                if (elementMapping is null)
+                {
+                    return null;
+                }
+                elementMappings.Add(elementMapping);
+            }
+
+            if (elementMappings.Count > 0)
+            {
+                // Build a ValueTuple CLR type for the mapping
+                var tupleClrType = clrType ?? MakeValueTupleType(elementMappings.Select(m => m.ClrType).ToArray());
+                if (tupleClrType is not null)
+                {
+                    return new ClickHouseTupleTypeMapping(tupleClrType, elementMappings);
+                }
+            }
+        }
+
+        // Handle SimpleAggregateFunction(func, T)
+        var simpleAggMatch = SimpleAggregateFunctionRegex().Match(storeTypeName);
+        if (simpleAggMatch.Success)
+        {
+            var functionName = simpleAggMatch.Groups[1].Value;
+            var argumentType = simpleAggMatch.Groups[2].Value.Trim();
+            var argumentMapping = ParseStoreType(argumentType, null);
+            if (argumentMapping is not null)
+            {
+                return new ClickHouseSimpleAggregateFunctionTypeMapping(functionName, argumentMapping);
+            }
+        }
+
         return null;
+    }
+
+    /// <summary>
+    /// Parses tuple element types from a comma-separated string, handling nested types.
+    /// </summary>
+    private static List<string> ParseTupleElements(string content)
+    {
+        var elements = new List<string>();
+        var current = new System.Text.StringBuilder();
+        var depth = 0;
+
+        foreach (var ch in content)
+        {
+            if (ch == '(' || ch == '<')
+            {
+                depth++;
+                current.Append(ch);
+            }
+            else if (ch == ')' || ch == '>')
+            {
+                depth--;
+                current.Append(ch);
+            }
+            else if (ch == ',' && depth == 0)
+            {
+                elements.Add(current.ToString().Trim());
+                current.Clear();
+            }
+            else
+            {
+                current.Append(ch);
+            }
+        }
+
+        if (current.Length > 0)
+        {
+            elements.Add(current.ToString().Trim());
+        }
+
+        return elements;
+    }
+
+    /// <summary>
+    /// Creates a ValueTuple type for the given element types.
+    /// </summary>
+    private static Type? MakeValueTupleType(Type[] elementTypes)
+    {
+        return elementTypes.Length switch
+        {
+            1 => typeof(ValueTuple<>).MakeGenericType(elementTypes),
+            2 => typeof(ValueTuple<,>).MakeGenericType(elementTypes),
+            3 => typeof(ValueTuple<,,>).MakeGenericType(elementTypes),
+            4 => typeof(ValueTuple<,,,>).MakeGenericType(elementTypes),
+            5 => typeof(ValueTuple<,,,,>).MakeGenericType(elementTypes),
+            6 => typeof(ValueTuple<,,,,,>).MakeGenericType(elementTypes),
+            7 => typeof(ValueTuple<,,,,,,>).MakeGenericType(elementTypes),
+            _ when elementTypes.Length > 7 =>
+                // For > 7 elements, nest remaining in a Rest tuple
+                typeof(ValueTuple<,,,,,,,>).MakeGenericType(
+                    elementTypes[0], elementTypes[1], elementTypes[2], elementTypes[3],
+                    elementTypes[4], elementTypes[5], elementTypes[6],
+                    MakeValueTupleType(elementTypes.Skip(7).ToArray())!),
+            _ => null
+        };
     }
 
     /// <summary>
@@ -293,6 +469,155 @@ public partial class ClickHouseTypeMappingSource : RelationalTypeMappingSource
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Finds a type mapping for array types (T[] or List&lt;T&gt;).
+    /// </summary>
+    private RelationalTypeMapping? FindArrayMapping(Type clrType)
+    {
+        Type? elementType = null;
+
+        if (clrType.IsArray)
+        {
+            elementType = clrType.GetElementType();
+        }
+        else if (clrType.IsGenericType)
+        {
+            var genericDef = clrType.GetGenericTypeDefinition();
+            if (genericDef == typeof(List<>) ||
+                genericDef == typeof(IList<>) ||
+                genericDef == typeof(ICollection<>) ||
+                genericDef == typeof(IEnumerable<>) ||
+                genericDef == typeof(IReadOnlyList<>) ||
+                genericDef == typeof(IReadOnlyCollection<>))
+            {
+                elementType = clrType.GetGenericArguments()[0];
+            }
+        }
+
+        if (elementType is null)
+        {
+            return null;
+        }
+
+        // Get the element type mapping
+        var elementMapping = FindMapping(new RelationalTypeMappingInfo(elementType));
+        if (elementMapping is null)
+        {
+            return null;
+        }
+
+        return new ClickHouseArrayTypeMapping(clrType, elementMapping);
+    }
+
+    /// <summary>
+    /// Finds a type mapping for dictionary types (Dictionary&lt;K,V&gt;).
+    /// </summary>
+    private RelationalTypeMapping? FindMapMapping(Type clrType)
+    {
+        if (!clrType.IsGenericType)
+        {
+            return null;
+        }
+
+        var genericDef = clrType.GetGenericTypeDefinition();
+        if (genericDef != typeof(Dictionary<,>) &&
+            genericDef != typeof(IDictionary<,>) &&
+            genericDef != typeof(IReadOnlyDictionary<,>))
+        {
+            return null;
+        }
+
+        var typeArgs = clrType.GetGenericArguments();
+        var keyType = typeArgs[0];
+        var valueType = typeArgs[1];
+
+        // Get key type mapping
+        var keyMapping = FindMapping(new RelationalTypeMappingInfo(keyType));
+        if (keyMapping is null)
+        {
+            return null;
+        }
+
+        // Get value type mapping
+        var valueMapping = FindMapping(new RelationalTypeMappingInfo(valueType));
+        if (valueMapping is null)
+        {
+            return null;
+        }
+
+        return new ClickHouseMapTypeMapping(clrType, keyMapping, valueMapping);
+    }
+
+    /// <summary>
+    /// Finds a type mapping for tuple types (ValueTuple and Tuple).
+    /// </summary>
+    private RelationalTypeMapping? FindTupleMapping(Type clrType)
+    {
+        if (!clrType.IsGenericType)
+        {
+            return null;
+        }
+
+        var genericDef = clrType.GetGenericTypeDefinition();
+        if (!IsValueTupleType(genericDef) && !IsTupleType(genericDef))
+        {
+            return null;
+        }
+
+        var typeArgs = clrType.GetGenericArguments();
+        var elementMappings = new List<RelationalTypeMapping>();
+
+        foreach (var typeArg in typeArgs)
+        {
+            // Handle nested tuples (for > 7 elements, the 8th is a "Rest" tuple)
+            if (IsValueTupleType(typeArg.IsGenericType ? typeArg.GetGenericTypeDefinition() : null) ||
+                IsTupleType(typeArg.IsGenericType ? typeArg.GetGenericTypeDefinition() : null))
+            {
+                var nestedMapping = FindTupleMapping(typeArg);
+                if (nestedMapping is ClickHouseTupleTypeMapping nestedTuple)
+                {
+                    // Flatten nested tuple elements
+                    elementMappings.AddRange(nestedTuple.ElementMappings);
+                    continue;
+                }
+            }
+
+            var elementMapping = FindMapping(new RelationalTypeMappingInfo(typeArg));
+            if (elementMapping is null)
+            {
+                return null;
+            }
+
+            elementMappings.Add(elementMapping);
+        }
+
+        return new ClickHouseTupleTypeMapping(clrType, elementMappings);
+    }
+
+    private static bool IsValueTupleType(Type? genericDef)
+    {
+        return genericDef == typeof(ValueTuple<>) ||
+               genericDef == typeof(ValueTuple<,>) ||
+               genericDef == typeof(ValueTuple<,,>) ||
+               genericDef == typeof(ValueTuple<,,,>) ||
+               genericDef == typeof(ValueTuple<,,,,>) ||
+               genericDef == typeof(ValueTuple<,,,,,>) ||
+               genericDef == typeof(ValueTuple<,,,,,,>) ||
+               genericDef == typeof(ValueTuple<,,,,,,,>);
+    }
+
+    private static bool IsTupleType(Type? genericDef)
+    {
+        return genericDef == typeof(Tuple<>) ||
+               genericDef == typeof(Tuple<,>) ||
+               genericDef == typeof(Tuple<,,>) ||
+               genericDef == typeof(Tuple<,,,>) ||
+               genericDef == typeof(Tuple<,,,,>) ||
+               genericDef == typeof(Tuple<,,,,,>) ||
+               genericDef == typeof(Tuple<,,,,,,>) ||
+               genericDef == typeof(Tuple<,,,,,,,>);
     }
 
     // Regex patterns for parsing ClickHouse type names
@@ -319,4 +644,22 @@ public partial class ClickHouseTypeMappingSource : RelationalTypeMappingSource
 
     [GeneratedRegex(@"^LowCardinality\((.+)\)$", RegexOptions.IgnoreCase)]
     private static partial Regex LowCardinalityRegex();
+
+    [GeneratedRegex(@"^Array\((.+)\)$", RegexOptions.IgnoreCase)]
+    private static partial Regex ArrayRegex();
+
+    [GeneratedRegex(@"^Enum8\(.+\)$", RegexOptions.IgnoreCase)]
+    private static partial Regex Enum8Regex();
+
+    [GeneratedRegex(@"^Enum16\(.+\)$", RegexOptions.IgnoreCase)]
+    private static partial Regex Enum16Regex();
+
+    [GeneratedRegex(@"^Map\((.+),\s*(.+)\)$", RegexOptions.IgnoreCase)]
+    private static partial Regex MapRegex();
+
+    [GeneratedRegex(@"^Tuple\((.+)\)$", RegexOptions.IgnoreCase)]
+    private static partial Regex TupleRegex();
+
+    [GeneratedRegex(@"^SimpleAggregateFunction\((\w+),\s*(.+)\)$", RegexOptions.IgnoreCase)]
+    private static partial Regex SimpleAggregateFunctionRegex();
 }
