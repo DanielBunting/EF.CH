@@ -19,6 +19,7 @@ using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.EntityFrameworkCore.Update;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace EF.CH.Infrastructure;
 
@@ -272,6 +273,8 @@ public static class ClickHouseServiceCollectionExtensions
 
             // Query services
             .TryAdd<IQuerySqlGeneratorFactory, ClickHouseQuerySqlGeneratorFactory>()
+            .TryAdd<IQueryTranslationPostprocessorFactory, ClickHouseQueryTranslationPostprocessorFactory>()
+            .TryAdd<IRelationalParameterBasedSqlProcessorFactory, ClickHouseParameterBasedSqlProcessorFactory>()
             .TryAdd<IMethodCallTranslatorProvider, ClickHouseMethodCallTranslatorProvider>()
             .TryAdd<IMemberTranslatorProvider, ClickHouseMemberTranslatorProvider>()
             .TryAdd<IQueryableMethodTranslatingExpressionVisitorFactory, ClickHouseQueryableMethodTranslatingExpressionVisitorFactory>()
@@ -294,6 +297,12 @@ public static class ClickHouseServiceCollectionExtensions
             .TryAdd<IRelationalTransactionFactory, ClickHouseTransactionFactory>();
 
         builder.TryAddCoreServices();
+
+        // Register the evaluatable expression filter plugin to prevent parameterization
+        // of arguments to Sample(), WithSetting(), and WithSettings() methods.
+        // This must be registered as an enumerable service since multiple plugins can exist.
+        services.TryAddEnumerable(
+            ServiceDescriptor.Singleton<IEvaluatableExpressionFilterPlugin, ClickHouseEvaluatableExpressionFilterPlugin>());
 
         return services;
     }

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Query.SqlExpressions;
@@ -15,6 +16,10 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     private readonly HashSet<string> _visitedParameters = new();
     private bool _inDeleteContext;
 
+    // Thread-local storage for query settings (set during translation, read during SQL generation)
+    [ThreadStatic]
+    private static Dictionary<string, object>? _currentQuerySettings;
+
     public ClickHouseQuerySqlGenerator(
         QuerySqlGeneratorDependencies dependencies,
         IRelationalTypeMappingSource typeMappingSource)
@@ -22,6 +27,23 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     {
         _sqlGenerationHelper = dependencies.SqlGenerationHelper;
         _typeMappingSource = typeMappingSource;
+    }
+
+    /// <summary>
+    /// Sets query settings to be appended as SETTINGS clause.
+    /// This is called during query translation and read during SQL generation.
+    /// </summary>
+    internal static void SetQuerySettings(Dictionary<string, object> settings)
+    {
+        _currentQuerySettings = settings.Count > 0 ? new Dictionary<string, object>(settings) : null;
+    }
+
+    /// <summary>
+    /// Clears query settings after SQL generation.
+    /// </summary>
+    internal static void ClearQuerySettings()
+    {
+        _currentQuerySettings = null;
     }
 
     /// <summary>
@@ -66,6 +88,7 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     /// <summary>
     /// Generates LIMIT/OFFSET clauses using ClickHouse's syntax.
     /// ClickHouse uses: LIMIT [offset,] count
+    /// Also generates SETTINGS clause if query settings are present.
     /// </summary>
     protected override void GenerateLimitOffset(SelectExpression selectExpression)
     {
@@ -93,6 +116,54 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
             Visit(selectExpression.Offset);
             Sql.Append(", 18446744073709551615");
         }
+
+        // Generate SETTINGS clause if any query settings are present
+        GenerateSettings();
+    }
+
+    /// <summary>
+    /// Generates the SETTINGS clause for ClickHouse query settings.
+    /// </summary>
+    private void GenerateSettings()
+    {
+        if (_currentQuerySettings == null || _currentQuerySettings.Count == 0)
+        {
+            return;
+        }
+
+        Sql.AppendLine()
+            .Append("SETTINGS ");
+
+        var first = true;
+        foreach (var setting in _currentQuerySettings)
+        {
+            if (!first)
+            {
+                Sql.Append(", ");
+            }
+            first = false;
+
+            Sql.Append(setting.Key)
+                .Append(" = ")
+                .Append(FormatSettingValue(setting.Value));
+        }
+    }
+
+    /// <summary>
+    /// Formats a setting value for the SETTINGS clause.
+    /// </summary>
+    private static string FormatSettingValue(object value)
+    {
+        return value switch
+        {
+            bool b => b ? "1" : "0",
+            string s => $"'{s.Replace("'", "\\'")}'",
+            int or long or short or byte or uint or ulong or ushort or sbyte => value.ToString()!,
+            float f => f.ToString(CultureInfo.InvariantCulture),
+            double d => d.ToString(CultureInfo.InvariantCulture),
+            decimal dec => dec.ToString(CultureInfo.InvariantCulture),
+            _ => value.ToString()!
+        };
     }
 
     /// <summary>
@@ -102,10 +173,42 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     {
         return extensionExpression switch
         {
+            ClickHouseTableModifierExpression modifierExpression => VisitTableModifier(modifierExpression),
             ClickHouseFinalExpression finalExpression => VisitFinal(finalExpression),
             ClickHouseSampleExpression sampleExpression => VisitSample(sampleExpression),
             _ => base.VisitExtension(extensionExpression)
         };
+    }
+
+    /// <summary>
+    /// Generates table reference with FINAL and SAMPLE modifiers.
+    /// Called by the postprocessor-injected ClickHouseTableModifierExpression.
+    /// </summary>
+    private Expression VisitTableModifier(ClickHouseTableModifierExpression expression)
+    {
+        // Visit the underlying table (generates: "schema"."table" AS "t")
+        Visit(expression.Table);
+
+        // Add FINAL if requested
+        if (expression.UseFinal)
+        {
+            Sql.Append(" FINAL");
+        }
+
+        // Add SAMPLE if requested
+        if (expression.SampleFraction.HasValue)
+        {
+            Sql.Append(" SAMPLE ");
+            Sql.Append(expression.SampleFraction.Value.ToString("G", CultureInfo.InvariantCulture));
+
+            if (expression.SampleOffset.HasValue)
+            {
+                Sql.Append(" OFFSET ");
+                Sql.Append(expression.SampleOffset.Value.ToString("G", CultureInfo.InvariantCulture));
+            }
+        }
+
+        return expression;
     }
 
     /// <summary>
@@ -124,12 +227,12 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     private Expression VisitSample(ClickHouseSampleExpression expression)
     {
         Sql.Append(" SAMPLE ");
-        Sql.Append(expression.Fraction.ToString("G", System.Globalization.CultureInfo.InvariantCulture));
+        Sql.Append(expression.Fraction.ToString("G", CultureInfo.InvariantCulture));
 
         if (expression.Offset.HasValue)
         {
             Sql.Append(" OFFSET ");
-            Sql.Append(expression.Offset.Value.ToString("G", System.Globalization.CultureInfo.InvariantCulture));
+            Sql.Append(expression.Offset.Value.ToString("G", CultureInfo.InvariantCulture));
         }
 
         return expression;

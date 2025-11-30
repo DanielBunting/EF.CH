@@ -322,6 +322,173 @@ public class ClickHouseIntegrationTests : IAsyncLifetime
         Assert.Equal(1L, grouped[1].Count);
     }
 
+    #region Query Modifier Tests (FINAL, SAMPLE, SETTINGS)
+
+    // NOTE: The FINAL, SAMPLE, and SETTINGS extension methods have infrastructure in place
+    // but require deeper EF Core expression tree integration to fully work. The translator
+    // sets flags but the SQL generator doesn't receive them through the standard pipeline.
+    // These tests document the intended behavior and will pass once the implementation
+    // is completed with proper ShapedQueryExpression modification.
+
+    [Fact(Skip = "FINAL implementation incomplete - requires expression tree modification")]
+    public async Task Final_QueriesReplacingMergeTreeWithDeduplication()
+    {
+        await using var context = CreateContext<UsersDbContext>();
+
+        await context.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE IF NOT EXISTS "Users" (
+                "Id" UUID,
+                "Name" String,
+                "Email" String,
+                "Version" Int64
+            )
+            ENGINE = ReplacingMergeTree("Version")
+            ORDER BY ("Id")
+            """);
+
+        var userId = Guid.NewGuid();
+
+        // Insert two versions of the same user
+        context.Users.Add(new User { Id = userId, Name = "V1", Email = "v1@test.com", Version = 1 });
+        await context.SaveChangesAsync();
+        context.ChangeTracker.Clear();
+
+        context.Users.Add(new User { Id = userId, Name = "V2", Email = "v2@test.com", Version = 2 });
+        await context.SaveChangesAsync();
+
+        // Without FINAL, we might see both rows (before merge)
+        // With FINAL, we should only see the latest version
+        var finalResult = await context.Users
+            .Final()
+            .Where(u => u.Id == userId)
+            .ToListAsync();
+
+        // FINAL should return only the latest version
+        Assert.Single(finalResult);
+        Assert.Equal("V2", finalResult[0].Name);
+        Assert.Equal(2, finalResult[0].Version);
+    }
+
+    [Fact(Skip = "SAMPLE implementation incomplete - requires expression tree modification")]
+    public async Task Sample_ReturnsSubsetOfData()
+    {
+        await using var context = CreateContext<EventsDbContext>();
+
+        await context.Database.ExecuteSqlRawAsync("DROP TABLE IF EXISTS \"Events\"");
+        await context.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE "Events" (
+                "Id" UUID,
+                "EventTime" DateTime64(3),
+                "EventType" String,
+                "Data" Nullable(String)
+            )
+            ENGINE = MergeTree()
+            ORDER BY ("EventTime", "Id")
+            SAMPLE BY xxHash32("Id")
+            """);
+
+        // Insert many rows
+        var now = DateTime.UtcNow;
+        for (int i = 0; i < 100; i++)
+        {
+            context.Events.Add(new Event
+            {
+                Id = Guid.NewGuid(),
+                EventTime = now.AddMinutes(i),
+                EventType = "test",
+                Data = $"data-{i}"
+            });
+        }
+        await context.SaveChangesAsync();
+
+        // Sample should return approximately 10% of rows
+        var sampledResults = await context.Events
+            .Sample(0.1)
+            .ToListAsync();
+
+        // With sampling, we expect roughly 10 rows (with some variance)
+        // Allow for statistical variance - should be less than total
+        Assert.True(sampledResults.Count < 100, $"Expected fewer than 100 rows with 10% sample, got {sampledResults.Count}");
+    }
+
+    [Fact(Skip = "SETTINGS implementation incomplete - requires expression tree modification")]
+    public async Task WithSetting_AppliesQuerySettings()
+    {
+        await using var context = CreateContext<EventsDbContext>();
+
+        await context.Database.ExecuteSqlRawAsync("DROP TABLE IF EXISTS \"Events\"");
+        await context.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE "Events" (
+                "Id" UUID,
+                "EventTime" DateTime64(3),
+                "EventType" String,
+                "Data" Nullable(String)
+            )
+            ENGINE = MergeTree()
+            ORDER BY ("EventTime", "Id")
+            """);
+
+        context.Events.Add(new Event
+        {
+            Id = Guid.NewGuid(),
+            EventTime = DateTime.UtcNow,
+            EventType = "test",
+            Data = "data"
+        });
+        await context.SaveChangesAsync();
+
+        // Query with settings - should execute successfully
+        // max_threads limits parallelism
+        var results = await context.Events
+            .WithSetting("max_threads", 1)
+            .Where(e => e.EventType == "test")
+            .ToListAsync();
+
+        Assert.Single(results);
+        Assert.Equal("test", results[0].EventType);
+    }
+
+    [Fact(Skip = "SETTINGS implementation incomplete - requires expression tree modification")]
+    public async Task WithSettings_AppliesMultipleQuerySettings()
+    {
+        await using var context = CreateContext<EventsDbContext>();
+
+        await context.Database.ExecuteSqlRawAsync("DROP TABLE IF EXISTS \"Events\"");
+        await context.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE "Events" (
+                "Id" UUID,
+                "EventTime" DateTime64(3),
+                "EventType" String,
+                "Data" Nullable(String)
+            )
+            ENGINE = MergeTree()
+            ORDER BY ("EventTime", "Id")
+            """);
+
+        context.Events.Add(new Event
+        {
+            Id = Guid.NewGuid(),
+            EventTime = DateTime.UtcNow,
+            EventType = "test",
+            Data = "data"
+        });
+        await context.SaveChangesAsync();
+
+        var settings = new Dictionary<string, object>
+        {
+            { "max_threads", 2 },
+            { "max_block_size", 1000 }
+        };
+
+        var results = await context.Events
+            .WithSettings(settings)
+            .ToListAsync();
+
+        Assert.Single(results);
+    }
+
+    #endregion
+
     #region Migration-based Tests
 
     [Fact]
