@@ -174,9 +174,10 @@ public class DeleteTests : IAsyncLifetime
         var toUpdate = await context.Events.FirstAsync(e => e.Id == entity.Id);
         toUpdate.Name = "Updated Name";
 
-        var ex = await Assert.ThrowsAsync<NotSupportedException>(
+        var ex = await Assert.ThrowsAsync<ClickHouseUnsupportedOperationException>(
             () => context.SaveChangesAsync());
 
+        Assert.Equal(ClickHouseUnsupportedOperationException.OperationCategory.Update, ex.Category);
         Assert.Contains("UPDATE", ex.Message);
         Assert.Contains("ClickHouse", ex.Message);
     }

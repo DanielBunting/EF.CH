@@ -1,4 +1,5 @@
 using EF.CH.Extensions;
+using EF.CH.Infrastructure;
 using EF.CH.Migrations.Internal;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -124,9 +125,10 @@ public class MigrationTests : IAsyncLifetime
             PrincipalColumns = new[] { "Id" }
         };
 
-        var ex = Assert.Throws<NotSupportedException>(
+        var ex = Assert.Throws<ClickHouseUnsupportedOperationException>(
             () => generator.Generate(new[] { addFkOperation }));
 
+        Assert.Equal(ClickHouseUnsupportedOperationException.OperationCategory.ForeignKey, ex.Category);
         Assert.Contains("foreign key", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -143,9 +145,10 @@ public class MigrationTests : IAsyncLifetime
             Columns = new[] { "Id" }
         };
 
-        var ex = Assert.Throws<NotSupportedException>(
+        var ex = Assert.Throws<ClickHouseUnsupportedOperationException>(
             () => generator.Generate(new[] { addPkOperation }));
 
+        Assert.Equal(ClickHouseUnsupportedOperationException.OperationCategory.PrimaryKey, ex.Category);
         Assert.Contains("primary key", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -162,9 +165,10 @@ public class MigrationTests : IAsyncLifetime
             Table = "TestTable"
         };
 
-        var ex = Assert.Throws<NotSupportedException>(
+        var ex = Assert.Throws<ClickHouseUnsupportedOperationException>(
             () => generator.Generate(new[] { renameColOperation }));
 
+        Assert.Equal(ClickHouseUnsupportedOperationException.OperationCategory.ColumnRename, ex.Category);
         Assert.Contains("renaming", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -182,9 +186,10 @@ public class MigrationTests : IAsyncLifetime
             IsUnique = true
         };
 
-        var ex = Assert.Throws<NotSupportedException>(
+        var ex = Assert.Throws<ClickHouseUnsupportedOperationException>(
             () => generator.Generate(new[] { createIndexOperation }));
 
+        Assert.Equal(ClickHouseUnsupportedOperationException.OperationCategory.UniqueConstraint, ex.Category);
         Assert.Contains("unique", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 

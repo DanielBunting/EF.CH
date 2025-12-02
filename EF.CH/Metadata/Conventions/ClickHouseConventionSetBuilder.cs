@@ -35,6 +35,10 @@ public class ClickHouseConventionSetBuilder : RelationalConventionSetBuilder
             conventionSet.EntityTypeAddedConventions.Insert(0, new ClickHouseKeylessConvention());
         }
 
+        // Add convention that removes ValueGeneratedOnAdd for integer types
+        // ClickHouse doesn't support auto-increment/identity columns
+        conventionSet.ModelFinalizingConventions.Add(new ClickHouseValueGeneratedConvention());
+
         return conventionSet;
     }
 }

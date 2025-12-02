@@ -1,4 +1,5 @@
 using System.Linq.Expressions;
+using EF.CH.Infrastructure;
 using EF.CH.Metadata;
 using EF.CH.Query.Internal;
 using Microsoft.EntityFrameworkCore;
@@ -448,6 +449,12 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         ArgumentNullException.ThrowIfNull(operation);
         ArgumentNullException.ThrowIfNull(builder);
 
+        // Check for identity column annotations from other providers
+        if (IsIdentityColumnAttempt(operation))
+        {
+            throw ClickHouseUnsupportedOperationException.Identity(operation.Table, operation.Name);
+        }
+
         builder.Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name));
         builder.Append(" ");
 
@@ -489,9 +496,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         MigrationCommandListBuilder builder,
         bool terminate = true)
     {
-        throw new NotSupportedException(
-            $"ClickHouse does not support foreign key constraints. " +
-            $"Cannot add foreign key '{operation.Name}' on table '{operation.Table}'.");
+        throw ClickHouseUnsupportedOperationException.AddForeignKey(operation.Name, operation.Table);
     }
 
     /// <summary>
@@ -503,9 +508,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         MigrationCommandListBuilder builder,
         bool terminate = true)
     {
-        throw new NotSupportedException(
-            $"ClickHouse does not support foreign key constraints. " +
-            $"Cannot drop foreign key '{operation.Name}' on table '{operation.Table}'.");
+        throw ClickHouseUnsupportedOperationException.DropForeignKey(operation.Name, operation.Table);
     }
 
     /// <summary>
@@ -518,10 +521,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         MigrationCommandListBuilder builder,
         bool terminate = true)
     {
-        throw new NotSupportedException(
-            $"ClickHouse does not support adding primary keys after table creation. " +
-            $"Primary keys are defined via ORDER BY clause at table creation time. " +
-            $"Table: '{operation.Table}'.");
+        throw ClickHouseUnsupportedOperationException.AddPrimaryKey(operation.Table);
     }
 
     /// <summary>
@@ -534,10 +534,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         MigrationCommandListBuilder builder,
         bool terminate = true)
     {
-        throw new NotSupportedException(
-            $"ClickHouse does not support dropping primary keys. " +
-            $"Primary keys are defined via ORDER BY clause at table creation time. " +
-            $"Table: '{operation.Table}'.");
+        throw ClickHouseUnsupportedOperationException.DropPrimaryKey(operation.Table);
     }
 
     /// <summary>
@@ -549,10 +546,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         IModel? model,
         MigrationCommandListBuilder builder)
     {
-        throw new NotSupportedException(
-            $"ClickHouse does not support renaming columns. " +
-            $"Consider adding a new column and migrating data instead. " +
-            $"Table: '{operation.Table}', Column: '{operation.Name}'.");
+        throw ClickHouseUnsupportedOperationException.RenameColumn(operation.Table, operation.Name);
     }
 
     /// <summary>
@@ -646,10 +640,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
 
         if (operation.IsUnique)
         {
-            throw new NotSupportedException(
-                $"ClickHouse does not support unique indexes. " +
-                $"Consider using ReplacingMergeTree engine for deduplication. " +
-                $"Index: '{operation.Name}' on table '{operation.Table}'.");
+            throw ClickHouseUnsupportedOperationException.UniqueIndex(operation.Name, operation.Table);
         }
 
         // ClickHouse uses ALTER TABLE ADD INDEX syntax for data skipping indexes
@@ -771,5 +762,34 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
             return default;
         var annotation = entityType.FindAnnotation(name);
         return annotation?.Value is T value ? value : default;
+    }
+
+    /// <summary>
+    /// Checks if an AddColumnOperation contains identity/auto-increment annotations
+    /// from SQL Server, PostgreSQL, or other providers.
+    /// </summary>
+    private static bool IsIdentityColumnAttempt(AddColumnOperation operation)
+    {
+        // Check for SQL Server identity annotation (e.g., "SqlServer:Identity")
+        foreach (var annotation in operation.GetAnnotations())
+        {
+            var name = annotation.Name;
+            if (name.Contains("Identity", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            // Check for Npgsql serial/identity value generation strategy
+            if (name.Contains("ValueGenerationStrategy", StringComparison.OrdinalIgnoreCase))
+            {
+                var value = annotation.Value?.ToString();
+                if (value != null && (
+                    value.Contains("Identity", StringComparison.OrdinalIgnoreCase) ||
+                    value.Contains("Serial", StringComparison.OrdinalIgnoreCase)))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 }
