@@ -239,16 +239,42 @@ public partial class ClickHouseDatabaseModelFactory : IDatabaseModelFactory
         // Apply engine annotations
         ApplyEngineAnnotations(dbTable, engineMetadata);
 
-        // Add columns
-        foreach (var column in columnsByTable[table.Name].OrderBy(c => c.Position))
+        // Detect and group Nested columns
+        // ClickHouse stores Nested(ID UInt32, Name String) as separate columns:
+        // "Goals.ID" Array(UInt32), "Goals.Name" Array(String)
+        var columns = columnsByTable[table.Name].OrderBy(c => c.Position).ToList();
+        var nestedGroups = DetectNestedColumns(columns);
+        var processedNestedParents = new HashSet<string>(StringComparer.Ordinal);
+
+        // Add columns, replacing Nested sub-columns with virtual Nested column
+        foreach (var column in columns)
         {
+            // Check if this is a Nested sub-column (contains '.')
+            var dotIndex = column.Name.IndexOf('.');
+            if (dotIndex > 0)
+            {
+                var parentName = column.Name[..dotIndex];
+                if (nestedGroups.TryGetValue(parentName, out var nestedInfo))
+                {
+                    // Only create the Nested column once per parent
+                    if (processedNestedParents.Add(parentName))
+                    {
+                        var nestedColumn = CreateNestedColumn(dbTable, parentName, nestedInfo);
+                        dbTable.Columns.Add(nestedColumn);
+                    }
+                    // Skip individual sub-columns
+                    continue;
+                }
+            }
+
             var dbColumn = CreateDatabaseColumn(dbTable, column);
             dbTable.Columns.Add(dbColumn);
         }
 
         // Set up primary key from columns marked as primary key
         var primaryKeyColumns = dbTable.Columns
-            .Where(c => columnsByTable[table.Name].First(col => col.Name == c.Name).IsInPrimaryKey)
+            .Where(c => columnsByTable[table.Name]
+                .Any(col => col.Name == c.Name && col.IsInPrimaryKey))
             .ToList();
 
         if (primaryKeyColumns.Count > 0)
@@ -266,6 +292,82 @@ public partial class ClickHouseDatabaseModelFactory : IDatabaseModelFactory
 
         return dbTable;
     }
+
+    /// <summary>
+    /// Detects Nested columns from sub-columns with '.' in their names.
+    /// </summary>
+    /// <returns>Dictionary mapping parent name to list of (fieldName, storeType) tuples.</returns>
+    private static Dictionary<string, List<(string FieldName, string StoreType)>> DetectNestedColumns(
+        IEnumerable<ColumnInfo> columns)
+    {
+        var nestedGroups = new Dictionary<string, List<(string, string)>>(StringComparer.Ordinal);
+
+        foreach (var column in columns)
+        {
+            var dotIndex = column.Name.IndexOf('.');
+            if (dotIndex > 0)
+            {
+                var parentName = column.Name[..dotIndex];
+                var fieldName = column.Name[(dotIndex + 1)..];
+                var storeType = column.Type;
+
+                // Extract element type from Array(T) wrapper
+                var arrayMatch = ArrayRegex().Match(storeType);
+                if (arrayMatch.Success)
+                {
+                    storeType = arrayMatch.Groups[1].Value;
+                }
+
+                if (!nestedGroups.TryGetValue(parentName, out var fields))
+                {
+                    fields = [];
+                    nestedGroups[parentName] = fields;
+                }
+                fields.Add((fieldName, storeType));
+            }
+        }
+
+        return nestedGroups;
+    }
+
+    /// <summary>
+    /// Creates a virtual DatabaseColumn for a Nested type from its sub-columns.
+    /// </summary>
+    private DatabaseColumn CreateNestedColumn(
+        DatabaseTable dbTable,
+        string nestedName,
+        List<(string FieldName, string StoreType)> fields)
+    {
+        // Build Nested store type: Nested(Field1 Type1, Field2 Type2, ...)
+        var fieldDefs = fields.Select(f => $"{f.FieldName} {f.StoreType}");
+        var storeType = $"Nested({string.Join(", ", fieldDefs)})";
+
+        // Build field info strings with CLR type names
+        var fieldInfos = fields
+            .Select(f => $"{f.FieldName} ({MapToClrTypeName(f.StoreType)})")
+            .ToArray();
+
+        // Generate record name and documentation comment
+        var recordName = GenerateRecordName(dbTable.Name, nestedName);
+        var nestedFields = fields.Select(f => (f.FieldName, f.StoreType)).ToList();
+
+        var dbColumn = new DatabaseColumn
+        {
+            Table = dbTable,
+            Name = nestedName,
+            StoreType = storeType,
+            IsNullable = false,
+            Comment = GenerateNestedComment(fieldInfos, recordName, nestedFields)
+        };
+
+        // Store field info annotation
+        dbColumn[ClickHouseAnnotationNames.NestedFields] = fieldInfos;
+
+        return dbColumn;
+    }
+
+    [GeneratedRegex(@"^Array\((.+)\)$", RegexOptions.IgnoreCase)]
+    private static partial Regex ArrayRegex();
 
     /// <summary>
     /// Creates a DatabaseColumn from column metadata.
@@ -305,12 +407,12 @@ public partial class ClickHouseDatabaseModelFactory : IDatabaseModelFactory
                 innerType, column.Name);
         }
 
-        // Handle enum types - check if it's an enum definition
+        // Parse enum definition (will be used after creating dbColumn)
         var enumInfo = ParseEnumDefinition(innerType);
+        string? enumTypeName = null;
         if (enumInfo is not null)
         {
-            // Store enum definition for code generation
-            var enumTypeName = GenerateEnumTypeName(column.Table, column.Name);
+            enumTypeName = GenerateEnumTypeName(column.Table, column.Name);
             _enumDefinitions[enumTypeName] = innerType;
         }
 
@@ -330,7 +432,141 @@ public partial class ClickHouseDatabaseModelFactory : IDatabaseModelFactory
             }
         };
 
+        // Store enum annotations for code generation
+        if (enumTypeName is not null)
+        {
+            dbColumn[ClickHouseAnnotationNames.EnumDefinition] = innerType;
+            dbColumn[ClickHouseAnnotationNames.EnumTypeName] = enumTypeName;
+        }
+
+        // Handle Nested types - generate documentation comment with TODO
+        var nestedMatch = NestedRegex().Match(innerType);
+        if (nestedMatch.Success)
+        {
+            var nestedContent = nestedMatch.Groups[1].Value;
+            var nestedFields = ClickHouseTypeMappingSource.ParseNestedFields(nestedContent);
+            if (nestedFields is not null && nestedFields.Count > 0)
+            {
+                // Store field info annotation for any additional processing
+                var fieldInfos = nestedFields
+                    .Select(f => $"{f.Name} ({MapToClrTypeName(f.TypeName)})")
+                    .ToArray();
+                dbColumn[ClickHouseAnnotationNames.NestedFields] = fieldInfos;
+
+                // Generate XML documentation comment with TODO and record class definition
+                var recordName = GenerateRecordName(dbTable.Name, column.Name);
+                dbColumn.Comment = GenerateNestedComment(fieldInfos, recordName, nestedFields);
+            }
+        }
+
         return dbColumn;
+    }
+
+    /// <summary>
+    /// Generates a record class name for a Nested type property.
+    /// </summary>
+    private static string GenerateRecordName(string tableName, string propertyName)
+    {
+        var tableNamePascal = ToPascalCase(tableName);
+        var propertyNamePascal = ToPascalCase(propertyName);
+
+        // Remove trailing 's' if plural
+        var singularName = propertyNamePascal.EndsWith("s", StringComparison.Ordinal)
+            ? propertyNamePascal[..^1]
+            : propertyNamePascal;
+
+        return $"{tableNamePascal}{singularName}";
+    }
+
+    /// <summary>
+    /// Generates the XML documentation comment for a Nested type property.
+    /// </summary>
+    private string GenerateNestedComment(
+        string[] fieldInfos,
+        string recordName,
+        List<(string Name, string TypeName)> nestedFields)
+    {
+        var sb = new System.Text.StringBuilder();
+
+        // Summary - field list
+        sb.Append("ClickHouse Nested type with fields: ");
+        sb.AppendLine(string.Join(", ", fieldInfos));
+        sb.AppendLine();
+
+        // TODO with record class definition
+        sb.AppendLine("TODO: Replace List<object> with a custom record type:");
+        sb.AppendLine();
+        sb.AppendLine($"public record {recordName}");
+        sb.AppendLine("{");
+
+        foreach (var field in nestedFields)
+        {
+            var clrTypeName = MapToClrTypeName(field.TypeName);
+            sb.AppendLine($"    public {clrTypeName} {field.Name} {{ get; set; }}");
+        }
+
+        sb.AppendLine("}");
+        sb.AppendLine();
+        sb.Append($"Then change this property to: public List<{recordName}> ...");
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Maps a ClickHouse type name to a C# type name for display purposes.
+    /// </summary>
+    private string MapToClrTypeName(string storeTypeName)
+    {
+        // Parse simple types to CLR type names
+        var clickHouseTypeMappingSource = _typeMappingSource as ClickHouseTypeMappingSource;
+        var mapping = clickHouseTypeMappingSource?.FindMappingByStoreType(storeTypeName);
+
+        if (mapping?.ClrType is not null)
+        {
+            return GetClrTypeName(mapping.ClrType);
+        }
+
+        // Fallback for unknown types
+        return "object";
+    }
+
+    /// <summary>
+    /// Gets a C#-friendly type name for a CLR type.
+    /// </summary>
+    private static string GetClrTypeName(Type type)
+    {
+        // Handle nullable types
+        var underlyingType = Nullable.GetUnderlyingType(type);
+        if (underlyingType is not null)
+        {
+            return GetClrTypeName(underlyingType) + "?";
+        }
+
+        // Map common types to C# aliases
+        return type.FullName switch
+        {
+            "System.Byte" => "byte",
+            "System.SByte" => "sbyte",
+            "System.Int16" => "short",
+            "System.UInt16" => "ushort",
+            "System.Int32" => "int",
+            "System.UInt32" => "uint",
+            "System.Int64" => "long",
+            "System.UInt64" => "ulong",
+            "System.Single" => "float",
+            "System.Double" => "double",
+            "System.Decimal" => "decimal",
+            "System.Boolean" => "bool",
+            "System.String" => "string",
+            "System.Guid" => "Guid",
+            "System.DateTime" => "DateTime",
+            "System.DateOnly" => "DateOnly",
+            "System.TimeOnly" => "TimeOnly",
+            "System.TimeSpan" => "TimeSpan",
+            "System.Int128" => "Int128",
+            "System.UInt128" => "UInt128",
+            _ => type.Name
+        };
     }
 
     /// <summary>
@@ -445,6 +681,9 @@ public partial class ClickHouseDatabaseModelFactory : IDatabaseModelFactory
 
     [GeneratedRegex(@"^LowCardinality\((.+)\)$", RegexOptions.IgnoreCase)]
     private static partial Regex LowCardinalityRegex();
+
+    [GeneratedRegex(@"^Nested\((.+)\)$", RegexOptions.IgnoreCase)]
+    private static partial Regex NestedRegex();
 
     [GeneratedRegex(@"^Enum(?:8|16)\((.+)\)$", RegexOptions.IgnoreCase)]
     private static partial Regex EnumDefinitionRegex();

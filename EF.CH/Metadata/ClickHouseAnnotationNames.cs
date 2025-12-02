@@ -78,4 +78,28 @@ public static class ClickHouseAnnotationNames
     public const string MaterializedViewPopulate = Prefix + "MaterializedViewPopulate";
 
     #endregion
+
+    #region Nested Types
+
+    /// <summary>
+    /// Nested type field definitions for scaffolding.
+    /// Stores field info as string array: ["FieldName (ClrType)", ...].
+    /// </summary>
+    public const string NestedFields = Prefix + "NestedFields";
+
+    #endregion
+
+    #region Enum Types
+
+    /// <summary>
+    /// The ClickHouse enum type definition string (e.g., "Enum8('Pending' = 0, 'Shipped' = 1)").
+    /// </summary>
+    public const string EnumDefinition = Prefix + "EnumDefinition";
+
+    /// <summary>
+    /// The suggested C# enum type name for scaffolding.
+    /// </summary>
+    public const string EnumTypeName = Prefix + "EnumTypeName";
+
+    #endregion
 }

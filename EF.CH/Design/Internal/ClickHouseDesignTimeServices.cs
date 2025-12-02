@@ -30,6 +30,7 @@ public class ClickHouseDesignTimeServices : IDesignTimeServices
             .TryAdd<IAnnotationCodeGenerator, ClickHouseAnnotationCodeGenerator>()
             .TryAdd<IProviderConfigurationCodeGenerator, ClickHouseCodeGenerator>()
             .TryAdd<IDatabaseModelFactory, ClickHouseDatabaseModelFactory>()
+            .TryAdd<IModelCodeGenerator, ClickHouseCSharpModelGenerator>()
             .TryAddCoreServices();
 #pragma warning restore EF1001
 

@@ -23,6 +23,7 @@ public class ClickHouseMemberTranslatorProvider : RelationalMemberTranslatorProv
             new ClickHouseGuidMemberTranslator(sqlExpressionFactory),
             new ClickHouseArrayMemberTranslator(sqlExpressionFactory),
             new ClickHouseMapMemberTranslator(sqlExpressionFactory),
+            new ClickHouseNestedMemberTranslator(sqlExpressionFactory),
         ]);
     }
 }

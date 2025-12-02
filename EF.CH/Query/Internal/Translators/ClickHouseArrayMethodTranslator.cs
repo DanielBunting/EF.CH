@@ -1,4 +1,5 @@
 using System.Reflection;
+using EF.CH.Storage.Internal.TypeMappings;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Query;
@@ -139,6 +140,12 @@ public class ClickHouseArrayMethodTranslator : IMethodCallTranslator
         }
 
         var source = arguments[0];
+
+        // Skip Nested types - they have their own translator with first-field pattern
+        if (source.TypeMapping is ClickHouseNestedTypeMapping)
+        {
+            return null;
+        }
 
         // Check if the source is an array type
         if (!IsArrayOrListType(source.Type))
@@ -284,6 +291,12 @@ public class ClickHouseArrayMemberTranslator : IMemberTranslator
         IDiagnosticsLogger<DbLoggerCategory.Query> logger)
     {
         if (instance is null)
+        {
+            return null;
+        }
+
+        // Skip Nested types - they have their own translator with first-field pattern
+        if (instance.TypeMapping is ClickHouseNestedTypeMapping)
         {
             return null;
         }

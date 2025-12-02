@@ -182,7 +182,14 @@ public partial class ClickHouseTypeMappingSource : RelationalTypeMappingSource
                 return new ClickHouseEnumTypeMapping(underlyingType);
             }
 
-            // Handle array types (T[] or List<T>)
+            // Handle nested types (List<T> where T is a complex type) - check before Array
+            var nestedMapping = FindNestedMapping(underlyingType);
+            if (nestedMapping is not null)
+            {
+                return nestedMapping;
+            }
+
+            // Handle array types (T[] or List<T> where T is a primitive)
             var arrayMapping = FindArrayMapping(underlyingType);
             if (arrayMapping is not null)
             {
@@ -388,7 +395,49 @@ public partial class ClickHouseTypeMappingSource : RelationalTypeMappingSource
             }
         }
 
+        // Handle Nested(field1 Type1, field2 Type2, ...)
+        var nestedMatch = NestedRegex().Match(storeTypeName);
+        if (nestedMatch.Success)
+        {
+            var innerContent = nestedMatch.Groups[1].Value;
+            var fieldMappings = ParseNestedFields(innerContent);
+            if (fieldMappings is not null && fieldMappings.Count > 0)
+            {
+                // For scaffolding, we use List<object> as a placeholder CLR type.
+                // The scaffolding factory will store the field definitions as an annotation
+                // so code generation can produce XML docs with the TODO and record class definition.
+                return new ClickHouseTypeMapping(storeTypeName, typeof(List<object>));
+            }
+        }
+
         return null;
+    }
+
+    /// <summary>
+    /// Parses Nested field definitions from a comma-separated string.
+    /// Format: "field1 Type1, field2 Type2, ..."
+    /// </summary>
+    internal static List<(string Name, string TypeName)>? ParseNestedFields(string content)
+    {
+        var fields = new List<(string Name, string TypeName)>();
+        var elements = ParseTupleElements(content);
+
+        foreach (var element in elements)
+        {
+            var trimmed = element.Trim();
+            // Find the first space to separate name from type
+            var spaceIndex = trimmed.IndexOf(' ');
+            if (spaceIndex <= 0)
+            {
+                return null;
+            }
+
+            var name = trimmed.Substring(0, spaceIndex).Trim().Trim('"');
+            var typeName = trimmed.Substring(spaceIndex + 1).Trim();
+            fields.Add((name, typeName));
+        }
+
+        return fields;
     }
 
     /// <summary>
@@ -623,6 +672,61 @@ public partial class ClickHouseTypeMappingSource : RelationalTypeMappingSource
                genericDef == typeof(Tuple<,,,,,,,>);
     }
 
+    /// <summary>
+    /// Finds a type mapping for nested types (List&lt;T&gt; where T is a complex type).
+    /// </summary>
+    private RelationalTypeMapping? FindNestedMapping(Type clrType)
+    {
+        Type? elementType = null;
+
+        // Check if it's a List<T> or T[]
+        if (clrType.IsArray)
+        {
+            elementType = clrType.GetElementType();
+        }
+        else if (clrType.IsGenericType)
+        {
+            var genericDef = clrType.GetGenericTypeDefinition();
+            if (genericDef == typeof(List<>) ||
+                genericDef == typeof(IList<>) ||
+                genericDef == typeof(ICollection<>) ||
+                genericDef == typeof(IReadOnlyList<>) ||
+                genericDef == typeof(IReadOnlyCollection<>))
+            {
+                elementType = clrType.GetGenericArguments()[0];
+            }
+        }
+
+        if (elementType is null)
+        {
+            return null;
+        }
+
+        // Check if the element type is suitable for Nested
+        if (!ClickHouseNestedTypeMapping.IsSuitableForNested(elementType))
+        {
+            return null;
+        }
+
+        // Build field mappings from the element type's properties
+        var properties = ClickHouseNestedTypeMapping.GetMappableProperties(elementType);
+        var fieldMappings = new List<(string Name, System.Reflection.PropertyInfo Property, RelationalTypeMapping Mapping)>();
+
+        foreach (var prop in properties)
+        {
+            var propType = prop.PropertyType;
+            var propMapping = FindMapping(new RelationalTypeMappingInfo(propType));
+            if (propMapping is null)
+            {
+                return null;
+            }
+
+            fieldMappings.Add((prop.Name, prop, propMapping));
+        }
+
+        return new ClickHouseNestedTypeMapping(clrType, elementType, fieldMappings);
+    }
+
     // Regex patterns for parsing ClickHouse type names
     [GeneratedRegex(@"^Nullable\((.+)\)$", RegexOptions.IgnoreCase)]
     private static partial Regex NullableRegex();
@@ -665,4 +769,7 @@ public partial class ClickHouseTypeMappingSource : RelationalTypeMappingSource
 
     [GeneratedRegex(@"^SimpleAggregateFunction\((\w+),\s*(.+)\)$", RegexOptions.IgnoreCase)]
     private static partial Regex SimpleAggregateFunctionRegex();
+
+    [GeneratedRegex(@"^Nested\((.+)\)$", RegexOptions.IgnoreCase)]
+    private static partial Regex NestedRegex();
 }

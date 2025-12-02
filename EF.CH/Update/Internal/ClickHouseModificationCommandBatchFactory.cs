@@ -1,5 +1,7 @@
+using System.Collections;
 using System.Text;
 using EF.CH.Infrastructure;
+using EF.CH.Storage.Internal.TypeMappings;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -135,10 +137,13 @@ public class ClickHouseModificationCommandBatch : ModificationCommandBatch
             .Where(c => c.IsWrite)
             .ToList();
 
-        for (var i = 0; i < columns.Count; i++)
+        // Build expanded column list (handles Nested columns)
+        var expandedColumns = ExpandColumnsForNested(columns, sqlHelper);
+
+        for (var i = 0; i < expandedColumns.Count; i++)
         {
             if (i > 0) _sqlBuilder.Append(", ");
-            _sqlBuilder.Append(sqlHelper.DelimitIdentifier(columns[i].ColumnName));
+            _sqlBuilder.Append(expandedColumns[i].QuotedName);
         }
 
         _sqlBuilder.Append(") VALUES ");
@@ -154,16 +159,110 @@ public class ClickHouseModificationCommandBatch : ModificationCommandBatch
                 .Where(c => c.IsWrite)
                 .ToList();
 
+            var valueIndex = 0;
             for (var i = 0; i < rowColumns.Count; i++)
             {
-                if (i > 0) _sqlBuilder.Append(", ");
-                AppendValue(rowColumns[i]);
+                var column = rowColumns[i];
+
+                if (column.TypeMapping is ClickHouseNestedTypeMapping nestedMapping)
+                {
+                    // Expand Nested column into parallel arrays
+                    AppendNestedValues(column, nestedMapping, ref valueIndex);
+                }
+                else
+                {
+                    if (valueIndex > 0) _sqlBuilder.Append(", ");
+                    AppendValue(column);
+                    valueIndex++;
+                }
             }
 
             _sqlBuilder.Append(")");
         }
 
         return _sqlBuilder.ToString();
+    }
+
+    /// <summary>
+    /// Expands columns for Nested types into their sub-columns.
+    /// For a Nested column "Goals" with fields ID and EventTime, this returns:
+    /// "Goals.ID", "Goals.EventTime" instead of just "Goals".
+    /// </summary>
+    private List<(string QuotedName, IColumnModification? Column, ClickHouseNestedTypeMapping? NestedMapping, int FieldIndex)> ExpandColumnsForNested(
+        List<IColumnModification> columns, ISqlGenerationHelper sqlHelper)
+    {
+        var result = new List<(string, IColumnModification?, ClickHouseNestedTypeMapping?, int)>();
+
+        foreach (var column in columns)
+        {
+            if (column.TypeMapping is ClickHouseNestedTypeMapping nestedMapping)
+            {
+                // Expand into sub-columns: "ColumnName.FieldName"
+                for (var fieldIndex = 0; fieldIndex < nestedMapping.FieldMappings.Count; fieldIndex++)
+                {
+                    var field = nestedMapping.FieldMappings[fieldIndex];
+                    var subColumnName = $"{column.ColumnName}.{field.Name}";
+                    result.Add((sqlHelper.DelimitIdentifier(subColumnName), column, nestedMapping, fieldIndex));
+                }
+            }
+            else
+            {
+                result.Add((sqlHelper.DelimitIdentifier(column.ColumnName), column, null, -1));
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Appends values for a Nested column as parallel arrays.
+    /// For a Nested(ID UInt32, EventTime DateTime) column with value [{ID:1, EventTime:t1}, {ID:2, EventTime:t2}],
+    /// this outputs: [1, 2], ['t1', 't2']
+    /// </summary>
+    private void AppendNestedValues(IColumnModification column, ClickHouseNestedTypeMapping nestedMapping, ref int valueIndex)
+    {
+        var value = column.Value;
+
+        // Collect all items from the collection
+        var items = new List<object>();
+        if (value is not null)
+        {
+            foreach (var item in (IEnumerable)value)
+            {
+                if (item is not null)
+                {
+                    items.Add(item);
+                }
+            }
+        }
+
+        // Generate an array for each field in the Nested type
+        for (var fieldIndex = 0; fieldIndex < nestedMapping.FieldMappings.Count; fieldIndex++)
+        {
+            if (valueIndex > 0) _sqlBuilder.Append(", ");
+
+            var (_, property, fieldMapping) = nestedMapping.FieldMappings[fieldIndex];
+
+            _sqlBuilder.Append('[');
+
+            for (var itemIndex = 0; itemIndex < items.Count; itemIndex++)
+            {
+                if (itemIndex > 0) _sqlBuilder.Append(", ");
+
+                var fieldValue = property.GetValue(items[itemIndex]);
+                if (fieldValue is null)
+                {
+                    _sqlBuilder.Append("NULL");
+                }
+                else
+                {
+                    _sqlBuilder.Append(fieldMapping.GenerateSqlLiteral(fieldValue));
+                }
+            }
+
+            _sqlBuilder.Append(']');
+            valueIndex++;
+        }
     }
 
     private string BuildDeleteCommand(IReadOnlyModificationCommand command)

@@ -131,4 +131,98 @@ public static class ClickHousePropertyBuilderExtensions
         propertyBuilder.HasColumnType($"SimpleAggregateFunction({functionName}, {storeType})");
         return propertyBuilder;
     }
+
+    #region LowCardinality
+
+    /// <summary>
+    /// Configures the property to use ClickHouse LowCardinality storage optimization.
+    /// </summary>
+    /// <remarks>
+    /// LowCardinality is a storage optimization for columns with low cardinality (typically &lt;10,000 unique values).
+    /// It uses dictionary encoding which significantly reduces storage size and improves query performance
+    /// for columns like status codes, country codes, category names, etc.
+    ///
+    /// ClickHouse automatically determines when to use LowCardinality based on column statistics,
+    /// but you can explicitly request it with this method when you know the column has low cardinality.
+    ///
+    /// For nullable string properties, this method automatically uses LowCardinality(Nullable(String)).
+    /// </remarks>
+    /// <typeparam name="TProperty">The property type (string or string?).</typeparam>
+    /// <param name="propertyBuilder">The property builder.</param>
+    /// <returns>The property builder for chaining.</returns>
+    /// <example>
+    /// <code>
+    /// modelBuilder.Entity&lt;Order&gt;(entity =>
+    /// {
+    ///     entity.Property(e => e.Status)
+    ///         .HasLowCardinality();
+    ///
+    ///     entity.Property(e => e.CountryCode)
+    ///         .HasLowCardinality();
+    /// });
+    /// </code>
+    /// </example>
+    public static PropertyBuilder<TProperty> HasLowCardinality<TProperty>(
+        this PropertyBuilder<TProperty> propertyBuilder)
+    {
+        ArgumentNullException.ThrowIfNull(propertyBuilder);
+
+        // Check if the property is nullable
+        var isNullable = propertyBuilder.Metadata.IsNullable;
+        var columnType = isNullable
+            ? "LowCardinality(Nullable(String))"
+            : "LowCardinality(String)";
+
+        propertyBuilder.HasColumnType(columnType);
+        return propertyBuilder;
+    }
+
+    /// <summary>
+    /// Configures the property to use ClickHouse LowCardinality with FixedString storage.
+    /// </summary>
+    /// <remarks>
+    /// FixedString is efficient for strings with a known, fixed maximum length like:
+    /// - ISO country codes (2-3 characters)
+    /// - Currency codes (3 characters)
+    /// - Status codes with fixed length
+    ///
+    /// Combined with LowCardinality, this provides optimal storage for low-cardinality fixed-length strings.
+    ///
+    /// For nullable string properties, this method automatically uses LowCardinality(Nullable(FixedString(n))).
+    /// </remarks>
+    /// <typeparam name="TProperty">The property type (string or string?).</typeparam>
+    /// <param name="propertyBuilder">The property builder.</param>
+    /// <param name="length">The fixed string length in bytes.</param>
+    /// <returns>The property builder for chaining.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">Thrown when length is less than 1.</exception>
+    /// <example>
+    /// <code>
+    /// modelBuilder.Entity&lt;Country&gt;(entity =>
+    /// {
+    ///     entity.Property(e => e.IsoCode)
+    ///         .HasLowCardinalityFixedString(2); // "US", "UK", "DE", etc.
+    ///
+    ///     entity.Property(e => e.CurrencyCode)
+    ///         .HasLowCardinalityFixedString(3); // "USD", "EUR", "GBP", etc.
+    /// });
+    /// </code>
+    /// </example>
+    public static PropertyBuilder<TProperty> HasLowCardinalityFixedString<TProperty>(
+        this PropertyBuilder<TProperty> propertyBuilder,
+        int length)
+    {
+        ArgumentNullException.ThrowIfNull(propertyBuilder);
+        ArgumentOutOfRangeException.ThrowIfLessThan(length, 1);
+
+        // Check if the property is nullable
+        var isNullable = propertyBuilder.Metadata.IsNullable;
+        var columnType = isNullable
+            ? $"LowCardinality(Nullable(FixedString({length})))"
+            : $"LowCardinality(FixedString({length}))";
+
+        propertyBuilder.HasColumnType(columnType);
+        return propertyBuilder;
+    }
+
+    #endregion
 }
