@@ -1,9 +1,11 @@
 using System.Reflection;
+using EF.CH.Metadata;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Query.SqlExpressions;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace EF.CH.Query.Internal.Translators;
 
@@ -14,10 +16,14 @@ namespace EF.CH.Query.Internal.Translators;
 public class ClickHouseAggregateMethodCallTranslator : IAggregateMethodCallTranslator
 {
     private readonly ClickHouseSqlExpressionFactory _sqlExpressionFactory;
+    private readonly IRelationalTypeMappingSource _typeMappingSource;
 
-    public ClickHouseAggregateMethodCallTranslator(ClickHouseSqlExpressionFactory sqlExpressionFactory)
+    public ClickHouseAggregateMethodCallTranslator(
+        ClickHouseSqlExpressionFactory sqlExpressionFactory,
+        IRelationalTypeMappingSource typeMappingSource)
     {
         _sqlExpressionFactory = sqlExpressionFactory;
+        _typeMappingSource = typeMappingSource;
     }
 
     public SqlExpression? Translate(
@@ -52,6 +58,7 @@ public class ClickHouseAggregateMethodCallTranslator : IAggregateMethodCallTrans
 
     /// <summary>
     /// Translates Average to avgOrNull for null-safe behavior.
+    /// For defaultForNull columns, uses avgOrNullIf to exclude defaultForNull values.
     /// </summary>
     private SqlExpression? TranslateAverage(
         EnumerableExpression source,
@@ -65,16 +72,30 @@ public class ClickHouseAggregateMethodCallTranslator : IAggregateMethodCallTrans
         }
 
         // For integer types, convert to Float64 first to avoid integer division
+        var convertedArgument = argument;
         if (argument.Type == typeof(int) || argument.Type == typeof(long) ||
             argument.Type == typeof(short) || argument.Type == typeof(byte))
         {
-            argument = _sqlExpressionFactory.Convert(argument, typeof(double));
+            convertedArgument = _sqlExpressionFactory.Convert(argument, typeof(double));
+        }
+
+        // Check if this column has a defaultForNull default
+        var defaultForNullCondition = TryCreateSentinelExclusionCondition(argument);
+        if (defaultForNullCondition != null)
+        {
+            // Use avgOrNullIf(value, condition) to exclude defaultForNull values
+            return _sqlExpressionFactory.Function(
+                "avgOrNullIf",
+                new[] { convertedArgument, defaultForNullCondition },
+                nullable: true,
+                argumentsPropagateNullability: new[] { false, false },
+                returnType);
         }
 
         // Use avgOrNull for null-safe behavior (returns NULL for empty set)
         return _sqlExpressionFactory.Function(
             "avgOrNull",
-            new[] { argument },
+            new[] { convertedArgument },
             nullable: true,
             argumentsPropagateNullability: new[] { false },
             returnType);
@@ -82,6 +103,7 @@ public class ClickHouseAggregateMethodCallTranslator : IAggregateMethodCallTrans
 
     /// <summary>
     /// Translates Sum to sumOrNull for null-safe behavior.
+    /// For defaultForNull columns, uses sumOrNullIf to exclude defaultForNull values.
     /// </summary>
     private SqlExpression? TranslateSum(
         EnumerableExpression source,
@@ -92,6 +114,19 @@ public class ClickHouseAggregateMethodCallTranslator : IAggregateMethodCallTrans
         if (argument is null)
         {
             return null;
+        }
+
+        // Check if this column has a defaultForNull default
+        var defaultForNullCondition = TryCreateSentinelExclusionCondition(argument);
+        if (defaultForNullCondition != null)
+        {
+            // Use sumOrNullIf(value, condition) to exclude defaultForNull values
+            return _sqlExpressionFactory.Function(
+                "sumOrNullIf",
+                new[] { argument, defaultForNullCondition },
+                nullable: true,
+                argumentsPropagateNullability: new[] { false, false },
+                returnType);
         }
 
         // Use sumOrNull for null-safe behavior (returns NULL for empty set)
@@ -105,6 +140,7 @@ public class ClickHouseAggregateMethodCallTranslator : IAggregateMethodCallTrans
 
     /// <summary>
     /// Translates Min to minOrNull for null-safe behavior.
+    /// For defaultForNull columns, uses minOrNullIf to exclude defaultForNull values.
     /// </summary>
     private SqlExpression? TranslateMin(
         EnumerableExpression source,
@@ -117,6 +153,19 @@ public class ClickHouseAggregateMethodCallTranslator : IAggregateMethodCallTrans
             return null;
         }
 
+        // Check if this column has a defaultForNull default
+        var defaultForNullCondition = TryCreateSentinelExclusionCondition(argument);
+        if (defaultForNullCondition != null)
+        {
+            // Use minOrNullIf(value, condition) to exclude defaultForNull values
+            return _sqlExpressionFactory.Function(
+                "minOrNullIf",
+                new[] { argument, defaultForNullCondition },
+                nullable: true,
+                argumentsPropagateNullability: new[] { false, false },
+                returnType);
+        }
+
         return _sqlExpressionFactory.Function(
             "minOrNull",
             new[] { argument },
@@ -127,6 +176,7 @@ public class ClickHouseAggregateMethodCallTranslator : IAggregateMethodCallTrans
 
     /// <summary>
     /// Translates Max to maxOrNull for null-safe behavior.
+    /// For defaultForNull columns, uses maxOrNullIf to exclude defaultForNull values.
     /// </summary>
     private SqlExpression? TranslateMax(
         EnumerableExpression source,
@@ -137,6 +187,19 @@ public class ClickHouseAggregateMethodCallTranslator : IAggregateMethodCallTrans
         if (argument is null)
         {
             return null;
+        }
+
+        // Check if this column has a defaultForNull default
+        var defaultForNullCondition = TryCreateSentinelExclusionCondition(argument);
+        if (defaultForNullCondition != null)
+        {
+            // Use maxOrNullIf(value, condition) to exclude defaultForNull values
+            return _sqlExpressionFactory.Function(
+                "maxOrNullIf",
+                new[] { argument, defaultForNullCondition },
+                nullable: true,
+                argumentsPropagateNullability: new[] { false, false },
+                returnType);
         }
 
         return _sqlExpressionFactory.Function(
@@ -241,6 +304,36 @@ public class ClickHouseAggregateMethodCallTranslator : IAggregateMethodCallTrans
         // For simple aggregates like Count(), we might not have a selector
         return null;
     }
+
+    /// <summary>
+    /// Creates a condition to exclude defaultForNull values from aggregation.
+    /// Returns column != defaultForNull for columns with defaultForNull defaults.
+    /// </summary>
+    /// <remarks>
+    /// Uses the defaultForNull mappings set up by ClickHouseSqlNullabilityProcessor.
+    /// This allows aggregates like AVG, SUM, MIN, MAX to automatically exclude
+    /// defaultForNull values (which represent NULL in .NET) from calculations.
+    /// </remarks>
+    private SqlExpression? TryCreateSentinelExclusionCondition(SqlExpression argument)
+    {
+        // Only handle column expressions
+        if (argument is not ColumnExpression column)
+        {
+            return null;
+        }
+
+        // Look up the defaultForNull value for this column
+        var defaultForNull = ClickHouseSqlNullabilityProcessor.GetDefaultForNullValue(column.Name);
+        if (defaultForNull == null)
+        {
+            return null;
+        }
+
+        // Create: column != defaultForNull
+        var typeMapping = _typeMappingSource.FindMapping(defaultForNull.GetType());
+        var defaultForNullConstant = _sqlExpressionFactory.Constant(defaultForNull, typeMapping);
+        return _sqlExpressionFactory.NotEqual(column, defaultForNullConstant);
+    }
 }
 
 /// <summary>
@@ -251,10 +344,12 @@ public class ClickHouseAggregateMethodCallTranslatorProvider : IAggregateMethodC
     private readonly ClickHouseAggregateMethodCallTranslator _translator;
 
     public ClickHouseAggregateMethodCallTranslatorProvider(
-        ISqlExpressionFactory sqlExpressionFactory)
+        ISqlExpressionFactory sqlExpressionFactory,
+        IRelationalTypeMappingSource typeMappingSource)
     {
         _translator = new ClickHouseAggregateMethodCallTranslator(
-            (ClickHouseSqlExpressionFactory)sqlExpressionFactory);
+            (ClickHouseSqlExpressionFactory)sqlExpressionFactory,
+            typeMappingSource);
     }
 
     public SqlExpression? Translate(

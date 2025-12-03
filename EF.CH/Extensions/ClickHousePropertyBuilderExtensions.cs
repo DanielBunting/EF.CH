@@ -1,3 +1,5 @@
+using EF.CH.Metadata;
+using EF.CH.Storage.Internal;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
@@ -221,6 +223,129 @@ public static class ClickHousePropertyBuilderExtensions
             : $"LowCardinality(FixedString({length}))";
 
         propertyBuilder.HasColumnType(columnType);
+        return propertyBuilder;
+    }
+
+    #endregion
+
+    #region Default For Null
+
+    /// <summary>
+    /// Configures this nullable property to store a default value instead of NULL.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// ClickHouse has performance overhead for Nullable(T) columns due to the additional
+    /// bitmask required to track null values. This method allows you to use a default value
+    /// (e.g., 0, empty string, Guid.Empty) instead of NULL.
+    /// </para>
+    /// <para>
+    /// The column will be generated as non-nullable with this value as the DEFAULT.
+    /// </para>
+    /// <para>
+    /// <b>WARNING:</b> The default value cannot be distinguished from NULL. If you store
+    /// the default value explicitly, it will be read back as null. Choose a default that
+    /// is never a valid business value for this column.
+    /// </para>
+    /// <para>
+    /// <b>Aggregation behavior:</b> Aggregate functions (AVG, SUM, MIN, MAX) automatically
+    /// exclude rows where the column equals the default value, treating them as null.
+    /// </para>
+    /// <para>
+    /// <b>Known limitations:</b>
+    /// </para>
+    /// <list type="bullet">
+    ///   <item>
+    ///     <description>
+    ///       <b>Use <c>== null</c> instead of <c>.HasValue</c>:</b> The <c>.HasValue</c> property
+    ///       is optimized away by EF Core since the database column is non-nullable.
+    ///       Use <c>e.Score == null</c> instead of <c>e.Score.HasValue</c>.
+    ///     </description>
+    ///   </item>
+    ///   <item>
+    ///     <description>
+    ///       <b>Use conditional instead of <c>??</c> coalesce:</b> The null-coalescing operator
+    ///       won't work because ClickHouse stores the default value (not NULL).
+    ///       Use <c>e.Score == null ? fallback : e.Score</c> instead of <c>e.Score ?? fallback</c>.
+    ///     </description>
+    ///   </item>
+    ///   <item>
+    ///     <description>
+    ///       <b>Raw SQL bypasses conversion:</b> When using raw SQL queries, you'll get
+    ///       the stored default value (e.g., 0), not null. The value converter only applies
+    ///       to LINQ queries.
+    ///     </description>
+    ///   </item>
+    ///   <item>
+    ///     <description>
+    ///       <b>Comparing to the default value matches "null" rows:</b> A query like
+    ///       <c>Where(e => e.Score == 0)</c> will match both rows where Score was explicitly
+    ///       set to 0 and rows where Score is null.
+    ///     </description>
+    ///   </item>
+    /// </list>
+    /// </remarks>
+    /// <typeparam name="TProperty">The property type (must be nullable).</typeparam>
+    /// <param name="propertyBuilder">The property builder.</param>
+    /// <param name="defaultValue">The default value to represent null. This value will be stored
+    /// in the database instead of NULL, and will be converted back to null when read.</param>
+    /// <returns>The property builder for chaining.</returns>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when called on a non-nullable property.
+    /// </exception>
+    /// <example>
+    /// <code>
+    /// modelBuilder.Entity&lt;Order&gt;(entity =>
+    /// {
+    ///     // Use 0 as default for nullable int
+    ///     entity.Property(e => e.DiscountPercent)
+    ///         .HasDefaultForNull(0);
+    ///
+    ///     // Use empty string as default for nullable string
+    ///     entity.Property(e => e.Notes)
+    ///         .HasDefaultForNull("");
+    ///
+    ///     // Use Guid.Empty as default for nullable Guid
+    ///     entity.Property(e => e.ExternalId)
+    ///         .HasDefaultForNull(Guid.Empty);
+    /// });
+    ///
+    /// // Queries work transparently:
+    /// context.Orders.Where(o => o.DiscountPercent == null)
+    /// // Translates to: WHERE DiscountPercent = 0
+    ///
+    /// // Use conditional instead of coalesce:
+    /// context.Orders.Select(o => o.DiscountPercent == null ? 0 : o.DiscountPercent.Value)
+    /// // NOT: context.Orders.Select(o => o.DiscountPercent ?? 0)
+    /// </code>
+    /// </example>
+    public static PropertyBuilder<TProperty> HasDefaultForNull<TProperty>(
+        this PropertyBuilder<TProperty> propertyBuilder,
+        TProperty defaultValue)
+    {
+        ArgumentNullException.ThrowIfNull(propertyBuilder);
+
+        var clrType = propertyBuilder.Metadata.ClrType;
+        var isNullableValueType = Nullable.GetUnderlyingType(clrType) != null;
+        var isNullableReferenceType = !clrType.IsValueType;
+
+        if (!isNullableValueType && !isNullableReferenceType)
+        {
+            throw new InvalidOperationException(
+                $"HasDefaultForNull can only be used on nullable properties. " +
+                $"Property '{propertyBuilder.Metadata.Name}' is of non-nullable type '{clrType.Name}'.");
+        }
+
+        // Store the default value as an annotation
+        propertyBuilder.HasAnnotation(ClickHouseAnnotationNames.DefaultForNull, defaultValue);
+
+        // Apply the appropriate value converter
+        var converter = DefaultForNullValueConverterFactory.Create(clrType, defaultValue!);
+        if (converter != null)
+        {
+            propertyBuilder.HasConversion(converter);
+        }
+
         return propertyBuilder;
     }
 

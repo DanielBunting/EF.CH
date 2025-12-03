@@ -23,6 +23,9 @@ public class ClickHouseQueryTranslationPostprocessor : RelationalQueryTranslatio
 
     public override Expression Process(Expression query)
     {
+        // Set up default-for-null mappings for null comparison rewriting in SQL nullability processor
+        ClickHouseSqlNullabilityProcessor.SetDefaultForNullMappings(_queryCompilationContext.Model);
+
         // Let base class do standard processing first
         query = base.Process(query);
 

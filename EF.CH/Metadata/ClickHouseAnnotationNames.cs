@@ -89,6 +89,16 @@ public static class ClickHouseAnnotationNames
 
     #endregion
 
+    #region Default For Null
+
+    /// <summary>
+    /// The default value to use instead of NULL for this property.
+    /// When set, the column is generated as non-nullable with this value as the DEFAULT.
+    /// </summary>
+    public const string DefaultForNull = Prefix + "DefaultForNull";
+
+    #endregion
+
     #region Enum Types
 
     /// <summary>

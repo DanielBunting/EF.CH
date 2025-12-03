@@ -3,6 +3,7 @@ using System.Net;
 using System.Numerics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using EF.CH.Metadata;
 using EF.CH.Storage.Internal.TypeMappings;
 using Microsoft.EntityFrameworkCore.Storage;
 
@@ -169,6 +170,9 @@ public partial class ClickHouseTypeMappingSource : RelationalTypeMappingSource
             if (ClrTypeMappings.TryGetValue(underlyingType, out var mapping))
             {
                 // For nullable types, wrap in Nullable() in ClickHouse
+                // Note: Properties with sentinel defaults will have a value converter that
+                // converts null to the sentinel value. When a value converter is present,
+                // EF Core uses the provider type (non-nullable) for the store type.
                 if (Nullable.GetUnderlyingType(clrType) is not null)
                 {
                     return mapping.WithStoreTypeAndSize($"Nullable({mapping.StoreType})", null);

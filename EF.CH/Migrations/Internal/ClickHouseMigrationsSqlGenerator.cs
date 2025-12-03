@@ -462,8 +462,12 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
             ?? GetColumnType(operation.Schema, operation.Table, operation.Name, operation, model)
             ?? "String"; // Default to String if type cannot be determined
 
-        // Wrap nullable columns with Nullable()
-        if (operation.IsNullable && !columnType.StartsWith("Nullable(", StringComparison.OrdinalIgnoreCase))
+        // Check for default-for-null annotation
+        var defaultForNull = GetPropertyDefaultForNull(model, operation.Schema, operation.Table, operation.Name);
+
+        // Wrap nullable columns with Nullable() - unless using default-for-null
+        if (operation.IsNullable && defaultForNull == null &&
+            !columnType.StartsWith("Nullable(", StringComparison.OrdinalIgnoreCase))
         {
             builder.Append($"Nullable({columnType})");
         }
@@ -472,8 +476,15 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
             builder.Append(columnType);
         }
 
-        // Default value
-        if (operation.DefaultValue != null)
+        // Default value - default-for-null takes precedence
+        if (defaultForNull != null)
+        {
+            var typeMapping = _typeMappingSource.FindMapping(defaultForNull.GetType());
+            builder.Append(" DEFAULT ");
+            builder.Append(typeMapping?.GenerateSqlLiteral(defaultForNull)
+                ?? defaultForNull.ToString() ?? "0");
+        }
+        else if (operation.DefaultValue != null)
         {
             var typeMapping = _typeMappingSource.FindMapping(operation.DefaultValue.GetType());
             builder.Append(" DEFAULT ");
@@ -485,6 +496,33 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
             builder.Append(" DEFAULT ");
             builder.Append(operation.DefaultValueSql);
         }
+    }
+
+    /// <summary>
+    /// Gets the default-for-null value for a property, if configured.
+    /// </summary>
+    private static object? GetPropertyDefaultForNull(IModel? model, string? schema, string table, string columnName)
+    {
+        if (model == null)
+            return null;
+
+        // Find the entity type by table name
+        var entityType = model.GetEntityTypes()
+            .FirstOrDefault(e => e.GetTableName() == table
+                              && (e.GetSchema() ?? model.GetDefaultSchema()) == schema);
+
+        if (entityType == null)
+            return null;
+
+        // Find the property by column name
+        var property = entityType.GetProperties()
+            .FirstOrDefault(p => (p.GetColumnName() ?? p.Name) == columnName);
+
+        if (property == null)
+            return null;
+
+        // Return the default-for-null value if configured
+        return property.FindAnnotation(ClickHouseAnnotationNames.DefaultForNull)?.Value;
     }
 
     /// <summary>
@@ -594,8 +632,12 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
             ?? GetColumnType(operation.Schema, operation.Table, operation.Name, operation, model)
             ?? "String";
 
-        // Wrap nullable columns with Nullable()
-        if (operation.IsNullable && !columnType.StartsWith("Nullable(", StringComparison.OrdinalIgnoreCase))
+        // Check for default-for-null annotation
+        var defaultForNull = GetPropertyDefaultForNull(model, operation.Schema, operation.Table, operation.Name);
+
+        // Wrap nullable columns with Nullable() - unless using default-for-null
+        if (operation.IsNullable && defaultForNull == null &&
+            !columnType.StartsWith("Nullable(", StringComparison.OrdinalIgnoreCase))
         {
             columnType = $"Nullable({columnType})";
         }
@@ -608,8 +650,15 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
             .Append(" ")
             .Append(columnType);
 
-        // Default value
-        if (operation.DefaultValue != null)
+        // Default value - default-for-null takes precedence
+        if (defaultForNull != null)
+        {
+            var typeMapping = _typeMappingSource.FindMapping(defaultForNull.GetType());
+            builder.Append(" DEFAULT ");
+            builder.Append(typeMapping?.GenerateSqlLiteral(defaultForNull)
+                ?? defaultForNull.ToString() ?? "0");
+        }
+        else if (operation.DefaultValue != null)
         {
             var typeMapping = _typeMappingSource.FindMapping(operation.DefaultValue.GetType());
             builder.Append(" DEFAULT ");
