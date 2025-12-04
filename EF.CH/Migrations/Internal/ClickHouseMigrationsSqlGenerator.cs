@@ -466,8 +466,10 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         var defaultForNull = GetPropertyDefaultForNull(model, operation.Schema, operation.Table, operation.Name);
 
         // Wrap nullable columns with Nullable() - unless using default-for-null
+        // Also skip if type already contains Nullable() (e.g., LowCardinality(Nullable(String)))
         if (operation.IsNullable && defaultForNull == null &&
-            !columnType.StartsWith("Nullable(", StringComparison.OrdinalIgnoreCase))
+            !columnType.StartsWith("Nullable(", StringComparison.OrdinalIgnoreCase) &&
+            !columnType.Contains("Nullable(", StringComparison.OrdinalIgnoreCase))
         {
             builder.Append($"Nullable({columnType})");
         }
@@ -636,8 +638,10 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         var defaultForNull = GetPropertyDefaultForNull(model, operation.Schema, operation.Table, operation.Name);
 
         // Wrap nullable columns with Nullable() - unless using default-for-null
+        // Also skip if type already contains Nullable() (e.g., LowCardinality(Nullable(String)))
         if (operation.IsNullable && defaultForNull == null &&
-            !columnType.StartsWith("Nullable(", StringComparison.OrdinalIgnoreCase))
+            !columnType.StartsWith("Nullable(", StringComparison.OrdinalIgnoreCase) &&
+            !columnType.Contains("Nullable(", StringComparison.OrdinalIgnoreCase))
         {
             columnType = $"Nullable({columnType})";
         }

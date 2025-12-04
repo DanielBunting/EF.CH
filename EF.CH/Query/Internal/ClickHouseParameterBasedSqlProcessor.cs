@@ -18,11 +18,10 @@ public class ClickHouseParameterBasedSqlProcessor : RelationalParameterBasedSqlP
     /// <inheritdoc />
     protected override Expression ProcessSqlNullability(
         Expression queryExpression,
-        IReadOnlyDictionary<string, object?> parametersValues,
-        out bool canCache)
+        ParametersCacheDecorator decorator)
     {
         return new ClickHouseSqlNullabilityProcessor(Dependencies, Parameters)
-            .Process(queryExpression, parametersValues, out canCache);
+            .Process(queryExpression, decorator);
     }
 }
 

@@ -75,10 +75,10 @@ public class OptimizeTableTests : IAsyncLifetime
 
         // Verify deduplication occurred - should only have latest version
         var count = await context.Database
-            .SqlQueryRaw<long>(@"SELECT count() as ""Value"" FROM ""OptimizeTestEvents""")
+            .SqlQueryRaw<ulong>(@"SELECT count() as ""Value"" FROM ""OptimizeTestEvents""")
             .FirstAsync();
 
-        Assert.Equal(1, count);
+        Assert.Equal(1UL, count);
     }
 
     [Fact]
@@ -232,7 +232,7 @@ public class OptimizeTableTests : IAsyncLifetime
     {
         await using var context = CreateContext();
 
-        await Assert.ThrowsAsync<ArgumentException>(() =>
+        await Assert.ThrowsAsync<ArgumentNullException>(() =>
             context.Database.OptimizeTableAsync(null!, CancellationToken.None));
     }
 

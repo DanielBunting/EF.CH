@@ -48,6 +48,38 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
     }
 
     /// <summary>
+    /// Constructor for subquery visitors. Shares state with the parent visitor.
+    /// </summary>
+    protected ClickHouseQueryableMethodTranslatingExpressionVisitor(
+        ClickHouseQueryableMethodTranslatingExpressionVisitor parentVisitor)
+        : base(parentVisitor)
+    {
+        _options = parentVisitor._options;
+    }
+
+    /// <summary>
+    /// Creates a visitor for translating subqueries. Returns our custom type to ensure
+    /// EnumerableExpression handling works correctly in subqueries.
+    /// </summary>
+    protected override QueryableMethodTranslatingExpressionVisitor CreateSubqueryVisitor()
+        => new ClickHouseQueryableMethodTranslatingExpressionVisitor(this);
+
+    /// <summary>
+    /// Handles extension expressions, including EnumerableExpression which cannot have VisitChildren called on it in EF Core 10+.
+    /// </summary>
+    protected override Expression VisitExtension(Expression extensionExpression)
+    {
+        // EnumerableExpression.VisitChildren throws "VisitIsNotAllowed" in EF Core 10+
+        // Return unchanged - the aggregate translator will handle it properly
+        if (extensionExpression is EnumerableExpression)
+        {
+            return extensionExpression;
+        }
+
+        return base.VisitExtension(extensionExpression);
+    }
+
+    /// <summary>
     /// Handles ClickHouse-specific extension methods like Final() and Sample().
     /// </summary>
     protected override Expression VisitMethodCall(MethodCallExpression methodCallExpression)

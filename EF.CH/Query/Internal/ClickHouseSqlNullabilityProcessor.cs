@@ -75,11 +75,11 @@ public class ClickHouseSqlNullabilityProcessor : SqlNullabilityProcessor
     }
 
     /// <summary>
-    /// Visits table expressions, handling ClickHouse-specific expressions.
+    /// Visits extension expressions, handling ClickHouse-specific expressions like ClickHouseTableModifierExpression.
     /// </summary>
-    protected override TableExpressionBase Visit(TableExpressionBase tableExpressionBase)
+    protected override Expression VisitExtension(Expression node)
     {
-        if (tableExpressionBase is ClickHouseTableModifierExpression modifierExpression)
+        if (node is ClickHouseTableModifierExpression modifierExpression)
         {
             // Visit the wrapped table expression
             var visitedTable = Visit(modifierExpression.Table);
@@ -87,14 +87,14 @@ public class ClickHouseSqlNullabilityProcessor : SqlNullabilityProcessor
             // Return a new modifier expression with the visited table
             return visitedTable != modifierExpression.Table
                 ? new ClickHouseTableModifierExpression(
-                    visitedTable,
+                    (TableExpressionBase)visitedTable,
                     modifierExpression.UseFinal,
                     modifierExpression.SampleFraction,
                     modifierExpression.SampleOffset)
                 : modifierExpression;
         }
 
-        return base.Visit(tableExpressionBase);
+        return base.VisitExtension(node);
     }
 
     /// <summary>

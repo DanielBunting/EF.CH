@@ -89,6 +89,13 @@ internal class ClickHouseTableModifierApplyingVisitor : ExpressionVisitor
             return shapedQuery;
         }
 
+        // EnumerableExpression.VisitChildren throws in EF Core 10+
+        // Return it unchanged to prevent the exception
+        if (node is EnumerableExpression)
+        {
+            return node;
+        }
+
         // For other extension expressions, use the default visitor behavior
         // base.VisitExtension calls node.VisitChildren which works for most expression types
         return base.VisitExtension(node);

@@ -13,10 +13,13 @@ namespace EF.CH.Query.Internal.Translators;
 /// Translates LINQ aggregate methods to ClickHouse SQL aggregate functions.
 /// Uses *OrNull variants per design decision for null-safe behavior.
 /// </summary>
-public class ClickHouseAggregateMethodCallTranslator : IAggregateMethodCallTranslator
+public class ClickHouseAggregateMethodCallTranslator
 {
     private readonly ClickHouseSqlExpressionFactory _sqlExpressionFactory;
     private readonly IRelationalTypeMappingSource _typeMappingSource;
+
+    // Model reference for defaultForNull lookups during translation
+    private IModel? _currentModel;
 
     public ClickHouseAggregateMethodCallTranslator(
         ClickHouseSqlExpressionFactory sqlExpressionFactory,
@@ -27,11 +30,15 @@ public class ClickHouseAggregateMethodCallTranslator : IAggregateMethodCallTrans
     }
 
     public SqlExpression? Translate(
+        IModel model,
         MethodInfo method,
         EnumerableExpression source,
         IReadOnlyList<SqlExpression> arguments,
         IDiagnosticsLogger<DbLoggerCategory.Query> logger)
     {
+        // Store model for defaultForNull lookups
+        _currentModel = model;
+
         // Only handle Queryable and Enumerable extension methods
         if (method.DeclaringType != typeof(Queryable) &&
             method.DeclaringType != typeof(Enumerable))
@@ -41,7 +48,8 @@ public class ClickHouseAggregateMethodCallTranslator : IAggregateMethodCallTrans
 
         var methodName = method.Name;
 
-        // Get the selector expression if present
+        // Get the selector expression if present - for scalar aggregates,
+        // the selector is passed in arguments[0]
         var selector = arguments.Count > 0 ? arguments[0] : null;
 
         return methodName switch
@@ -104,6 +112,7 @@ public class ClickHouseAggregateMethodCallTranslator : IAggregateMethodCallTrans
     /// <summary>
     /// Translates Sum to sumOrNull for null-safe behavior.
     /// For defaultForNull columns, uses sumOrNullIf to exclude defaultForNull values.
+    /// ClickHouse sum returns Int64, so we wrap in toInt32/toInt64 for type compatibility.
     /// </summary>
     private SqlExpression? TranslateSum(
         EnumerableExpression source,
@@ -116,26 +125,46 @@ public class ClickHouseAggregateMethodCallTranslator : IAggregateMethodCallTrans
             return null;
         }
 
+        // ClickHouse sumOrNull returns Int64/UInt64, but we need to match the expected return type
+        // The actual return type from ClickHouse for sum
+        var clickHouseReturnType = typeof(long?);
+
+        SqlExpression sumExpr;
+
         // Check if this column has a defaultForNull default
         var defaultForNullCondition = TryCreateSentinelExclusionCondition(argument);
         if (defaultForNullCondition != null)
         {
             // Use sumOrNullIf(value, condition) to exclude defaultForNull values
-            return _sqlExpressionFactory.Function(
+            sumExpr = _sqlExpressionFactory.Function(
                 "sumOrNullIf",
                 new[] { argument, defaultForNullCondition },
                 nullable: true,
                 argumentsPropagateNullability: new[] { false, false },
-                returnType);
+                clickHouseReturnType);
+        }
+        else
+        {
+            // Use sumOrNull for null-safe behavior (returns NULL for empty set)
+            sumExpr = _sqlExpressionFactory.Function(
+                "sumOrNull",
+                new[] { argument },
+                nullable: true,
+                argumentsPropagateNullability: new[] { false },
+                clickHouseReturnType);
         }
 
-        // Use sumOrNull for null-safe behavior (returns NULL for empty set)
-        return _sqlExpressionFactory.Function(
-            "sumOrNull",
-            new[] { argument },
-            nullable: true,
-            argumentsPropagateNullability: new[] { false },
-            returnType);
+        // If return type differs from Int64, wrap in conversion
+        // Use CAST for type conversion (toInt32OrNull is for string parsing)
+        var underlyingReturnType = Nullable.GetUnderlyingType(returnType) ?? returnType;
+        if (underlyingReturnType == typeof(int))
+        {
+            // Cast Int64 to Int32
+            return _sqlExpressionFactory.Convert(sumExpr, returnType);
+        }
+
+        // For long/Int64, just ensure type mapping is correct
+        return _sqlExpressionFactory.Convert(sumExpr, returnType);
     }
 
     /// <summary>
@@ -292,13 +321,22 @@ public class ClickHouseAggregateMethodCallTranslator : IAggregateMethodCallTrans
 
     /// <summary>
     /// Gets the argument expression for an aggregate function.
+    /// In EF Core 10+, the translated selector is in EnumerableExpression.Selector,
+    /// not in the arguments list.
     /// </summary>
     private SqlExpression? GetAggregateArgument(EnumerableExpression source, SqlExpression? selector)
     {
-        // If there's a selector, use it; otherwise use the source
-        if (selector is not null)
+        // First check if selector was passed directly (some code paths)
+        if (selector is SqlExpression sqlSelector)
         {
-            return selector;
+            return sqlSelector;
+        }
+
+        // In EF Core 10+, the selector is stored in EnumerableExpression.Selector
+        // after being translated
+        if (source.Selector is SqlExpression sourceSelector)
+        {
+            return sourceSelector;
         }
 
         // For simple aggregates like Count(), we might not have a selector
@@ -310,20 +348,19 @@ public class ClickHouseAggregateMethodCallTranslator : IAggregateMethodCallTrans
     /// Returns column != defaultForNull for columns with defaultForNull defaults.
     /// </summary>
     /// <remarks>
-    /// Uses the defaultForNull mappings set up by ClickHouseSqlNullabilityProcessor.
-    /// This allows aggregates like AVG, SUM, MIN, MAX to automatically exclude
-    /// defaultForNull values (which represent NULL in .NET) from calculations.
+    /// Looks up defaultForNull annotations directly from the model to automatically exclude
+    /// defaultForNull values (which represent NULL in .NET) from aggregate calculations.
     /// </remarks>
     private SqlExpression? TryCreateSentinelExclusionCondition(SqlExpression argument)
     {
         // Only handle column expressions
-        if (argument is not ColumnExpression column)
+        if (argument is not ColumnExpression column || _currentModel == null)
         {
             return null;
         }
 
-        // Look up the defaultForNull value for this column
-        var defaultForNull = ClickHouseSqlNullabilityProcessor.GetDefaultForNullValue(column.Name);
+        // Look up the defaultForNull value for this column from the model
+        var defaultForNull = FindDefaultForNullValue(column);
         if (defaultForNull == null)
         {
             return null;
@@ -333,6 +370,45 @@ public class ClickHouseAggregateMethodCallTranslator : IAggregateMethodCallTrans
         var typeMapping = _typeMappingSource.FindMapping(defaultForNull.GetType());
         var defaultForNullConstant = _sqlExpressionFactory.Constant(defaultForNull, typeMapping);
         return _sqlExpressionFactory.NotEqual(column, defaultForNullConstant);
+    }
+
+    /// <summary>
+    /// Finds the defaultForNull value for a column by looking up the property in the model.
+    /// </summary>
+    private object? FindDefaultForNullValue(ColumnExpression column)
+    {
+        if (_currentModel == null)
+        {
+            return null;
+        }
+
+        // Search all entity types for a property matching this column
+        foreach (var entityType in _currentModel.GetEntityTypes())
+        {
+            var tableName = entityType.GetTableName();
+            if (tableName == null)
+            {
+                continue;
+            }
+
+            // Check if this column belongs to this table
+            // ColumnExpression.TableAlias might differ, so we match by column name
+            foreach (var property in entityType.GetProperties())
+            {
+                var columnName = property.GetColumnName() ?? property.Name;
+                if (string.Equals(columnName, column.Name, StringComparison.OrdinalIgnoreCase))
+                {
+                    // Found matching property, check for defaultForNull annotation
+                    var annotation = property.FindAnnotation(ClickHouseAnnotationNames.DefaultForNull);
+                    if (annotation?.Value != null)
+                    {
+                        return annotation.Value;
+                    }
+                }
+            }
+        }
+
+        return null;
     }
 }
 
@@ -359,6 +435,6 @@ public class ClickHouseAggregateMethodCallTranslatorProvider : IAggregateMethodC
         IReadOnlyList<SqlExpression> arguments,
         IDiagnosticsLogger<DbLoggerCategory.Query> logger)
     {
-        return _translator.Translate(method, source, arguments, logger);
+        return _translator.Translate(model, method, source, arguments, logger);
     }
 }
