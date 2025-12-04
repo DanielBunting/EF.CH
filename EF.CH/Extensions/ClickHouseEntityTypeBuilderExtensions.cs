@@ -202,10 +202,9 @@ public static class ClickHouseEntityTypeBuilderExtensions
     /// <param name="builder">The entity type builder.</param>
     /// <param name="orderByColumns">The columns for ORDER BY clause.</param>
     /// <returns>The entity type builder for chaining.</returns>
-    public static EntityTypeBuilder<TEntity> UseSummingMergeTree<TEntity>(
-        this EntityTypeBuilder<TEntity> builder,
+    public static EntityTypeBuilder UseSummingMergeTree(
+        this EntityTypeBuilder builder,
         params string[] orderByColumns)
-        where TEntity : class
     {
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(orderByColumns);
@@ -222,15 +221,29 @@ public static class ClickHouseEntityTypeBuilderExtensions
     }
 
     /// <summary>
+    /// Configures the entity to use a SummingMergeTree engine.
+    /// </summary>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="orderByColumns">The columns for ORDER BY clause.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    public static EntityTypeBuilder<TEntity> UseSummingMergeTree<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        params string[] orderByColumns)
+        where TEntity : class
+    {
+        ((EntityTypeBuilder)builder).UseSummingMergeTree(orderByColumns);
+        return builder;
+    }
+
+    /// <summary>
     /// Configures the entity to use an AggregatingMergeTree engine.
     /// </summary>
     /// <param name="builder">The entity type builder.</param>
     /// <param name="orderByColumns">The columns for ORDER BY clause.</param>
     /// <returns>The entity type builder for chaining.</returns>
-    public static EntityTypeBuilder<TEntity> UseAggregatingMergeTree<TEntity>(
-        this EntityTypeBuilder<TEntity> builder,
+    public static EntityTypeBuilder UseAggregatingMergeTree(
+        this EntityTypeBuilder builder,
         params string[] orderByColumns)
-        where TEntity : class
     {
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(orderByColumns);
@@ -243,6 +256,21 @@ public static class ClickHouseEntityTypeBuilderExtensions
         builder.HasAnnotation(ClickHouseAnnotationNames.Engine, "AggregatingMergeTree");
         builder.HasAnnotation(ClickHouseAnnotationNames.OrderBy, orderByColumns);
 
+        return builder;
+    }
+
+    /// <summary>
+    /// Configures the entity to use an AggregatingMergeTree engine.
+    /// </summary>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="orderByColumns">The columns for ORDER BY clause.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    public static EntityTypeBuilder<TEntity> UseAggregatingMergeTree<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        params string[] orderByColumns)
+        where TEntity : class
+    {
+        ((EntityTypeBuilder)builder).UseAggregatingMergeTree(orderByColumns);
         return builder;
     }
 

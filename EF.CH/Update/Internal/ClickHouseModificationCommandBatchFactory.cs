@@ -1,13 +1,11 @@
 using System.Collections;
 using System.Text;
-using EF.CH.Diagnostics;
 using EF.CH.Infrastructure;
 using EF.CH.Storage.Internal.TypeMappings;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.EntityFrameworkCore.Update;
-using Microsoft.Extensions.Logging;
 
 namespace EF.CH.Update.Internal;
 
@@ -19,17 +17,14 @@ public class ClickHouseModificationCommandBatchFactory : IModificationCommandBat
     private readonly ModificationCommandBatchFactoryDependencies _dependencies;
     private readonly IRelationalTypeMappingSource _typeMappingSource;
     private readonly ClickHouseDeleteStrategy _deleteStrategy;
-    private readonly ILogger<ClickHouseModificationCommandBatchFactory>? _logger;
 
     public ClickHouseModificationCommandBatchFactory(
         ModificationCommandBatchFactoryDependencies dependencies,
         IRelationalTypeMappingSource typeMappingSource,
-        IDbContextOptions options,
-        ILogger<ClickHouseModificationCommandBatchFactory>? logger = null)
+        IDbContextOptions options)
     {
         _dependencies = dependencies;
         _typeMappingSource = typeMappingSource;
-        _logger = logger;
 
         var clickHouseOptions = options.FindExtension<ClickHouseOptionsExtension>();
         _deleteStrategy = clickHouseOptions?.DeleteStrategy ?? ClickHouseDeleteStrategy.Lightweight;
@@ -37,7 +32,7 @@ public class ClickHouseModificationCommandBatchFactory : IModificationCommandBat
 
     public ModificationCommandBatch Create()
     {
-        return new ClickHouseModificationCommandBatch(_dependencies, _typeMappingSource, _deleteStrategy, _logger);
+        return new ClickHouseModificationCommandBatch(_dependencies, _typeMappingSource, _deleteStrategy);
     }
 }
 
@@ -51,7 +46,6 @@ public class ClickHouseModificationCommandBatch : ModificationCommandBatch
     private readonly ModificationCommandBatchFactoryDependencies _dependencies;
     private readonly IRelationalTypeMappingSource _typeMappingSource;
     private readonly ClickHouseDeleteStrategy _deleteStrategy;
-    private readonly ILogger? _logger;
     private readonly List<IReadOnlyModificationCommand> _commands = [];
     private readonly List<string> _statements = [];
     private readonly StringBuilder _sqlBuilder = new();
@@ -61,13 +55,11 @@ public class ClickHouseModificationCommandBatch : ModificationCommandBatch
     public ClickHouseModificationCommandBatch(
         ModificationCommandBatchFactoryDependencies dependencies,
         IRelationalTypeMappingSource typeMappingSource,
-        ClickHouseDeleteStrategy deleteStrategy,
-        ILogger? logger = null)
+        ClickHouseDeleteStrategy deleteStrategy)
     {
         _dependencies = dependencies;
         _typeMappingSource = typeMappingSource;
         _deleteStrategy = deleteStrategy;
-        _logger = logger;
     }
 
     public override IReadOnlyList<IReadOnlyModificationCommand> ModificationCommands => _commands;
@@ -109,16 +101,6 @@ public class ClickHouseModificationCommandBatch : ModificationCommandBatch
         foreach (var tableGroup in insertCommands)
         {
             var commands = tableGroup.ToList();
-
-            // Warn about single-row inserts when this is the final batch
-            if (!moreBatchesExpected && commands.Count == 1 && _logger is not null)
-            {
-                _logger.LogWarning(
-                    ClickHouseEventId.SingleRowInsertWarning,
-                    "Single-row INSERT to table '{TableName}'. ClickHouse is optimized for batch inserts of 1000+ rows. Consider using AddRange() or batching operations for better performance.",
-                    tableGroup.Key.TableName);
-            }
-
             var statement = BuildBulkInsertCommand(commands);
             if (!string.IsNullOrEmpty(statement))
             {

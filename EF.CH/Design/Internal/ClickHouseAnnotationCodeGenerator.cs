@@ -13,6 +13,8 @@ namespace EF.CH.Design.Internal;
 /// </summary>
 public class ClickHouseAnnotationCodeGenerator : AnnotationCodeGenerator
 {
+    #region MethodInfo References
+
     private static readonly MethodInfo UseMergeTreeMethodInfo
         = typeof(ClickHouseEntityTypeBuilderExtensions).GetRuntimeMethod(
             nameof(ClickHouseEntityTypeBuilderExtensions.UseMergeTree),
@@ -28,6 +30,26 @@ public class ClickHouseAnnotationCodeGenerator : AnnotationCodeGenerator
             nameof(ClickHouseEntityTypeBuilderExtensions.UseReplacingMergeTree),
             [typeof(EntityTypeBuilder), typeof(string), typeof(string[])])!;
 
+    private static readonly MethodInfo UseSummingMergeTreeMethodInfo
+        = typeof(ClickHouseEntityTypeBuilderExtensions).GetRuntimeMethod(
+            nameof(ClickHouseEntityTypeBuilderExtensions.UseSummingMergeTree),
+            [typeof(EntityTypeBuilder), typeof(string[])])!;
+
+    private static readonly MethodInfo UseAggregatingMergeTreeMethodInfo
+        = typeof(ClickHouseEntityTypeBuilderExtensions).GetRuntimeMethod(
+            nameof(ClickHouseEntityTypeBuilderExtensions.UseAggregatingMergeTree),
+            [typeof(EntityTypeBuilder), typeof(string[])])!;
+
+    private static readonly MethodInfo UseCollapsingMergeTreeMethodInfo
+        = typeof(ClickHouseEntityTypeBuilderExtensions).GetRuntimeMethod(
+            nameof(ClickHouseEntityTypeBuilderExtensions.UseCollapsingMergeTree),
+            [typeof(EntityTypeBuilder), typeof(string), typeof(string[])])!;
+
+    private static readonly MethodInfo UseVersionedCollapsingMergeTreeMethodInfo
+        = typeof(ClickHouseEntityTypeBuilderExtensions).GetRuntimeMethod(
+            nameof(ClickHouseEntityTypeBuilderExtensions.UseVersionedCollapsingMergeTree),
+            [typeof(EntityTypeBuilder), typeof(string), typeof(string), typeof(string[])])!;
+
     private static readonly MethodInfo HasPartitionByMethodInfo
         = typeof(ClickHouseEntityTypeBuilderExtensions).GetRuntimeMethod(
             nameof(ClickHouseEntityTypeBuilderExtensions.HasPartitionBy),
@@ -42,6 +64,21 @@ public class ClickHouseAnnotationCodeGenerator : AnnotationCodeGenerator
         = typeof(ClickHouseEntityTypeBuilderExtensions).GetRuntimeMethod(
             nameof(ClickHouseEntityTypeBuilderExtensions.HasTtl),
             [typeof(EntityTypeBuilder), typeof(string)])!;
+
+    #endregion
+
+    /// <summary>
+    /// Engines supported by this code generator.
+    /// </summary>
+    private static readonly HashSet<string> SupportedEngines =
+    [
+        "MergeTree",
+        "ReplacingMergeTree",
+        "SummingMergeTree",
+        "AggregatingMergeTree",
+        "CollapsingMergeTree",
+        "VersionedCollapsingMergeTree"
+    ];
 
     public ClickHouseAnnotationCodeGenerator(AnnotationCodeGeneratorDependencies dependencies)
         : base(dependencies)
@@ -71,37 +108,83 @@ public class ClickHouseAnnotationCodeGenerator : AnnotationCodeGenerator
     {
         var calls = new List<MethodCallCodeFragment>(base.GenerateFluentApiCalls(entityType, annotations));
 
-        // Handle MergeTree Engine
+        // Handle MergeTree Engine family
         if (annotations.TryGetValue(ClickHouseAnnotationNames.Engine, out var engineAnnotation)
             && engineAnnotation.Value is string engine)
         {
+            if (!SupportedEngines.Contains(engine))
+            {
+                throw new NotSupportedException(
+                    $"ClickHouse engine '{engine}' is not supported by the annotation code generator. " +
+                    $"Supported engines: {string.Join(", ", SupportedEngines)}.");
+            }
+
             if (annotations.TryGetValue(ClickHouseAnnotationNames.OrderBy, out var orderByAnnotation)
                 && orderByAnnotation.Value is string[] orderBy)
             {
-                if (engine == "MergeTree")
+                var signColumn = annotations.TryGetValue(ClickHouseAnnotationNames.SignColumn, out var signAnnotation)
+                    ? signAnnotation.Value as string
+                    : null;
+
+                var versionColumn = annotations.TryGetValue(ClickHouseAnnotationNames.VersionColumn, out var versionAnnotation)
+                    ? versionAnnotation.Value as string
+                    : null;
+
+                switch (engine)
                 {
-                    // Use MethodInfo to ensure proper using statement is generated
-                    calls.Add(new MethodCallCodeFragment(UseMergeTreeMethodInfo, orderBy.Cast<object>().ToArray()));
-                    annotations.Remove(ClickHouseAnnotationNames.Engine);
-                    annotations.Remove(ClickHouseAnnotationNames.OrderBy);
-                }
-                else if (engine == "ReplacingMergeTree")
-                {
-                    if (annotations.TryGetValue(ClickHouseAnnotationNames.VersionColumn, out var versionAnnotation)
-                        && versionAnnotation.Value is string versionColumn)
-                    {
-                        // ReplacingMergeTree with version column
-                        calls.Add(new MethodCallCodeFragment(UseReplacingMergeTreeWithVersionMethodInfo, versionColumn, orderBy));
+                    case "MergeTree":
+                        calls.Add(new MethodCallCodeFragment(UseMergeTreeMethodInfo, orderBy.Cast<object>().ToArray()));
+                        break;
+
+                    case "ReplacingMergeTree":
+                        if (versionColumn is not null)
+                        {
+                            calls.Add(new MethodCallCodeFragment(UseReplacingMergeTreeWithVersionMethodInfo, versionColumn, orderBy));
+                            annotations.Remove(ClickHouseAnnotationNames.VersionColumn);
+                        }
+                        else
+                        {
+                            calls.Add(new MethodCallCodeFragment(UseReplacingMergeTreeMethodInfo, orderBy.Cast<object>().ToArray()));
+                        }
+                        break;
+
+                    case "SummingMergeTree":
+                        calls.Add(new MethodCallCodeFragment(UseSummingMergeTreeMethodInfo, orderBy.Cast<object>().ToArray()));
+                        break;
+
+                    case "AggregatingMergeTree":
+                        calls.Add(new MethodCallCodeFragment(UseAggregatingMergeTreeMethodInfo, orderBy.Cast<object>().ToArray()));
+                        break;
+
+                    case "CollapsingMergeTree":
+                        if (signColumn is null)
+                        {
+                            throw new InvalidOperationException(
+                                $"CollapsingMergeTree engine requires a sign column annotation ({ClickHouseAnnotationNames.SignColumn}).");
+                        }
+                        calls.Add(new MethodCallCodeFragment(UseCollapsingMergeTreeMethodInfo, signColumn, orderBy));
+                        annotations.Remove(ClickHouseAnnotationNames.SignColumn);
+                        break;
+
+                    case "VersionedCollapsingMergeTree":
+                        if (signColumn is null)
+                        {
+                            throw new InvalidOperationException(
+                                $"VersionedCollapsingMergeTree engine requires a sign column annotation ({ClickHouseAnnotationNames.SignColumn}).");
+                        }
+                        if (versionColumn is null)
+                        {
+                            throw new InvalidOperationException(
+                                $"VersionedCollapsingMergeTree engine requires a version column annotation ({ClickHouseAnnotationNames.VersionColumn}).");
+                        }
+                        calls.Add(new MethodCallCodeFragment(UseVersionedCollapsingMergeTreeMethodInfo, signColumn, versionColumn, orderBy));
+                        annotations.Remove(ClickHouseAnnotationNames.SignColumn);
                         annotations.Remove(ClickHouseAnnotationNames.VersionColumn);
-                    }
-                    else
-                    {
-                        // ReplacingMergeTree without version column
-                        calls.Add(new MethodCallCodeFragment(UseReplacingMergeTreeMethodInfo, orderBy.Cast<object>().ToArray()));
-                    }
-                    annotations.Remove(ClickHouseAnnotationNames.Engine);
-                    annotations.Remove(ClickHouseAnnotationNames.OrderBy);
+                        break;
                 }
+
+                annotations.Remove(ClickHouseAnnotationNames.Engine);
+                annotations.Remove(ClickHouseAnnotationNames.OrderBy);
             }
         }
 
