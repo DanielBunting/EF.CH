@@ -7,11 +7,27 @@
     <LangVersion>latest</LangVersion>
     <RootNamespace>EF.CH</RootNamespace>
     <AssemblyName>EF.CH</AssemblyName>
-    <Description>Entity Framework Core provider for ClickHouse</Description>
-    <Authors>Daniel Bunting</Authors>
+
+    <!-- NuGet Package Metadata -->
     <PackageId>EF.CH</PackageId>
     <Version>0.1.0</Version>
+    <Authors>Daniel Bunting</Authors>
+    <Description>Entity Framework Core provider for ClickHouse</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/DanielBunting/EF.CH</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/DanielBunting/EF.CH</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>entityframework;efcore;clickhouse;database;orm;analytics</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+
+    <!-- Build Settings -->
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="../README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="ClickHouse.Client" Version="7.14.0" />

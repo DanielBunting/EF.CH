@@ -1,0 +1,120 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      - name: Calculate version
+        id: version
+        run: |
+          # Read base version (major.minor) from VERSION file
+          BASE_VERSION=$(cat VERSION | tr -d '[:space:]')
+          echo "Base version from VERSION file: $BASE_VERSION"
+
+          # Find the highest build number for this base version
+          # Tags are formatted as v{major}.{minor}.{build}
+          LATEST_BUILD=$(git tag -l "v${BASE_VERSION}.*" | sed "s/v${BASE_VERSION}\.//" | sort -n | tail -1)
+
+          if [ -z "$LATEST_BUILD" ]; then
+            # No existing tags for this base version, start at 0
+            NEW_BUILD=0
+          else
+            # Increment build number
+            NEW_BUILD=$((LATEST_BUILD + 1))
+          fi
+
+          NEW_VERSION="${BASE_VERSION}.${NEW_BUILD}"
+
+          echo "base_version=$BASE_VERSION" >> $GITHUB_OUTPUT
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "Calculated version: $NEW_VERSION"
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore --configuration Release /p:Version=${{ steps.version.outputs.new_version }}
+
+      - name: Test
+        run: dotnet test --no-build --configuration Release
+
+      - name: Pack
+        run: dotnet pack EF.CH/EF.CH.csproj --no-build --configuration Release /p:Version=${{ steps.version.outputs.new_version }} --output ./artifacts
+
+      - name: Push to NuGet
+        run: dotnet nuget push ./artifacts/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
+
+      - name: Create Git Tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "v${{ steps.version.outputs.new_version }}" -m "Release v${{ steps.version.outputs.new_version }}"
+          git push origin "v${{ steps.version.outputs.new_version }}"
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          BASE_VERSION=${{ steps.version.outputs.base_version }}
+          NEW_VERSION=${{ steps.version.outputs.new_version }}
+
+          # Find previous tag for this base version, or any previous tag
+          PREV_TAG=$(git tag -l "v${BASE_VERSION}.*" | sort -V | tail -2 | head -1)
+          if [ -z "$PREV_TAG" ] || [ "$PREV_TAG" = "v${NEW_VERSION}" ]; then
+            # No previous tag in this series, find any previous tag
+            PREV_TAG=$(git tag -l "v*" | sort -V | tail -1)
+          fi
+
+          {
+            echo "## What's Changed"
+            echo ""
+
+            if [ -n "$PREV_TAG" ]; then
+              git log ${PREV_TAG}..HEAD --pretty=format:"- %s" 2>/dev/null || true
+            else
+              git log --pretty=format:"- %s" | head -20
+            fi
+
+            echo ""
+            echo ""
+
+            if [ -n "$PREV_TAG" ]; then
+              echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...v${NEW_VERSION}"
+            fi
+          } > changelog.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.new_version }}
+          name: v${{ steps.version.outputs.new_version }}
+          body_path: changelog.md
+          files: ./artifacts/*.nupkg
