@@ -125,6 +125,7 @@ Choose the right engine for your use case:
 | **SummingMergeTree** | Auto-sum numeric columns | `entity.UseSummingMergeTree(x => new { x.Date, x.ProductId })` |
 | **AggregatingMergeTree** | Pre-aggregated state | `entity.UseAggregatingMergeTree(x => x.Key)` |
 | **CollapsingMergeTree** | Row cancellation with sign | `entity.UseCollapsingMergeTree(x => x.Sign, x => x.Key)` |
+| **VersionedCollapsingMergeTree** | Out-of-order row cancellation | `entity.UseVersionedCollapsingMergeTree(x => x.Sign, x => x.Version, x => x.Key)` |
 
 See [docs/engines/](docs/engines/) for detailed documentation on each engine.
 
@@ -235,8 +236,16 @@ modelBuilder.Entity<HourlySummary>(entity =>
 | [MigrationSample](samples/MigrationSample/) | EF Core migrations |
 | [KeylessSample](samples/KeylessSample/) | Keyless entities for append-only data |
 | [ReplacingMergeTreeSample](samples/ReplacingMergeTreeSample/) | Deduplication patterns |
+| [SummingMergeTreeSample](samples/SummingMergeTreeSample/) | Auto-aggregation with SummingMergeTree |
+| [CollapsingMergeTreeSample](samples/CollapsingMergeTreeSample/) | Row cancellation with sign column |
 | [MaterializedViewSample](samples/MaterializedViewSample/) | Real-time aggregation |
 | [ArrayTypeSample](samples/ArrayTypeSample/) | Working with arrays |
+| [MapTypeSample](samples/MapTypeSample/) | Working with Map(K, V) dictionaries |
+| [EnumTypeSample](samples/EnumTypeSample/) | ClickHouse enum type mapping |
+| [PartitioningSample](samples/PartitioningSample/) | Table partitioning strategies |
+| [QueryModifiersSample](samples/QueryModifiersSample/) | Final(), Sample(), WithSettings() |
+| [DeleteStrategiesSample](samples/DeleteStrategiesSample/) | Lightweight vs mutation deletes |
+| [OptimizeTableSample](samples/OptimizeTableSample/) | Programmatic OPTIMIZE TABLE |
 
 ## License
 

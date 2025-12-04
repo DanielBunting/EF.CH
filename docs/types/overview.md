@@ -249,3 +249,4 @@ See [Scaffolding](../scaffolding.md) for details.
 - [Enums](enums.md) - Enum handling and scaffolding
 - [IP Addresses](ip-addresses.md) - IPv4/IPv6 types
 - [DateTime](datetime.md) - DateTime handling and functions
+- [JSON](json.md) - Semi-structured JSON data

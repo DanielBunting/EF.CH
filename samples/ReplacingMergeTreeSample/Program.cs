@@ -140,10 +140,10 @@ public class UserDbContext : DbContext
 
             // ReplacingMergeTree configuration:
             // - versionColumn: UpdatedAt (higher timestamp = newer version)
-            // - orderByColumn: Id (deduplication key)
+            // - orderBy: Id (deduplication key)
             entity.UseReplacingMergeTree(
-                versionColumn: x => x.UpdatedAt,
-                orderByColumn: x => x.Id);
+                x => x.UpdatedAt,
+                x => x.Id);
         });
     }
 }

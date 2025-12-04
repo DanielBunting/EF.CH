@@ -179,10 +179,10 @@ public class SessionDbContext : DbContext
 
             // CollapsingMergeTree configuration:
             // - signColumn: Sign (+1/-1 for add/cancel)
-            // - orderByColumn: UserId (collapsing key)
+            // - orderBy: UserId (collapsing key)
             entity.UseCollapsingMergeTree(
-                signColumn: x => x.Sign,
-                orderByColumn: x => x.UserId);
+                x => x.Sign,
+                x => x.UserId);
         });
     }
 }
