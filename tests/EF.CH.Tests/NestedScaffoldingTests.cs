@@ -1,4 +1,4 @@
-using ClickHouse.Client.ADO;
+using ClickHouse.Driver.ADO;
 using EF.CH.Extensions;
 using EF.CH.Metadata;
 using EF.CH.Scaffolding.Internal;

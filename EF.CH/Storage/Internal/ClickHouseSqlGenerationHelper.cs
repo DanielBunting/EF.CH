@@ -92,7 +92,7 @@ public class ClickHouseSqlGenerationHelper : RelationalSqlGenerationHelper
 
     /// <summary>
     /// Generates a parameter name for use in ClickHouse parameterized queries.
-    /// ClickHouse.Client expects parameter names without prefix (no @ or : prefix).
+    /// ClickHouse.Driver expects parameter names without prefix (no @ or : prefix).
     /// The {name:Type} format is generated in the QuerySqlGenerator.
     /// </summary>
     public override string GenerateParameterName(string name)

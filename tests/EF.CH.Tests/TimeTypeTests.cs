@@ -116,7 +116,7 @@ public class TimeTypeTests : IAsyncLifetime
 
         // Note: ClickHouse Time type has limited driver support
         // For now, we test that the mapping generates correct literals
-        // Full integration would require ClickHouse.Client Time support
+        // Full integration would require ClickHouse.Driver Time support
 
         var id = Guid.NewGuid();
         var startTime = new TimeOnly(9, 0, 0);

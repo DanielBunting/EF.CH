@@ -283,7 +283,7 @@ public class LargeIntegerTypeTests : IAsyncLifetime
               VALUES ('" + Guid.NewGuid() + @"', 2000000000000000000000000000000)");
 
         // Query with arithmetic - use alias for aggregate
-        // Note: ClickHouse.Client returns BigInteger for Int128 sums
+        // Note: ClickHouse.Driver returns BigInteger for Int128 sums
         var sum = await context.Database.SqlQueryRaw<BigInteger>(
             @"SELECT sum(""Value"") AS ""Value"" FROM ""Int128Arithmetic"""
         ).FirstOrDefaultAsync();

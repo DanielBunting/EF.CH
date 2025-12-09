@@ -70,7 +70,7 @@ public class ClickHouseNestedTypeMapping : RelationalTypeMapping
         Type elementType,
         IReadOnlyList<(string Name, PropertyInfo Property, RelationalTypeMapping Mapping)> fieldMappings)
     {
-        // Build the tuple type that ClickHouse.Client returns
+        // Build the tuple type that ClickHouse.Driver returns
         var tupleFieldTypes = fieldMappings.Select(f => f.Property.PropertyType).ToArray();
         var tupleType = tupleFieldTypes.Length switch
         {
