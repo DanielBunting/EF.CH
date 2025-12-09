@@ -1,7 +1,7 @@
 using System.Data;
 using System.Data.Common;
 using System.Text.RegularExpressions;
-using ClickHouse.Client.ADO;
+using ClickHouse.Driver.ADO;
 using EF.CH.Metadata;
 using EF.CH.Storage.Internal;
 using Microsoft.EntityFrameworkCore.Scaffolding;
@@ -99,7 +99,7 @@ public partial class ClickHouseDatabaseModelFactory : IDatabaseModelFactory
     {
         var tables = new List<TableInfo>();
 
-        // ClickHouse.Client uses inline parameters with {name:Type} syntax
+        // ClickHouse.Driver uses inline parameters with {name:Type} syntax
         // For safety, we escape single quotes in the database name
         var escapedDatabase = database.Replace("'", "\\'");
 
@@ -163,7 +163,7 @@ public partial class ClickHouseDatabaseModelFactory : IDatabaseModelFactory
             return columns.ToLookup(c => c.Table);
         }
 
-        // ClickHouse.Client uses inline parameters - escape values
+        // ClickHouse.Driver uses inline parameters - escape values
         var escapedDatabase = database.Replace("'", "\\'");
         var escapedTables = tableNames.Select(t => $"'{t.Replace("'", "\\'")}'");
 

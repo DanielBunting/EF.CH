@@ -142,7 +142,7 @@ foreach (var evt in recentEvents)
 
 ## Connection String
 
-The connection string format follows ClickHouse.Client conventions:
+The connection string format follows ClickHouse.Driver conventions:
 
 ```
 Host=localhost;Port=8123;Database=mydb;Username=default;Password=

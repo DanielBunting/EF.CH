@@ -1,5 +1,5 @@
 using System.Data.Common;
-using ClickHouse.Client.ADO.Parameters;
+using ClickHouse.Driver.ADO.Parameters;
 using Microsoft.EntityFrameworkCore.Storage;
 
 namespace EF.CH.Storage.Internal.TypeMappings;

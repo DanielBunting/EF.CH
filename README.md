@@ -1,6 +1,6 @@
 # EF.CH - Entity Framework Core Provider for ClickHouse
 
-An Entity Framework Core provider for [ClickHouse](https://clickhouse.com/), built on the [ClickHouse.Client](https://github.com/DarkWanderer/ClickHouse.Client) ADO.NET driver.
+An Entity Framework Core provider for [ClickHouse](https://clickhouse.com/), built on the [ClickHouse.Driver](https://github.com/ClickHouse/clickhouse-cs) ADO.NET driver.
 
 ## Features
 
@@ -253,5 +253,5 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## Acknowledgments
 
-- [ClickHouse.Client](https://github.com/DarkWanderer/ClickHouse.Client) - The ADO.NET driver this provider builds on
+- [ClickHouse.Driver](https://github.com/ClickHouse/clickhouse-cs) - The ADO.NET driver this provider builds on
 - [EntityFrameworkCore.ClickHouse](https://github.com/denis-ivanov/EntityFrameworkCore.ClickHouse) - Reference implementation

@@ -58,7 +58,7 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
         // Get the ClickHouse type name
         var storeType = typeMapping?.StoreType ?? "String";
 
-        // Strip Nullable() wrapper if present - ClickHouse.Client handles nullability differently
+        // Strip Nullable() wrapper if present - ClickHouse.Driver handles nullability differently
         if (storeType.StartsWith("Nullable(", StringComparison.OrdinalIgnoreCase) &&
             storeType.EndsWith(")"))
         {
