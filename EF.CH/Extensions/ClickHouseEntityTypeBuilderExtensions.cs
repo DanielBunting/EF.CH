@@ -1,4 +1,5 @@
 using System.Linq.Expressions;
+using EF.CH.Dictionaries;
 using EF.CH.Metadata;
 using EF.CH.Query.Internal;
 using Microsoft.EntityFrameworkCore;
@@ -830,6 +831,120 @@ public static class ClickHouseEntityTypeBuilderExtensions
         // Store the expression for later translation
         // The translator will be invoked when the model is finalized
         builder.HasAnnotation("ClickHouse:MaterializedViewExpression", query);
+
+        return builder;
+    }
+
+    #endregion
+
+    #region Dictionaries
+
+    /// <summary>
+    /// Configures the entity as a ClickHouse dictionary.
+    /// Dictionaries are special lookup structures optimized for fast key-value access.
+    /// </summary>
+    /// <typeparam name="TEntity">The entity type representing the dictionary schema.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="configure">Configuration action for the dictionary.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    /// <remarks>
+    /// <para>
+    /// ClickHouse dictionaries are read-only lookup tables that can be sourced from
+    /// various data sources (ClickHouse tables, HTTP endpoints, files, etc.).
+    /// They are optimized for fast key-value lookups using the dictGet() function family.
+    /// </para>
+    /// <para>
+    /// Unlike regular tables, dictionaries:
+    /// - Are read-only (data comes from the source)
+    /// - Are refreshed based on the LIFETIME configuration
+    /// - Support various memory layouts (FLAT, HASHED, CACHE, etc.)
+    /// - Can be queried using dictGet() functions
+    /// </para>
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// // Dictionary from a ClickHouse table
+    /// modelBuilder.Entity&lt;ProductDimension&gt;(entity =&gt;
+    /// {
+    ///     entity.ToTable("products_dict");
+    ///     entity.HasKey(e =&gt; e.ProductId);
+    ///     entity.AsDictionary(dict =&gt; dict
+    ///         .FromTable("products")
+    ///         .WithLayout(DictionaryLayout.Hashed())
+    ///         .WithLifetime(minSeconds: 300, maxSeconds: 360));
+    /// });
+    ///
+    /// // Dictionary from HTTP endpoint
+    /// modelBuilder.Entity&lt;CurrencyRate&gt;(entity =&gt;
+    /// {
+    ///     entity.ToTable("currency_rates_dict");
+    ///     entity.HasKey(e =&gt; e.CurrencyCode);
+    ///     entity.AsDictionary(dict =&gt; dict
+    ///         .FromHttp("https://api.example.com/rates", HttpDictionaryFormat.JSONEachRow)
+    ///         .WithLayout(DictionaryLayout.Flat())
+    ///         .WithLifetime(60, 120));
+    /// });
+    /// </code>
+    /// </example>
+    public static EntityTypeBuilder<TEntity> AsDictionary<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        Action<DictionaryConfiguration<TEntity>> configure)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(configure);
+
+        var config = new DictionaryConfiguration<TEntity>();
+        configure(config);
+
+        // Validate configuration
+        if (config.Source == null)
+        {
+            throw new InvalidOperationException(
+                $"Dictionary '{typeof(TEntity).Name}' must have a source defined. " +
+                "Use FromTable(), FromHttp(), FromFile(), or FromExecutable() to specify the data source.");
+        }
+
+        // Store dictionary configuration as annotations
+        builder.HasAnnotation(ClickHouseAnnotationNames.Dictionary, true);
+        builder.HasAnnotation(ClickHouseAnnotationNames.DictionarySource, config.Source);
+        builder.HasAnnotation(ClickHouseAnnotationNames.DictionaryLayout, config.Layout);
+        builder.HasAnnotation(ClickHouseAnnotationNames.DictionaryLifetime, config.Lifetime);
+
+        // Store range columns if specified (for RANGE_HASHED layout)
+        if (config.RangeMinColumns != null)
+        {
+            builder.HasAnnotation(ClickHouseAnnotationNames.DictionaryRangeMin, config.RangeMinColumns);
+        }
+        if (config.RangeMaxColumns != null)
+        {
+            builder.HasAnnotation(ClickHouseAnnotationNames.DictionaryRangeMax, config.RangeMaxColumns);
+        }
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Configures the entity as a ClickHouse dictionary (non-generic overload).
+    /// </summary>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="source">The dictionary source.</param>
+    /// <param name="layout">The dictionary layout (defaults to HASHED).</param>
+    /// <param name="lifetime">The dictionary lifetime (defaults to 300-360 seconds).</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    public static EntityTypeBuilder AsDictionary(
+        this EntityTypeBuilder builder,
+        DictionarySource source,
+        DictionaryLayout? layout = null,
+        DictionaryLifetime? lifetime = null)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(source);
+
+        builder.HasAnnotation(ClickHouseAnnotationNames.Dictionary, true);
+        builder.HasAnnotation(ClickHouseAnnotationNames.DictionarySource, source);
+        builder.HasAnnotation(ClickHouseAnnotationNames.DictionaryLayout, layout ?? DictionaryLayout.Hashed());
+        builder.HasAnnotation(ClickHouseAnnotationNames.DictionaryLifetime, lifetime ?? new DictionaryLifetime(300, 360));
 
         return builder;
     }

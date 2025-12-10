@@ -1,4 +1,5 @@
 using System.Linq.Expressions;
+using EF.CH.Dictionaries;
 using EF.CH.Infrastructure;
 using EF.CH.Metadata;
 using EF.CH.Query.Internal;
@@ -48,6 +49,17 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         if (isMaterializedView)
         {
             GenerateMaterializedView(operation, entityType, model, builder, terminate);
+            return;
+        }
+
+        // Check if this is a dictionary
+        var isDictionary = GetAnnotation<bool?>(operation, ClickHouseAnnotationNames.Dictionary)
+                        ?? GetEntityAnnotation<bool?>(entityType, ClickHouseAnnotationNames.Dictionary)
+                        ?? false;
+
+        if (isDictionary)
+        {
+            GenerateDictionary(operation, entityType, model, builder, terminate);
             return;
         }
 
@@ -122,6 +134,152 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         builder.AppendLine();
         builder.Append("AS ");
         builder.Append(viewQuery);
+
+        if (terminate)
+        {
+            builder.AppendLine(Dependencies.SqlGenerationHelper.StatementTerminator);
+            EndStatement(builder);
+        }
+    }
+
+    /// <summary>
+    /// Generates CREATE DICTIONARY statement.
+    /// </summary>
+    private void GenerateDictionary(
+        CreateTableOperation operation,
+        IEntityType? entityType,
+        IModel? model,
+        MigrationCommandListBuilder builder,
+        bool terminate)
+    {
+        var source = GetAnnotation<DictionarySource>(operation, ClickHouseAnnotationNames.DictionarySource)
+                  ?? GetEntityAnnotation<DictionarySource>(entityType, ClickHouseAnnotationNames.DictionarySource);
+        var layout = GetAnnotation<DictionaryLayout>(operation, ClickHouseAnnotationNames.DictionaryLayout)
+                  ?? GetEntityAnnotation<DictionaryLayout>(entityType, ClickHouseAnnotationNames.DictionaryLayout)
+                  ?? DictionaryLayout.Hashed();
+        var lifetime = GetAnnotation<DictionaryLifetime?>(operation, ClickHouseAnnotationNames.DictionaryLifetime)
+                    ?? GetEntityAnnotation<DictionaryLifetime?>(entityType, ClickHouseAnnotationNames.DictionaryLifetime)
+                    ?? new DictionaryLifetime(300, 360);
+        var rangeMin = GetAnnotation<string[]>(operation, ClickHouseAnnotationNames.DictionaryRangeMin)
+                    ?? GetEntityAnnotation<string[]>(entityType, ClickHouseAnnotationNames.DictionaryRangeMin);
+        var rangeMax = GetAnnotation<string[]>(operation, ClickHouseAnnotationNames.DictionaryRangeMax)
+                    ?? GetEntityAnnotation<string[]>(entityType, ClickHouseAnnotationNames.DictionaryRangeMax);
+
+        if (source == null)
+        {
+            throw new InvalidOperationException(
+                $"Dictionary '{operation.Name}' must have a source defined via AsDictionary().");
+        }
+
+        // Get primary key columns
+        var primaryKeyColumns = operation.PrimaryKey?.Columns;
+        if (primaryKeyColumns == null || primaryKeyColumns.Length == 0)
+        {
+            // Try to get key columns from entity type
+            if (entityType != null)
+            {
+                var key = entityType.FindPrimaryKey();
+                primaryKeyColumns = key?.Properties.Select(p => p.GetColumnName() ?? p.Name).ToArray();
+            }
+        }
+
+        if (primaryKeyColumns == null || primaryKeyColumns.Length == 0)
+        {
+            throw new InvalidOperationException(
+                $"Dictionary '{operation.Name}' must have a primary key defined using HasKey().");
+        }
+
+        builder
+            .Append("CREATE DICTIONARY ")
+            .Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name, operation.Schema))
+            .AppendLine(" (");
+
+        using (builder.Indent())
+        {
+            // Generate column definitions
+            for (var i = 0; i < operation.Columns.Count; i++)
+            {
+                var column = operation.Columns[i];
+                if (i > 0)
+                {
+                    builder.AppendLine(",");
+                }
+
+                builder.Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(column.Name));
+                builder.Append(" ");
+
+                var columnType = column.ColumnType ?? "String";
+
+                // Dictionary columns don't use Nullable() - they have default values instead
+                // Strip Nullable wrapper if present
+                if (columnType.StartsWith("Nullable(", StringComparison.OrdinalIgnoreCase) &&
+                    columnType.EndsWith(")"))
+                {
+                    columnType = columnType.Substring(9, columnType.Length - 10);
+                }
+
+                builder.Append(columnType);
+
+                // Add DEFAULT for non-key columns
+                if (!primaryKeyColumns.Contains(column.Name, StringComparer.OrdinalIgnoreCase))
+                {
+                    if (column.DefaultValue != null)
+                    {
+                        var typeMapping = _typeMappingSource.FindMapping(column.DefaultValue.GetType());
+                        builder.Append(" DEFAULT ");
+                        builder.Append(typeMapping?.GenerateSqlLiteral(column.DefaultValue)
+                            ?? column.DefaultValue.ToString() ?? "''");
+                    }
+                    else if (!string.IsNullOrEmpty(column.DefaultValueSql))
+                    {
+                        builder.Append(" DEFAULT ");
+                        builder.Append(column.DefaultValueSql);
+                    }
+                }
+            }
+        }
+
+        builder.AppendLine();
+        builder.AppendLine(")");
+
+        // PRIMARY KEY
+        builder.Append("PRIMARY KEY ");
+        if (primaryKeyColumns.Length == 1)
+        {
+            builder.AppendLine(Dependencies.SqlGenerationHelper.DelimitIdentifier(primaryKeyColumns[0]));
+        }
+        else
+        {
+            builder.Append("(");
+            builder.Append(string.Join(", ", primaryKeyColumns.Select(c =>
+                Dependencies.SqlGenerationHelper.DelimitIdentifier(c))));
+            builder.AppendLine(")");
+        }
+
+        // SOURCE
+        builder.Append("SOURCE(");
+        builder.Append(source.ToSql());
+        builder.AppendLine(")");
+
+        // LAYOUT
+        builder.Append("LAYOUT(");
+        builder.Append(layout.ToSql());
+        builder.AppendLine(")");
+
+        // RANGE (for RANGE_HASHED layout)
+        if (rangeMin != null && rangeMax != null)
+        {
+            builder.Append("RANGE(MIN ");
+            builder.Append(string.Join(", ", rangeMin.Select(c =>
+                Dependencies.SqlGenerationHelper.DelimitIdentifier(c))));
+            builder.Append(" MAX ");
+            builder.Append(string.Join(", ", rangeMax.Select(c =>
+                Dependencies.SqlGenerationHelper.DelimitIdentifier(c))));
+            builder.AppendLine(")");
+        }
+
+        // LIFETIME
+        builder.Append(lifetime.ToSql());
 
         if (terminate)
         {
@@ -365,7 +523,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
     }
 
     /// <summary>
-    /// Generate DROP TABLE.
+    /// Generate DROP TABLE or DROP DICTIONARY.
     /// </summary>
     protected override void Generate(
         DropTableOperation operation,
@@ -376,9 +534,30 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         ArgumentNullException.ThrowIfNull(operation);
         ArgumentNullException.ThrowIfNull(builder);
 
-        builder
-            .Append("DROP TABLE IF EXISTS ")
-            .Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name, operation.Schema));
+        // Check if this is a dictionary
+        var isDictionary = GetAnnotation<bool?>(operation, ClickHouseAnnotationNames.Dictionary) ?? false;
+
+        // Also check for materialized view
+        var isMaterializedView = GetAnnotation<bool?>(operation, ClickHouseAnnotationNames.MaterializedView) ?? false;
+
+        if (isDictionary)
+        {
+            builder
+                .Append("DROP DICTIONARY IF EXISTS ")
+                .Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name, operation.Schema));
+        }
+        else if (isMaterializedView)
+        {
+            builder
+                .Append("DROP VIEW IF EXISTS ")
+                .Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name, operation.Schema));
+        }
+        else
+        {
+            builder
+                .Append("DROP TABLE IF EXISTS ")
+                .Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name, operation.Schema));
+        }
 
         if (terminate)
         {

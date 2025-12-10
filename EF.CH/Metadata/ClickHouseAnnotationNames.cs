@@ -99,6 +99,40 @@ public static class ClickHouseAnnotationNames
 
     #endregion
 
+    #region Dictionaries
+
+    /// <summary>
+    /// Marks this entity as a ClickHouse dictionary.
+    /// </summary>
+    public const string Dictionary = Prefix + "Dictionary";
+
+    /// <summary>
+    /// The dictionary source configuration (DictionarySource object).
+    /// </summary>
+    public const string DictionarySource = Prefix + "DictionarySource";
+
+    /// <summary>
+    /// The dictionary layout configuration (DictionaryLayout object).
+    /// </summary>
+    public const string DictionaryLayout = Prefix + "DictionaryLayout";
+
+    /// <summary>
+    /// The dictionary lifetime/refresh configuration (DictionaryLifetime struct).
+    /// </summary>
+    public const string DictionaryLifetime = Prefix + "DictionaryLifetime";
+
+    /// <summary>
+    /// The range minimum columns for RANGE_HASHED layout.
+    /// </summary>
+    public const string DictionaryRangeMin = Prefix + "DictionaryRangeMin";
+
+    /// <summary>
+    /// The range maximum columns for RANGE_HASHED layout.
+    /// </summary>
+    public const string DictionaryRangeMax = Prefix + "DictionaryRangeMax";
+
+    #endregion
+
     #region Enum Types
 
     /// <summary>

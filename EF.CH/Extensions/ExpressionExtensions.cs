@@ -6,7 +6,7 @@ namespace EF.CH.Extensions;
 /// <summary>
 /// Helper methods for extracting property information from expressions.
 /// </summary>
-internal static class ExpressionExtensions
+public static class ExpressionExtensions
 {
     /// <summary>
     /// Extracts property names from an expression that selects one or more properties.

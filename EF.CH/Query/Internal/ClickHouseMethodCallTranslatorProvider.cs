@@ -26,6 +26,7 @@ public class ClickHouseMethodCallTranslatorProvider : RelationalMethodCallTransl
             new ClickHouseArrayMethodTranslator(sqlExpressionFactory),
             new ClickHouseMapMethodTranslator(sqlExpressionFactory),
             new ClickHouseNestedMethodTranslator(sqlExpressionFactory),
+            new ClickHouseDictionaryTranslator(sqlExpressionFactory),
         ]);
     }
 }
