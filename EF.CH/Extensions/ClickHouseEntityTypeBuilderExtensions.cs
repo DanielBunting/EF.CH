@@ -1,4 +1,5 @@
 using System.Linq.Expressions;
+using EF.CH.Dictionaries;
 using EF.CH.Metadata;
 using EF.CH.Query.Internal;
 using Microsoft.EntityFrameworkCore;
@@ -830,6 +831,73 @@ public static class ClickHouseEntityTypeBuilderExtensions
         // Store the expression for later translation
         // The translator will be invoked when the model is finalized
         builder.HasAnnotation("ClickHouse:MaterializedViewExpression", query);
+
+        return builder;
+    }
+
+    #endregion
+
+    #region Dictionaries
+
+    /// <summary>
+    /// Configures this entity as a ClickHouse dictionary sourced from another table.
+    /// </summary>
+    /// <typeparam name="TDictionary">The dictionary entity type.</typeparam>
+    /// <typeparam name="TSource">The source entity type.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="configure">Action to configure the dictionary.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    /// <remarks>
+    /// <para>
+    /// This method configures an entity to be created as a ClickHouse dictionary rather than a table.
+    /// Dictionaries are in-memory key-value stores that provide fast lookups and are ideal for
+    /// reference data like countries, currencies, or product categories.
+    /// </para>
+    /// <para>
+    /// The dictionary entity should implement <see cref="Dictionaries.IClickHouseDictionary"/> as a marker interface.
+    /// </para>
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// // Define dictionary entity
+    /// public class CountryLookup : IClickHouseDictionary
+    /// {
+    ///     public ulong Id { get; set; }
+    ///     public string Name { get; set; } = string.Empty;
+    ///     public string IsoCode { get; set; } = string.Empty;
+    /// }
+    ///
+    /// // Configure in OnModelCreating
+    /// modelBuilder.Entity&lt;CountryLookup&gt;(entity =>
+    /// {
+    ///     entity.AsDictionary&lt;CountryLookup, Country&gt;(cfg => cfg
+    ///         .HasKey(x => x.Id)
+    ///         .FromTable(
+    ///             projection: c => new CountryLookup
+    ///             {
+    ///                 Id = c.Id,
+    ///                 Name = c.Name,
+    ///                 IsoCode = c.IsoCode
+    ///             },
+    ///             filter: q => q.Where(c => c.IsActive))
+    ///         .UseHashedLayout()
+    ///         .HasLifetime(minSeconds: 60, maxSeconds: 300)
+    ///         .HasDefault(x => x.Name, "Unknown"));
+    /// });
+    /// </code>
+    /// </example>
+    public static EntityTypeBuilder<TDictionary> AsDictionary<TDictionary, TSource>(
+        this EntityTypeBuilder<TDictionary> builder,
+        Action<Dictionaries.DictionaryConfiguration<TDictionary, TSource>> configure)
+        where TDictionary : class
+        where TSource : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(configure);
+
+        var configuration = new Dictionaries.DictionaryConfiguration<TDictionary, TSource>(builder);
+        configure(configuration);
+        configuration.Apply();
 
         return builder;
     }

@@ -1,4 +1,5 @@
 using System.Linq.Expressions;
+using EF.CH.Dictionaries;
 using EF.CH.Infrastructure;
 using EF.CH.Metadata;
 using EF.CH.Query.Internal;
@@ -36,7 +37,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         ArgumentNullException.ThrowIfNull(operation);
         ArgumentNullException.ThrowIfNull(builder);
 
-        // Check if this is a materialized view
+        // Check if this is a materialized view or dictionary
         var entityType = model?.GetEntityTypes()
             .FirstOrDefault(e => e.GetTableName() == operation.Name
                               && (e.GetSchema() ?? model.GetDefaultSchema()) == operation.Schema);
@@ -48,6 +49,16 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         if (isMaterializedView)
         {
             GenerateMaterializedView(operation, entityType, model, builder, terminate);
+            return;
+        }
+
+        var isDictionary = GetAnnotation<bool?>(operation, ClickHouseAnnotationNames.Dictionary)
+                        ?? GetEntityAnnotation<bool?>(entityType, ClickHouseAnnotationNames.Dictionary)
+                        ?? false;
+
+        if (isDictionary)
+        {
+            GenerateDictionary(operation, entityType, model, builder, terminate);
             return;
         }
 
@@ -128,6 +139,361 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
             builder.AppendLine(Dependencies.SqlGenerationHelper.StatementTerminator);
             EndStatement(builder);
         }
+    }
+
+    /// <summary>
+    /// Generates CREATE DICTIONARY statement.
+    /// </summary>
+    private void GenerateDictionary(
+        CreateTableOperation operation,
+        IEntityType? entityType,
+        IModel? model,
+        MigrationCommandListBuilder builder,
+        bool terminate)
+    {
+        // Get dictionary configuration from annotations
+        var sourceTable = GetAnnotation<string>(operation, ClickHouseAnnotationNames.DictionarySource)
+                       ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.DictionarySource);
+        var keyColumns = GetAnnotation<string[]>(operation, ClickHouseAnnotationNames.DictionaryKeyColumns)
+                      ?? GetEntityAnnotation<string[]>(entityType, ClickHouseAnnotationNames.DictionaryKeyColumns);
+        var layout = GetAnnotation<DictionaryLayout?>(operation, ClickHouseAnnotationNames.DictionaryLayout)
+                  ?? GetEntityAnnotation<DictionaryLayout?>(entityType, ClickHouseAnnotationNames.DictionaryLayout)
+                  ?? DictionaryLayout.Hashed;
+        var layoutOptions = GetAnnotation<Dictionary<string, object>>(operation, ClickHouseAnnotationNames.DictionaryLayoutOptions)
+                         ?? GetEntityAnnotation<Dictionary<string, object>>(entityType, ClickHouseAnnotationNames.DictionaryLayoutOptions);
+        var lifetimeMin = GetAnnotation<int?>(operation, ClickHouseAnnotationNames.DictionaryLifetimeMin)
+                       ?? GetEntityAnnotation<int?>(entityType, ClickHouseAnnotationNames.DictionaryLifetimeMin)
+                       ?? 0;
+        var lifetimeMax = GetAnnotation<int?>(operation, ClickHouseAnnotationNames.DictionaryLifetimeMax)
+                       ?? GetEntityAnnotation<int?>(entityType, ClickHouseAnnotationNames.DictionaryLifetimeMax)
+                       ?? 300;
+        var defaults = GetAnnotation<Dictionary<string, object>>(operation, ClickHouseAnnotationNames.DictionaryDefaults)
+                    ?? GetEntityAnnotation<Dictionary<string, object>>(entityType, ClickHouseAnnotationNames.DictionaryDefaults);
+        var sourceQuery = GetAnnotation<string>(operation, ClickHouseAnnotationNames.DictionarySourceQuery)
+                       ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.DictionarySourceQuery);
+
+        if (keyColumns == null || keyColumns.Length == 0)
+        {
+            throw new InvalidOperationException(
+                $"Dictionary '{operation.Name}' must have key columns defined.");
+        }
+
+        // Build SOURCE query if projection/filter expressions exist
+        if (string.IsNullOrEmpty(sourceQuery) && entityType != null)
+        {
+            sourceQuery = BuildDictionarySourceQuery(operation, entityType, model);
+        }
+
+        // CREATE DICTIONARY
+        builder.Append("CREATE DICTIONARY ");
+        builder.Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name, operation.Schema));
+        builder.AppendLine();
+        builder.AppendLine("(");
+
+        // Column definitions
+        using (builder.Indent())
+        {
+            var isFirst = true;
+            foreach (var column in operation.Columns)
+            {
+                if (!isFirst)
+                {
+                    builder.AppendLine(",");
+                }
+                isFirst = false;
+
+                // Column name and type
+                builder.Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(column.Name));
+                builder.Append(" ");
+                builder.Append(column.ColumnType ?? GetClickHouseType(column.ClrType));
+
+                // DEFAULT value for this column
+                if (defaults?.TryGetValue(column.Name, out var defaultValue) == true)
+                {
+                    builder.Append(" DEFAULT ");
+                    builder.Append(FormatDefaultValue(defaultValue));
+                }
+            }
+        }
+
+        builder.AppendLine();
+        builder.AppendLine(")");
+
+        // PRIMARY KEY
+        builder.Append("PRIMARY KEY ");
+        if (keyColumns.Length == 1)
+        {
+            builder.Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(keyColumns[0]));
+        }
+        else
+        {
+            builder.Append("(");
+            builder.Append(string.Join(", ", keyColumns.Select(c => Dependencies.SqlGenerationHelper.DelimitIdentifier(c))));
+            builder.Append(")");
+        }
+        builder.AppendLine();
+
+        // SOURCE
+        builder.Append("SOURCE(CLICKHOUSE(");
+        if (!string.IsNullOrEmpty(sourceQuery))
+        {
+            // Use custom query
+            builder.Append("QUERY '");
+            builder.Append(sourceQuery.Replace("'", "''"));
+            builder.Append("'");
+        }
+        else
+        {
+            // Use table reference
+            builder.Append("TABLE '");
+            builder.Append(sourceTable ?? operation.Name);
+            builder.Append("'");
+        }
+        builder.AppendLine("))");
+
+        // LAYOUT
+        builder.Append("LAYOUT(");
+        builder.Append(GetLayoutSql(layout, layoutOptions));
+        builder.AppendLine(")");
+
+        // LIFETIME
+        if (lifetimeMin == 0 && lifetimeMax == 0)
+        {
+            builder.AppendLine("LIFETIME(0)");
+        }
+        else if (lifetimeMin == lifetimeMax || lifetimeMin == 0)
+        {
+            builder.Append("LIFETIME(");
+            builder.Append(lifetimeMax.ToString());
+            builder.AppendLine(")");
+        }
+        else
+        {
+            builder.Append("LIFETIME(MIN ");
+            builder.Append(lifetimeMin.ToString());
+            builder.Append(" MAX ");
+            builder.Append(lifetimeMax.ToString());
+            builder.AppendLine(")");
+        }
+
+        if (terminate)
+        {
+            builder.AppendLine(Dependencies.SqlGenerationHelper.StatementTerminator);
+            EndStatement(builder);
+        }
+    }
+
+    /// <summary>
+    /// Builds the SOURCE query for a dictionary from projection/filter expressions.
+    /// </summary>
+    private string? BuildDictionarySourceQuery(
+        CreateTableOperation operation,
+        IEntityType entityType,
+        IModel? model)
+    {
+        var projectionExpr = GetEntityAnnotation<LambdaExpression>(entityType, ClickHouseAnnotationNames.DictionaryProjectionExpression);
+        var filterExpr = GetEntityAnnotation<LambdaExpression>(entityType, ClickHouseAnnotationNames.DictionaryFilterExpression);
+
+        if (projectionExpr == null && filterExpr == null)
+            return null;
+
+        var sourceTable = GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.DictionarySource);
+        if (string.IsNullOrEmpty(sourceTable))
+            return null;
+
+        var columns = new List<string>();
+
+        // If projection exists, extract column mappings
+        if (projectionExpr != null)
+        {
+            columns = ExtractProjectionColumns(projectionExpr, operation.Columns);
+        }
+        else
+        {
+            // Use all columns from the operation
+            columns = operation.Columns.Select(c => Dependencies.SqlGenerationHelper.DelimitIdentifier(c.Name)).ToList();
+        }
+
+        var query = $"SELECT {string.Join(", ", columns)} FROM {Dependencies.SqlGenerationHelper.DelimitIdentifier(sourceTable)}";
+
+        // Add WHERE clause from filter expression
+        if (filterExpr != null)
+        {
+            var whereClause = ExtractFilterWhereClause(filterExpr);
+            if (!string.IsNullOrEmpty(whereClause))
+            {
+                query += $" WHERE {whereClause}";
+            }
+        }
+
+        return query;
+    }
+
+    /// <summary>
+    /// Extracts column selections from a projection expression.
+    /// </summary>
+    private List<string> ExtractProjectionColumns(LambdaExpression projection, IReadOnlyList<AddColumnOperation> targetColumns)
+    {
+        var columns = new List<string>();
+
+        // For now, we'll use a simple approach: match target column names
+        // In a more complete implementation, we'd parse the expression tree to get source->target mappings
+        foreach (var col in targetColumns)
+        {
+            columns.Add(Dependencies.SqlGenerationHelper.DelimitIdentifier(col.Name));
+        }
+
+        return columns;
+    }
+
+    /// <summary>
+    /// Extracts a WHERE clause from a filter expression.
+    /// </summary>
+    private static string? ExtractFilterWhereClause(LambdaExpression filter)
+    {
+        // This is a simplified implementation
+        // A complete implementation would parse the expression tree and convert to SQL
+        // For now, we support simple Where() calls with basic predicates
+
+        if (filter.Body is MethodCallExpression methodCall
+            && methodCall.Method.Name == "Where"
+            && methodCall.Arguments.Count >= 2
+            && methodCall.Arguments[1] is UnaryExpression { Operand: LambdaExpression predicate })
+        {
+            return ConvertPredicateToSql(predicate);
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Converts a simple predicate expression to SQL.
+    /// </summary>
+    private static string? ConvertPredicateToSql(LambdaExpression predicate)
+    {
+        if (predicate.Body is BinaryExpression binary)
+        {
+            var left = GetExpressionSql(binary.Left);
+            var right = GetExpressionSql(binary.Right);
+            var op = binary.NodeType switch
+            {
+                ExpressionType.Equal => "=",
+                ExpressionType.NotEqual => "!=",
+                ExpressionType.GreaterThan => ">",
+                ExpressionType.GreaterThanOrEqual => ">=",
+                ExpressionType.LessThan => "<",
+                ExpressionType.LessThanOrEqual => "<=",
+                ExpressionType.AndAlso => "AND",
+                ExpressionType.OrElse => "OR",
+                _ => null
+            };
+
+            if (op != null && left != null && right != null)
+            {
+                return $"{left} {op} {right}";
+            }
+        }
+        else if (predicate.Body is MemberExpression member && member.Type == typeof(bool))
+        {
+            // Simple boolean property access like x => x.IsActive
+            return $"\"{member.Member.Name}\" = 1";
+        }
+        else if (predicate.Body is UnaryExpression { NodeType: ExpressionType.Not } unary
+                 && unary.Operand is MemberExpression notMember && notMember.Type == typeof(bool))
+        {
+            // Negated boolean like x => !x.IsActive
+            return $"\"{notMember.Member.Name}\" = 0";
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Gets SQL representation of an expression part.
+    /// </summary>
+    private static string? GetExpressionSql(Expression expr)
+    {
+        return expr switch
+        {
+            MemberExpression member => $"\"{member.Member.Name}\"",
+            ConstantExpression constant => FormatConstantValue(constant.Value),
+            UnaryExpression { NodeType: ExpressionType.Convert } unary => GetExpressionSql(unary.Operand),
+            _ => null
+        };
+    }
+
+    /// <summary>
+    /// Formats a constant value for SQL.
+    /// </summary>
+    private static string? FormatConstantValue(object? value)
+    {
+        return value switch
+        {
+            null => "NULL",
+            string s => $"'{s.Replace("'", "''")}'",
+            bool b => b ? "1" : "0",
+            DateTime dt => $"'{dt:yyyy-MM-dd HH:mm:ss}'",
+            _ => value.ToString()
+        };
+    }
+
+    /// <summary>
+    /// Gets the SQL for a dictionary layout.
+    /// </summary>
+    private static string GetLayoutSql(DictionaryLayout layout, Dictionary<string, object>? options)
+    {
+        var layoutName = layout switch
+        {
+            DictionaryLayout.Flat => "FLAT",
+            DictionaryLayout.Hashed => "HASHED",
+            DictionaryLayout.HashedArray => "HASHED_ARRAY",
+            DictionaryLayout.ComplexKeyHashed => "COMPLEX_KEY_HASHED",
+            DictionaryLayout.ComplexKeyHashedArray => "COMPLEX_KEY_HASHED_ARRAY",
+            DictionaryLayout.RangeHashed => "RANGE_HASHED",
+            DictionaryLayout.Cache => "CACHE",
+            DictionaryLayout.Direct => "DIRECT",
+            _ => "HASHED"
+        };
+
+        if (options == null || options.Count == 0)
+        {
+            return $"{layoutName}()";
+        }
+
+        var optionStrings = options.Select(kvp =>
+        {
+            var value = kvp.Value switch
+            {
+                bool b => b ? "1" : "0",
+                _ => kvp.Value.ToString()
+            };
+            return $"{kvp.Key.ToUpperInvariant()} {value}";
+        });
+
+        return $"{layoutName}({string.Join(" ", optionStrings)})";
+    }
+
+    /// <summary>
+    /// Gets the ClickHouse type for a CLR type.
+    /// </summary>
+    private string GetClickHouseType(Type clrType)
+    {
+        var mapping = _typeMappingSource.FindMapping(clrType);
+        return mapping?.StoreType ?? "String";
+    }
+
+    /// <summary>
+    /// Formats a default value for DDL.
+    /// </summary>
+    private static string FormatDefaultValue(object value)
+    {
+        return value switch
+        {
+            string s => $"'{s.Replace("'", "''")}'",
+            bool b => b ? "1" : "0",
+            DateTime dt => $"'{dt:yyyy-MM-dd HH:mm:ss}'",
+            _ => value.ToString() ?? "NULL"
+        };
     }
 
     /// <summary>

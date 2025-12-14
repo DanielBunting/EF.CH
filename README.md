@@ -10,6 +10,7 @@ An Entity Framework Core provider for [ClickHouse](https://clickhouse.com/), bui
 - **Materialized Views** - LINQ-based and raw SQL definitions
 - **EF Core Migrations** - DDL generation with ClickHouse-specific clauses
 - **DELETE Support** - Lightweight and mutation-based strategies
+- **Dictionaries** - In-memory key-value stores with dictGet translation
 - **Scaffolding** - Reverse engineering with C# enum generation
 
 ## Quick Start
@@ -215,6 +216,35 @@ modelBuilder.Entity<HourlySummary>(entity =>
 });
 ```
 
+## Dictionaries
+
+ClickHouse dictionaries are in-memory key-value stores for fast lookups:
+
+```csharp
+// Define dictionary entity with marker interface
+public class CountryLookup : IClickHouseDictionary
+{
+    public ulong Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+}
+
+// Configure in OnModelCreating
+entity.AsDictionary<CountryLookup, Country>(cfg => cfg
+    .HasKey(x => x.Id)
+    .FromTable()
+    .UseHashedLayout()
+    .HasLifetime(300));
+
+// Use in LINQ queries - translates to dictGet()
+var orders = db.Orders
+    .Select(o => new {
+        o.Id,
+        CountryName = db.CountryDict.Get(o.CountryId, c => c.Name)
+    });
+```
+
+**Layouts:** `Flat`, `Hashed`, `ComplexKeyHashed`, `Cache`, `Direct`
+
 ## Documentation
 
 | Topic | Description |
@@ -246,6 +276,8 @@ modelBuilder.Entity<HourlySummary>(entity =>
 | [QueryModifiersSample](samples/QueryModifiersSample/) | Final(), Sample(), WithSettings() |
 | [DeleteStrategiesSample](samples/DeleteStrategiesSample/) | Lightweight vs mutation deletes |
 | [OptimizeTableSample](samples/OptimizeTableSample/) | Programmatic OPTIMIZE TABLE |
+| [DictionarySample](samples/DictionarySample/) | In-memory dictionary lookups |
+| [DictionaryJoinSample](samples/DictionaryJoinSample/) | Dictionaries as JOIN replacement |
 
 ## License
 
