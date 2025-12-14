@@ -112,4 +112,68 @@ public static class ClickHouseAnnotationNames
     public const string EnumTypeName = Prefix + "EnumTypeName";
 
     #endregion
+
+    #region Dictionaries
+
+    /// <summary>
+    /// Marks this entity as a ClickHouse dictionary.
+    /// </summary>
+    public const string Dictionary = Prefix + "Dictionary";
+
+    /// <summary>
+    /// The source table name for the dictionary.
+    /// </summary>
+    public const string DictionarySource = Prefix + "DictionarySource";
+
+    /// <summary>
+    /// The source entity type for the dictionary.
+    /// </summary>
+    public const string DictionarySourceType = Prefix + "DictionarySourceType";
+
+    /// <summary>
+    /// The custom query for the dictionary SOURCE clause.
+    /// </summary>
+    public const string DictionarySourceQuery = Prefix + "DictionarySourceQuery";
+
+    /// <summary>
+    /// The dictionary layout type (Flat, Hashed, etc.).
+    /// </summary>
+    public const string DictionaryLayout = Prefix + "DictionaryLayout";
+
+    /// <summary>
+    /// Layout-specific options as a dictionary.
+    /// </summary>
+    public const string DictionaryLayoutOptions = Prefix + "DictionaryLayoutOptions";
+
+    /// <summary>
+    /// The minimum lifetime in seconds for dictionary refresh.
+    /// </summary>
+    public const string DictionaryLifetimeMin = Prefix + "DictionaryLifetimeMin";
+
+    /// <summary>
+    /// The maximum lifetime in seconds for dictionary refresh.
+    /// </summary>
+    public const string DictionaryLifetimeMax = Prefix + "DictionaryLifetimeMax";
+
+    /// <summary>
+    /// The key columns for the dictionary PRIMARY KEY.
+    /// </summary>
+    public const string DictionaryKeyColumns = Prefix + "DictionaryKeyColumns";
+
+    /// <summary>
+    /// Default values for dictionary attributes (property name → default value).
+    /// </summary>
+    public const string DictionaryDefaults = Prefix + "DictionaryDefaults";
+
+    /// <summary>
+    /// The LINQ expression for dictionary source projection.
+    /// </summary>
+    public const string DictionaryProjectionExpression = Prefix + "DictionaryProjectionExpression";
+
+    /// <summary>
+    /// The LINQ expression for dictionary source filter.
+    /// </summary>
+    public const string DictionaryFilterExpression = Prefix + "DictionaryFilterExpression";
+
+    #endregion
 }
