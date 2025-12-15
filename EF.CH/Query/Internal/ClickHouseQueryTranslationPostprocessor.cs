@@ -138,11 +138,15 @@ internal class ClickHouseExternalTableFunctionVisitor : ExpressionVisitor
 
             if (entityType != null && _externalConfigResolver.IsExternalTableFunction(entityType))
             {
+                // Get the provider type from entity annotation
+                var provider = entityType.FindAnnotation(Metadata.ClickHouseAnnotationNames.ExternalProvider)
+                    ?.Value?.ToString() ?? "postgresql";
+
                 // Replace with external table function expression
-                var functionCall = _externalConfigResolver.ResolvePostgresTableFunction(entityType);
+                var functionCall = _externalConfigResolver.ResolveTableFunction(entityType);
                 return new ClickHouseExternalTableFunctionExpression(
                     tableExpression.Alias,
-                    "postgresql",
+                    provider,
                     functionCall,
                     entityType.ClrType);
             }

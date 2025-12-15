@@ -109,7 +109,7 @@ public class ExternalMySqlIntegrationTests : IAsyncLifetime
         await using var chContext = CreateClickHouseContext();
 
         var products = await chContext.ExternalMySqlProducts
-            .Where(p => p.price > 20m)
+            .Where(p => p.price > 20.0)
             .Select(p => new { p.sku, p.name })
             .ToListAsync();
 
@@ -134,8 +134,8 @@ public class ExternalMySqlIntegrationTests : IAsyncLifetime
 
         // Assert
         Assert.Equal(3, count);
-        Assert.Equal(19.99m, minPrice);
-        Assert.Equal(39.99m, maxPrice);
+        Assert.Equal(19.99, minPrice, precision: 2);
+        Assert.Equal(39.99, maxPrice, precision: 2);
     }
 
     [Fact]
@@ -220,12 +220,14 @@ public class ExternalMySqlIntegrationTests : IAsyncLifetime
         await connection.OpenAsync();
 
         // Create table
+        // Note: Using DOUBLE instead of DECIMAL because ClickHouse's mysql() function
+        // maps MySQL DECIMAL to String, causing type mismatches
         await using var createCmd = new MySqlCommand("""
             CREATE TABLE IF NOT EXISTS products (
                 id INT AUTO_INCREMENT PRIMARY KEY,
                 sku VARCHAR(50) NOT NULL,
                 name VARCHAR(255) NOT NULL,
-                price DECIMAL(18, 4) NOT NULL
+                price DOUBLE NOT NULL
             )
             """, connection);
         await createCmd.ExecuteNonQueryAsync();
@@ -270,7 +272,7 @@ public class ChExternalMySqlProduct
     public int id { get; set; }
     public string sku { get; set; } = string.Empty;
     public string name { get; set; } = string.Empty;
-    public decimal price { get; set; }
+    public double price { get; set; }  // Using double because ClickHouse maps MySQL DECIMAL to String
 }
 
 public class ClickHouseMySqlTestContext : DbContext

@@ -18,6 +18,8 @@ namespace EF.CH.Tests;
 ///
 /// NOTE: These tests require building a custom ClickHouse image with ODBC drivers.
 /// The image build happens once at test fixture initialization.
+/// These tests are skipped on ARM64 because the Microsoft SQL Server ODBC driver
+/// is only available for amd64 Linux.
 /// </summary>
 [Collection("ODBC Tests")]
 public class ExternalOdbcMsSqlIntegrationTests : IAsyncLifetime
@@ -37,6 +39,9 @@ public class ExternalOdbcMsSqlIntegrationTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
+        // Note: ODBC tests are skipped on ARM64 via [Fact(Skip=...)] attribute
+        // because MS ODBC driver only supports amd64 Linux.
+
         // Create network first
         await _network.CreateAsync();
 
@@ -144,7 +149,7 @@ public class ExternalOdbcMsSqlIntegrationTests : IAsyncLifetime
         // Note: We don't dispose the image to allow reuse across test runs
     }
 
-    [Fact]
+    [Fact(Skip = "Requires amd64 Linux - MS ODBC driver not available for ARM64. Run on CI or x64 machine.")]
     public async Task CanQueryExternalOdbcTable()
     {
         // Arrange: Set up MSSQL with data
@@ -164,7 +169,7 @@ public class ExternalOdbcMsSqlIntegrationTests : IAsyncLifetime
         Assert.Equal("Bob", customers[1].Name);
     }
 
-    [Fact]
+    [Fact(Skip = "Requires amd64 Linux - MS ODBC driver not available for ARM64. Run on CI or x64 machine.")]
     public async Task CanQueryExternalOdbcWithProjection()
     {
         // Arrange
@@ -184,7 +189,7 @@ public class ExternalOdbcMsSqlIntegrationTests : IAsyncLifetime
         Assert.Contains(products, p => p.Sku == "SKU-003");
     }
 
-    [Fact]
+    [Fact(Skip = "Requires amd64 Linux - MS ODBC driver not available for ARM64. Run on CI or x64 machine.")]
     public async Task CanUseAggregationsOnExternalOdbcTable()
     {
         // Arrange
@@ -203,7 +208,7 @@ public class ExternalOdbcMsSqlIntegrationTests : IAsyncLifetime
         Assert.Equal(39.99m, maxPrice);
     }
 
-    [Fact]
+    [Fact(Skip = "Requires amd64 Linux - MS ODBC driver not available for ARM64. Run on CI or x64 machine.")]
     public async Task GeneratedSql_ContainsOdbcFunction()
     {
         // Arrange
@@ -220,7 +225,7 @@ public class ExternalOdbcMsSqlIntegrationTests : IAsyncLifetime
         Assert.Contains("customers", sql);
     }
 
-    [Fact]
+    [Fact(Skip = "Requires amd64 Linux - MS ODBC driver not available for ARM64. Run on CI or x64 machine.")]
     public async Task CanInsertIntoExternalOdbcTable_ViaRawSql()
     {
         // Arrange: Set up MSSQL with the table
