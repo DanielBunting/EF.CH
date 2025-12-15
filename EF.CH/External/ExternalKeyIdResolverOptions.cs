@@ -1,4 +1,4 @@
-namespace EF.CH.Services;
+namespace EF.CH.External;
 
 /// <summary>
 /// Configuration options for the external key-to-ID resolver service.

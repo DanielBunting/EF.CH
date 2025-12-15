@@ -1,7 +1,7 @@
 using System.Data.Common;
 using Microsoft.EntityFrameworkCore;
 
-namespace EF.CH.Services;
+namespace EF.CH.External;
 
 /// <summary>
 /// Base implementation for external key-to-ID resolver service.

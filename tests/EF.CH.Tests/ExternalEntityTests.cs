@@ -977,3 +977,1224 @@ public class StandaloneDictionaryApiTests
 }
 
 #endregion
+
+#region MySQL External Entity Test Entities
+
+/// <summary>
+/// External MySQL entity for testing.
+/// </summary>
+public class ExternalMySqlCustomer
+{
+    public int CustomerId { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string Email { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; }
+}
+
+/// <summary>
+/// External MySQL entity for INSERT tests with replace_query support.
+/// </summary>
+public class ExternalMySqlInventory
+{
+    public int ProductId { get; set; }
+    public int Quantity { get; set; }
+    public DateTime LastUpdated { get; set; }
+}
+
+#endregion
+
+#region ODBC External Entity Test Entities
+
+/// <summary>
+/// External ODBC entity for testing (e.g., MSSQL).
+/// </summary>
+public class ExternalOdbcSalesData
+{
+    public long SaleId { get; set; }
+    public string Region { get; set; } = string.Empty;
+    public decimal Amount { get; set; }
+    public DateTime SaleDate { get; set; }
+}
+
+#endregion
+
+#region Redis External Entity Test Entities
+
+/// <summary>
+/// External Redis entity for testing.
+/// </summary>
+public class ExternalRedisSession
+{
+    public string SessionId { get; set; } = string.Empty;
+    public ulong UserId { get; set; }
+    public string Data { get; set; } = string.Empty;
+    public DateTime ExpiresAt { get; set; }
+}
+
+/// <summary>
+/// Redis entity with various types for structure generation testing.
+/// </summary>
+public class ExternalRedisMetrics
+{
+    public string Key { get; set; } = string.Empty;
+    public int Count { get; set; }
+    public long TotalBytes { get; set; }
+    public double AverageLatency { get; set; }
+    public bool IsActive { get; set; }
+}
+
+#endregion
+
+#region MySQL External Entity Configuration Tests
+
+public class ExternalMySqlEntityConfigurationTests
+{
+    [Fact]
+    public void ExternalMySqlEntity_StoresIsExternalAnnotation()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalMySqlEntity<ExternalMySqlCustomer>(ext => ext
+            .FromTable("customers")
+            .Connection(c => c
+                .HostPort(value: "localhost:3306")
+                .Database(value: "testdb")
+                .User(value: "user")
+                .Password(value: "pass")));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalMySqlCustomer))!;
+
+        Assert.True(entityType.FindAnnotation(ClickHouseAnnotationNames.IsExternalTableFunction)?.Value as bool?);
+        Assert.Equal("mysql", entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalProvider)?.Value);
+    }
+
+    [Fact]
+    public void ExternalMySqlEntity_StoresTableName()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalMySqlEntity<ExternalMySqlCustomer>(ext => ext
+            .FromTable("my_customers")
+            .Connection(c => c
+                .HostPort(value: "localhost:3306")
+                .Database(value: "testdb")
+                .User(value: "user")
+                .Password(value: "pass")));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalMySqlCustomer))!;
+
+        Assert.Equal("my_customers", entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalTable)?.Value);
+    }
+
+    [Fact]
+    public void ExternalMySqlEntity_DefaultsToSnakeCaseTableName()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalMySqlEntity<ExternalMySqlCustomer>(ext => ext
+            .Connection(c => c
+                .HostPort(value: "localhost:3306")
+                .Database(value: "testdb")
+                .User(value: "user")
+                .Password(value: "pass")));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalMySqlCustomer))!;
+
+        Assert.Equal("external_my_sql_customer", entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalTable)?.Value);
+    }
+
+    [Fact]
+    public void ExternalMySqlEntity_StoresLiteralConnectionValues()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalMySqlEntity<ExternalMySqlCustomer>(ext => ext
+            .FromTable("customers")
+            .Connection(c => c
+                .HostPort(value: "mysql.example.com:3306")
+                .Database(value: "production")
+                .User(value: "readonly_user")
+                .Password(value: "secret123")));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalMySqlCustomer))!;
+
+        Assert.Equal("mysql.example.com:3306", entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalHostPortValue)?.Value);
+        Assert.Equal("production", entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalDatabaseValue)?.Value);
+        Assert.Equal("readonly_user", entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalUserValue)?.Value);
+        Assert.Equal("secret123", entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalPasswordValue)?.Value);
+    }
+
+    [Fact]
+    public void ExternalMySqlEntity_StoresEnvironmentVariableReferences()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalMySqlEntity<ExternalMySqlCustomer>(ext => ext
+            .FromTable("customers")
+            .Connection(c => c
+                .HostPort(env: "MYSQL_HOST")
+                .Database(env: "MYSQL_DATABASE")
+                .Credentials("MYSQL_USER", "MYSQL_PASSWORD")));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalMySqlCustomer))!;
+
+        Assert.Equal("MYSQL_HOST", entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalHostPortEnv)?.Value);
+        Assert.Equal("MYSQL_DATABASE", entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalDatabaseEnv)?.Value);
+        Assert.Equal("MYSQL_USER", entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalUserEnv)?.Value);
+        Assert.Equal("MYSQL_PASSWORD", entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalPasswordEnv)?.Value);
+    }
+
+    [Fact]
+    public void ExternalMySqlEntity_StoresProfileName()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalMySqlEntity<ExternalMySqlCustomer>(ext => ext
+            .FromTable("customers")
+            .Connection(c => c.UseProfile("production-mysql")));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalMySqlCustomer))!;
+
+        Assert.Equal("production-mysql", entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalConnectionProfile)?.Value);
+    }
+
+    [Fact]
+    public void ExternalMySqlEntity_IsReadOnlyByDefault()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalMySqlEntity<ExternalMySqlCustomer>(ext => ext
+            .FromTable("customers")
+            .Connection(c => c
+                .HostPort(value: "localhost:3306")
+                .Database(value: "testdb")
+                .User(value: "user")
+                .Password(value: "pass")));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalMySqlCustomer))!;
+
+        Assert.True(entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalReadOnly)?.Value as bool?);
+    }
+
+    [Fact]
+    public void ExternalMySqlEntity_AllowInsertsDisablesReadOnly()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalMySqlEntity<ExternalMySqlCustomer>(ext => ext
+            .FromTable("customers")
+            .AllowInserts()
+            .Connection(c => c
+                .HostPort(value: "localhost:3306")
+                .Database(value: "testdb")
+                .User(value: "user")
+                .Password(value: "pass")));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalMySqlCustomer))!;
+
+        Assert.False(entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalReadOnly)?.Value as bool?);
+    }
+
+    [Fact]
+    public void ExternalMySqlEntity_UseReplaceForInserts_StoresAnnotation()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalMySqlEntity<ExternalMySqlInventory>(ext => ext
+            .FromTable("inventory")
+            .AllowInserts()
+            .UseReplaceForInserts()
+            .Connection(c => c
+                .HostPort(value: "localhost:3306")
+                .Database(value: "testdb")
+                .User(value: "user")
+                .Password(value: "pass")));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalMySqlInventory))!;
+
+        Assert.True(entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalMySqlReplaceQuery)?.Value as bool?);
+    }
+
+    [Fact]
+    public void ExternalMySqlEntity_OnDuplicateKey_StoresClause()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalMySqlEntity<ExternalMySqlInventory>(ext => ext
+            .FromTable("inventory")
+            .AllowInserts()
+            .OnDuplicateKey("UPDATE quantity = VALUES(quantity)")
+            .Connection(c => c
+                .HostPort(value: "localhost:3306")
+                .Database(value: "testdb")
+                .User(value: "user")
+                .Password(value: "pass")));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalMySqlInventory))!;
+
+        Assert.Equal("UPDATE quantity = VALUES(quantity)",
+            entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalMySqlOnDuplicateClause)?.Value);
+    }
+
+    [Fact]
+    public void ExternalMySqlEntity_MarksEntityAsKeyless()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalMySqlEntity<ExternalMySqlCustomer>(ext => ext
+            .FromTable("customers")
+            .Connection(c => c
+                .HostPort(value: "localhost:3306")
+                .Database(value: "testdb")
+                .User(value: "user")
+                .Password(value: "pass")));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalMySqlCustomer))!;
+
+        Assert.Empty(entityType.GetKeys());
+    }
+}
+
+#endregion
+
+#region MySQL External Config Resolver Tests
+
+public class ExternalMySqlConfigResolverTests
+{
+    [Fact]
+    public void ResolveMySqlTableFunction_GeneratesCorrectSqlWithLiteralValues()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalMySqlEntity<ExternalMySqlCustomer>(ext => ext
+            .FromTable("customers")
+            .Connection(c => c
+                .HostPort(value: "mysql.example.com:3306")
+                .Database(value: "production")
+                .User(value: "readonly")
+                .Password(value: "secret")));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalMySqlCustomer))!;
+
+        var resolver = new ExternalConfigResolver();
+        var sql = resolver.ResolveMySqlTableFunction(entityType);
+
+        Assert.Equal(
+            "mysql('mysql.example.com:3306', 'production', 'customers', 'readonly', 'secret')",
+            sql);
+    }
+
+    [Fact]
+    public void ResolveMySqlTableFunction_EscapesSingleQuotes()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalMySqlEntity<ExternalMySqlCustomer>(ext => ext
+            .FromTable("customer's_table")
+            .Connection(c => c
+                .HostPort(value: "localhost:3306")
+                .Database(value: "db'name")
+                .User(value: "user'name")
+                .Password(value: "pass'word")));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalMySqlCustomer))!;
+
+        var resolver = new ExternalConfigResolver();
+        var sql = resolver.ResolveMySqlTableFunction(entityType);
+
+        Assert.Contains("\\'", sql);
+        Assert.Contains("customer\\'s_table", sql);
+    }
+
+    [Fact]
+    public void ResolveMySqlTableFunction_ResolvesFromConfiguration()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["TEST_MYSQL_HOST"] = "config-host:3306",
+                ["TEST_MYSQL_DB"] = "config-db",
+                ["TEST_MYSQL_USER"] = "config-user",
+                ["TEST_MYSQL_PASS"] = "config-pass"
+            })
+            .Build();
+
+        var builder = new ModelBuilder();
+
+        builder.ExternalMySqlEntity<ExternalMySqlCustomer>(ext => ext
+            .FromTable("customers")
+            .Connection(c => c
+                .HostPort(env: "TEST_MYSQL_HOST")
+                .Database(env: "TEST_MYSQL_DB")
+                .User(env: "TEST_MYSQL_USER")
+                .Password(env: "TEST_MYSQL_PASS")));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalMySqlCustomer))!;
+
+        var resolver = new ExternalConfigResolver(configuration);
+        var sql = resolver.ResolveMySqlTableFunction(entityType);
+
+        Assert.Contains("config-host:3306", sql);
+        Assert.Contains("config-db", sql);
+        Assert.Contains("config-user", sql);
+        Assert.Contains("config-pass", sql);
+    }
+
+    [Fact]
+    public void ResolveMySqlTableFunction_ResolvesFromProfile()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["ExternalConnections:production-mysql:HostPort"] = "prod.mysql.com:3306",
+                ["ExternalConnections:production-mysql:Database"] = "prod_db",
+                ["ExternalConnections:production-mysql:User"] = "prod_user",
+                ["ExternalConnections:production-mysql:Password"] = "prod_secret"
+            })
+            .Build();
+
+        var builder = new ModelBuilder();
+
+        builder.ExternalMySqlEntity<ExternalMySqlCustomer>(ext => ext
+            .FromTable("customers")
+            .Connection(c => c.UseProfile("production-mysql")));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalMySqlCustomer))!;
+
+        var resolver = new ExternalConfigResolver(configuration);
+        var sql = resolver.ResolveMySqlTableFunction(entityType);
+
+        Assert.Equal(
+            "mysql('prod.mysql.com:3306', 'prod_db', 'customers', 'prod_user', 'prod_secret')",
+            sql);
+    }
+
+    [Fact]
+    public void ResolveMySqlTableFunction_ThrowsForWrongProvider()
+    {
+        var builder = new ModelBuilder();
+
+        // Manually set PostgreSQL provider but try to resolve as MySQL
+        builder.Entity<ExternalMySqlCustomer>(entity =>
+        {
+            entity.HasNoKey();
+            entity.HasAnnotation(ClickHouseAnnotationNames.IsExternalTableFunction, true);
+            entity.HasAnnotation(ClickHouseAnnotationNames.ExternalProvider, "postgresql");
+        });
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalMySqlCustomer))!;
+
+        var resolver = new ExternalConfigResolver();
+
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            resolver.ResolveMySqlTableFunction(entityType));
+
+        Assert.Contains("postgresql", ex.Message);
+        Assert.Contains("mysql", ex.Message.ToLower());
+    }
+
+    [Fact]
+    public void ResolveTableFunction_DispatchesToMySql()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalMySqlEntity<ExternalMySqlCustomer>(ext => ext
+            .FromTable("customers")
+            .Connection(c => c
+                .HostPort(value: "localhost:3306")
+                .Database(value: "testdb")
+                .User(value: "user")
+                .Password(value: "pass")));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalMySqlCustomer))!;
+
+        var resolver = new ExternalConfigResolver();
+        var sql = resolver.ResolveTableFunction(entityType);
+
+        Assert.StartsWith("mysql(", sql);
+    }
+}
+
+#endregion
+
+#region ODBC External Entity Configuration Tests
+
+public class ExternalOdbcEntityConfigurationTests
+{
+    [Fact]
+    public void ExternalOdbcEntity_StoresIsExternalAnnotation()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalOdbcEntity<ExternalOdbcSalesData>(ext => ext
+            .FromTable("sales")
+            .Dsn(value: "MsSqlProd")
+            .Database("reporting"));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalOdbcSalesData))!;
+
+        Assert.True(entityType.FindAnnotation(ClickHouseAnnotationNames.IsExternalTableFunction)?.Value as bool?);
+        Assert.Equal("odbc", entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalProvider)?.Value);
+    }
+
+    [Fact]
+    public void ExternalOdbcEntity_StoresTableName()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalOdbcEntity<ExternalOdbcSalesData>(ext => ext
+            .FromTable("sales_data")
+            .Dsn(value: "MsSqlProd"));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalOdbcSalesData))!;
+
+        Assert.Equal("sales_data", entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalTable)?.Value);
+    }
+
+    [Fact]
+    public void ExternalOdbcEntity_DefaultsToSnakeCaseTableName()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalOdbcEntity<ExternalOdbcSalesData>(ext => ext
+            .Dsn(value: "MsSqlProd"));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalOdbcSalesData))!;
+
+        Assert.Equal("external_odbc_sales_data", entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalTable)?.Value);
+    }
+
+    [Fact]
+    public void ExternalOdbcEntity_StoresLiteralDsnValue()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalOdbcEntity<ExternalOdbcSalesData>(ext => ext
+            .FromTable("sales")
+            .Dsn(value: "MyMsSqlDSN"));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalOdbcSalesData))!;
+
+        Assert.Equal("MyMsSqlDSN", entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalOdbcDsnValue)?.Value);
+    }
+
+    [Fact]
+    public void ExternalOdbcEntity_StoresDsnEnvironmentVariable()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalOdbcEntity<ExternalOdbcSalesData>(ext => ext
+            .FromTable("sales")
+            .Dsn(env: "MSSQL_DSN"));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalOdbcSalesData))!;
+
+        Assert.Equal("MSSQL_DSN", entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalOdbcDsnEnv)?.Value);
+    }
+
+    [Fact]
+    public void ExternalOdbcEntity_StoresDatabaseName()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalOdbcEntity<ExternalOdbcSalesData>(ext => ext
+            .FromTable("sales")
+            .Dsn(value: "MsSqlProd")
+            .Database("reporting"));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalOdbcSalesData))!;
+
+        Assert.Equal("reporting", entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalDatabaseValue)?.Value);
+    }
+
+    [Fact]
+    public void ExternalOdbcEntity_IsReadOnlyByDefault()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalOdbcEntity<ExternalOdbcSalesData>(ext => ext
+            .FromTable("sales")
+            .Dsn(value: "MsSqlProd"));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalOdbcSalesData))!;
+
+        Assert.True(entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalReadOnly)?.Value as bool?);
+    }
+
+    [Fact]
+    public void ExternalOdbcEntity_AllowInsertsDisablesReadOnly()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalOdbcEntity<ExternalOdbcSalesData>(ext => ext
+            .FromTable("sales")
+            .Dsn(value: "MsSqlProd")
+            .AllowInserts());
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalOdbcSalesData))!;
+
+        Assert.False(entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalReadOnly)?.Value as bool?);
+    }
+
+    [Fact]
+    public void ExternalOdbcEntity_MarksEntityAsKeyless()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalOdbcEntity<ExternalOdbcSalesData>(ext => ext
+            .FromTable("sales")
+            .Dsn(value: "MsSqlProd"));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalOdbcSalesData))!;
+
+        Assert.Empty(entityType.GetKeys());
+    }
+}
+
+#endregion
+
+#region ODBC External Config Resolver Tests
+
+public class ExternalOdbcConfigResolverTests
+{
+    [Fact]
+    public void ResolveOdbcTableFunction_GeneratesCorrectSqlWithLiteralValues()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalOdbcEntity<ExternalOdbcSalesData>(ext => ext
+            .FromTable("sales")
+            .Dsn(value: "MsSqlProd")
+            .Database("reporting"));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalOdbcSalesData))!;
+
+        var resolver = new ExternalConfigResolver();
+        var sql = resolver.ResolveOdbcTableFunction(entityType);
+
+        Assert.Equal("odbc('MsSqlProd', 'reporting', 'sales')", sql);
+    }
+
+    [Fact]
+    public void ResolveOdbcTableFunction_HandlesEmptyDatabase()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalOdbcEntity<ExternalOdbcSalesData>(ext => ext
+            .FromTable("sales")
+            .Dsn(value: "MsSqlProd"));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalOdbcSalesData))!;
+
+        var resolver = new ExternalConfigResolver();
+        var sql = resolver.ResolveOdbcTableFunction(entityType);
+
+        Assert.Equal("odbc('MsSqlProd', '', 'sales')", sql);
+    }
+
+    [Fact]
+    public void ResolveOdbcTableFunction_EscapesSingleQuotes()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalOdbcEntity<ExternalOdbcSalesData>(ext => ext
+            .FromTable("sale's_table")
+            .Dsn(value: "DSN'Name")
+            .Database("db'name"));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalOdbcSalesData))!;
+
+        var resolver = new ExternalConfigResolver();
+        var sql = resolver.ResolveOdbcTableFunction(entityType);
+
+        Assert.Contains("\\'", sql);
+        Assert.Contains("sale\\'s_table", sql);
+        Assert.Contains("DSN\\'Name", sql);
+    }
+
+    [Fact]
+    public void ResolveOdbcTableFunction_ResolvesFromConfiguration()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["TEST_MSSQL_DSN"] = "ConfigDSN"
+            })
+            .Build();
+
+        var builder = new ModelBuilder();
+
+        builder.ExternalOdbcEntity<ExternalOdbcSalesData>(ext => ext
+            .FromTable("sales")
+            .Dsn(env: "TEST_MSSQL_DSN")
+            .Database("reporting"));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalOdbcSalesData))!;
+
+        var resolver = new ExternalConfigResolver(configuration);
+        var sql = resolver.ResolveOdbcTableFunction(entityType);
+
+        Assert.Equal("odbc('ConfigDSN', 'reporting', 'sales')", sql);
+    }
+
+    [Fact]
+    public void ResolveOdbcTableFunction_ThrowsForMissingDsn()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalOdbcEntity<ExternalOdbcSalesData>(ext => ext
+            .FromTable("sales")
+            .Dsn(env: "NONEXISTENT_DSN_VAR"));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalOdbcSalesData))!;
+
+        var resolver = new ExternalConfigResolver();
+
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            resolver.ResolveOdbcTableFunction(entityType));
+
+        Assert.Contains("NONEXISTENT_DSN_VAR", ex.Message);
+    }
+
+    [Fact]
+    public void ResolveOdbcTableFunction_ThrowsForWrongProvider()
+    {
+        var builder = new ModelBuilder();
+
+        builder.Entity<ExternalOdbcSalesData>(entity =>
+        {
+            entity.HasNoKey();
+            entity.HasAnnotation(ClickHouseAnnotationNames.IsExternalTableFunction, true);
+            entity.HasAnnotation(ClickHouseAnnotationNames.ExternalProvider, "mysql");
+        });
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalOdbcSalesData))!;
+
+        var resolver = new ExternalConfigResolver();
+
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            resolver.ResolveOdbcTableFunction(entityType));
+
+        Assert.Contains("mysql", ex.Message);
+        Assert.Contains("odbc", ex.Message.ToLower());
+    }
+
+    [Fact]
+    public void ResolveTableFunction_DispatchesToOdbc()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalOdbcEntity<ExternalOdbcSalesData>(ext => ext
+            .FromTable("sales")
+            .Dsn(value: "MsSqlProd"));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalOdbcSalesData))!;
+
+        var resolver = new ExternalConfigResolver();
+        var sql = resolver.ResolveTableFunction(entityType);
+
+        Assert.StartsWith("odbc(", sql);
+    }
+}
+
+#endregion
+
+#region Redis External Entity Configuration Tests
+
+public class ExternalRedisEntityConfigurationTests
+{
+    [Fact]
+    public void ExternalRedisEntity_StoresIsExternalAnnotation()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalRedisEntity<ExternalRedisSession>(ext => ext
+            .KeyColumn(x => x.SessionId)
+            .Connection(c => c.HostPort(value: "localhost:6379")));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalRedisSession))!;
+
+        Assert.True(entityType.FindAnnotation(ClickHouseAnnotationNames.IsExternalTableFunction)?.Value as bool?);
+        Assert.Equal("redis", entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalProvider)?.Value);
+    }
+
+    [Fact]
+    public void ExternalRedisEntity_StoresKeyColumnFromExpression()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalRedisEntity<ExternalRedisSession>(ext => ext
+            .KeyColumn(x => x.SessionId)
+            .Connection(c => c.HostPort(value: "localhost:6379")));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalRedisSession))!;
+
+        Assert.Equal("SessionId", entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalRedisKeyColumn)?.Value);
+    }
+
+    [Fact]
+    public void ExternalRedisEntity_StoresKeyColumnFromString()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalRedisEntity<ExternalRedisSession>(ext => ext
+            .KeyColumn("session_id")
+            .Connection(c => c.HostPort(value: "localhost:6379")));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalRedisSession))!;
+
+        Assert.Equal("session_id", entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalRedisKeyColumn)?.Value);
+    }
+
+    [Fact]
+    public void ExternalRedisEntity_StoresExplicitStructure()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalRedisEntity<ExternalRedisSession>(ext => ext
+            .KeyColumn(x => x.SessionId)
+            .Structure("session_id String, user_id UInt64, data String")
+            .Connection(c => c.HostPort(value: "localhost:6379")));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalRedisSession))!;
+
+        Assert.Equal("session_id String, user_id UInt64, data String",
+            entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalRedisStructure)?.Value);
+    }
+
+    [Fact]
+    public void ExternalRedisEntity_StoresConnectionValues()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalRedisEntity<ExternalRedisSession>(ext => ext
+            .KeyColumn(x => x.SessionId)
+            .Connection(c => c
+                .HostPort(value: "redis.example.com:6379")
+                .Password(value: "redis-secret")));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalRedisSession))!;
+
+        Assert.Equal("redis.example.com:6379", entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalHostPortValue)?.Value);
+        Assert.Equal("redis-secret", entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalPasswordValue)?.Value);
+    }
+
+    [Fact]
+    public void ExternalRedisEntity_StoresEnvironmentVariables()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalRedisEntity<ExternalRedisSession>(ext => ext
+            .KeyColumn(x => x.SessionId)
+            .Connection(c => c
+                .HostPort(env: "REDIS_HOST")
+                .Password(env: "REDIS_PASSWORD")));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalRedisSession))!;
+
+        Assert.Equal("REDIS_HOST", entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalHostPortEnv)?.Value);
+        Assert.Equal("REDIS_PASSWORD", entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalPasswordEnv)?.Value);
+    }
+
+    [Fact]
+    public void ExternalRedisEntity_StoresDbIndex()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalRedisEntity<ExternalRedisSession>(ext => ext
+            .KeyColumn(x => x.SessionId)
+            .Connection(c => c
+                .HostPort(value: "localhost:6379")
+                .DbIndex(5)));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalRedisSession))!;
+
+        Assert.Equal(5, entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalRedisDbIndex)?.Value);
+    }
+
+    [Fact]
+    public void ExternalRedisEntity_StoresPoolSize()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalRedisEntity<ExternalRedisSession>(ext => ext
+            .KeyColumn(x => x.SessionId)
+            .Connection(c => c
+                .HostPort(value: "localhost:6379")
+                .PoolSize(32)));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalRedisSession))!;
+
+        Assert.Equal(32, entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalRedisPoolSize)?.Value);
+    }
+
+    [Fact]
+    public void ExternalRedisEntity_DbIndexValidation_ThrowsForNegative()
+    {
+        var builder = new ModelBuilder();
+
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            builder.ExternalRedisEntity<ExternalRedisSession>(ext => ext
+                .KeyColumn(x => x.SessionId)
+                .Connection(c => c
+                    .HostPort(value: "localhost:6379")
+                    .DbIndex(-1))));
+    }
+
+    [Fact]
+    public void ExternalRedisEntity_DbIndexValidation_ThrowsForTooLarge()
+    {
+        var builder = new ModelBuilder();
+
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            builder.ExternalRedisEntity<ExternalRedisSession>(ext => ext
+                .KeyColumn(x => x.SessionId)
+                .Connection(c => c
+                    .HostPort(value: "localhost:6379")
+                    .DbIndex(16))));
+    }
+
+    [Fact]
+    public void ExternalRedisEntity_PoolSizeValidation_ThrowsForZero()
+    {
+        var builder = new ModelBuilder();
+
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            builder.ExternalRedisEntity<ExternalRedisSession>(ext => ext
+                .KeyColumn(x => x.SessionId)
+                .Connection(c => c
+                    .HostPort(value: "localhost:6379")
+                    .PoolSize(0))));
+    }
+
+    [Fact]
+    public void ExternalRedisEntity_StoresProfileName()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalRedisEntity<ExternalRedisSession>(ext => ext
+            .KeyColumn(x => x.SessionId)
+            .Connection(c => c.UseProfile("production-redis")));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalRedisSession))!;
+
+        Assert.Equal("production-redis", entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalConnectionProfile)?.Value);
+    }
+
+    [Fact]
+    public void ExternalRedisEntity_IsReadOnlyByDefault()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalRedisEntity<ExternalRedisSession>(ext => ext
+            .KeyColumn(x => x.SessionId)
+            .Connection(c => c.HostPort(value: "localhost:6379")));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalRedisSession))!;
+
+        Assert.True(entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalReadOnly)?.Value as bool?);
+    }
+
+    [Fact]
+    public void ExternalRedisEntity_AllowInsertsDisablesReadOnly()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalRedisEntity<ExternalRedisSession>(ext => ext
+            .KeyColumn(x => x.SessionId)
+            .AllowInserts()
+            .Connection(c => c.HostPort(value: "localhost:6379")));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalRedisSession))!;
+
+        Assert.False(entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalReadOnly)?.Value as bool?);
+    }
+
+    [Fact]
+    public void ExternalRedisEntity_MarksEntityAsKeyless()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalRedisEntity<ExternalRedisSession>(ext => ext
+            .KeyColumn(x => x.SessionId)
+            .Connection(c => c.HostPort(value: "localhost:6379")));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalRedisSession))!;
+
+        Assert.Empty(entityType.GetKeys());
+    }
+
+    [Fact]
+    public void ExternalRedisEntity_ThrowsWithoutKeyColumn()
+    {
+        var builder = new ModelBuilder();
+
+        Assert.Throws<InvalidOperationException>(() =>
+        {
+            builder.ExternalRedisEntity<ExternalRedisSession>(ext => ext
+                .Connection(c => c.HostPort(value: "localhost:6379")));
+            builder.FinalizeModel();
+        });
+    }
+}
+
+#endregion
+
+#region Redis External Config Resolver Tests
+
+public class ExternalRedisConfigResolverTests
+{
+    [Fact]
+    public void ResolveRedisTableFunction_GeneratesCorrectSqlWithLiteralValues()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalRedisEntity<ExternalRedisSession>(ext => ext
+            .KeyColumn("SessionId")
+            .Structure("SessionId String, UserId UInt64, Data String, ExpiresAt DateTime64(3)")
+            .Connection(c => c
+                .HostPort(value: "redis.example.com:6379")
+                .Password(value: "secret")
+                .DbIndex(2)));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalRedisSession))!;
+
+        var resolver = new ExternalConfigResolver();
+        var sql = resolver.ResolveRedisTableFunction(entityType);
+
+        Assert.Equal(
+            "redis('redis.example.com:6379', 'SessionId', 'SessionId String, UserId UInt64, Data String, ExpiresAt DateTime64(3)', 2, 'secret')",
+            sql);
+    }
+
+    [Fact]
+    public void ResolveRedisTableFunction_DefaultsDbIndexToZero()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalRedisEntity<ExternalRedisSession>(ext => ext
+            .KeyColumn("SessionId")
+            .Structure("SessionId String")
+            .Connection(c => c.HostPort(value: "localhost:6379")));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalRedisSession))!;
+
+        var resolver = new ExternalConfigResolver();
+        var sql = resolver.ResolveRedisTableFunction(entityType);
+
+        Assert.Contains(", 0, '')", sql);
+    }
+
+    [Fact]
+    public void ResolveRedisTableFunction_AutoGeneratesStructureFromEntity()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalRedisEntity<ExternalRedisMetrics>(ext => ext
+            .KeyColumn(x => x.Key)
+            .Connection(c => c.HostPort(value: "localhost:6379")));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalRedisMetrics))!;
+
+        var resolver = new ExternalConfigResolver();
+        var sql = resolver.ResolveRedisTableFunction(entityType);
+
+        // Should contain auto-generated structure with ClickHouse types
+        Assert.Contains("Key String", sql);
+        Assert.Contains("Count Int32", sql);
+        Assert.Contains("TotalBytes Int64", sql);
+        Assert.Contains("AverageLatency Float64", sql);
+        Assert.Contains("IsActive Bool", sql);
+    }
+
+    [Fact]
+    public void ResolveRedisTableFunction_EscapesSingleQuotes()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalRedisEntity<ExternalRedisSession>(ext => ext
+            .KeyColumn("SessionId")
+            .Structure("id String")
+            .Connection(c => c
+                .HostPort(value: "host'name:6379")
+                .Password(value: "pass'word")));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalRedisSession))!;
+
+        var resolver = new ExternalConfigResolver();
+        var sql = resolver.ResolveRedisTableFunction(entityType);
+
+        Assert.Contains("host\\'name:6379", sql);
+        Assert.Contains("pass\\'word", sql);
+    }
+
+    [Fact]
+    public void ResolveRedisTableFunction_ResolvesFromConfiguration()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["TEST_REDIS_HOST"] = "config-redis:6379",
+                ["TEST_REDIS_PASS"] = "config-secret"
+            })
+            .Build();
+
+        var builder = new ModelBuilder();
+
+        builder.ExternalRedisEntity<ExternalRedisSession>(ext => ext
+            .KeyColumn("SessionId")
+            .Structure("SessionId String")
+            .Connection(c => c
+                .HostPort(env: "TEST_REDIS_HOST")
+                .Password(env: "TEST_REDIS_PASS")));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalRedisSession))!;
+
+        var resolver = new ExternalConfigResolver(configuration);
+        var sql = resolver.ResolveRedisTableFunction(entityType);
+
+        Assert.Contains("config-redis:6379", sql);
+        Assert.Contains("config-secret", sql);
+    }
+
+    [Fact]
+    public void ResolveRedisTableFunction_PasswordIsOptional()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalRedisEntity<ExternalRedisSession>(ext => ext
+            .KeyColumn("SessionId")
+            .Structure("SessionId String")
+            .Connection(c => c.HostPort(value: "localhost:6379")));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalRedisSession))!;
+
+        var resolver = new ExternalConfigResolver();
+        var sql = resolver.ResolveRedisTableFunction(entityType);
+
+        // Should have empty password
+        Assert.EndsWith(", 0, '')", sql);
+    }
+
+    [Fact]
+    public void ResolveRedisTableFunction_ThrowsForWrongProvider()
+    {
+        var builder = new ModelBuilder();
+
+        builder.Entity<ExternalRedisSession>(entity =>
+        {
+            entity.HasNoKey();
+            entity.HasAnnotation(ClickHouseAnnotationNames.IsExternalTableFunction, true);
+            entity.HasAnnotation(ClickHouseAnnotationNames.ExternalProvider, "postgresql");
+            entity.HasAnnotation(ClickHouseAnnotationNames.ExternalRedisKeyColumn, "SessionId");
+        });
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalRedisSession))!;
+
+        var resolver = new ExternalConfigResolver();
+
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            resolver.ResolveRedisTableFunction(entityType));
+
+        Assert.Contains("postgresql", ex.Message);
+        Assert.Contains("redis", ex.Message.ToLower());
+    }
+
+    [Fact]
+    public void ResolveRedisTableFunction_ThrowsForMissingKeyColumn()
+    {
+        var builder = new ModelBuilder();
+
+        // Manually create an entity without key column annotation
+        builder.Entity<ExternalRedisSession>(entity =>
+        {
+            entity.HasNoKey();
+            entity.HasAnnotation(ClickHouseAnnotationNames.IsExternalTableFunction, true);
+            entity.HasAnnotation(ClickHouseAnnotationNames.ExternalProvider, "redis");
+            entity.HasAnnotation(ClickHouseAnnotationNames.ExternalHostPortValue, "localhost:6379");
+        });
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalRedisSession))!;
+
+        var resolver = new ExternalConfigResolver();
+
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            resolver.ResolveRedisTableFunction(entityType));
+
+        Assert.Contains("key column", ex.Message.ToLower());
+    }
+
+    [Fact]
+    public void ResolveTableFunction_DispatchesToRedis()
+    {
+        var builder = new ModelBuilder();
+
+        builder.ExternalRedisEntity<ExternalRedisSession>(ext => ext
+            .KeyColumn(x => x.SessionId)
+            .Structure("SessionId String")
+            .Connection(c => c.HostPort(value: "localhost:6379")));
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(ExternalRedisSession))!;
+
+        var resolver = new ExternalConfigResolver();
+        var sql = resolver.ResolveTableFunction(entityType);
+
+        Assert.StartsWith("redis(", sql);
+    }
+}
+
+#endregion

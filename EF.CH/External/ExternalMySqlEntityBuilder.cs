@@ -1,5 +1,4 @@
 using System.Linq.Expressions;
-using EF.CH.Extensions;
 using EF.CH.Metadata;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
@@ -7,57 +6,57 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 namespace EF.CH.External;
 
 /// <summary>
-/// Builder for configuring external PostgreSQL entities that use the postgresql() table function.
-/// External entities do not create ClickHouse tables - they query PostgreSQL directly via table functions.
+/// Builder for configuring external MySQL entities that use the mysql() table function.
+/// External entities do not create ClickHouse tables - they query MySQL directly via table functions.
 /// </summary>
 /// <typeparam name="TEntity">The entity type.</typeparam>
-public class ExternalPostgresEntityBuilder<TEntity> where TEntity : class
+public class ExternalMySqlEntityBuilder<TEntity> where TEntity : class
 {
     private readonly EntityTypeBuilder<TEntity> _entityBuilder;
-    private readonly PostgresConnectionConfig _connection = new();
+    private readonly MySqlConnectionConfig _connection = new();
 
     private string? _table;
-    private string _schema = "public";
     private bool _allowInserts;
+    private bool _useReplace;
+    private string? _onDuplicateClause;
 
-    internal ExternalPostgresEntityBuilder(ModelBuilder modelBuilder)
+    internal ExternalMySqlEntityBuilder(ModelBuilder modelBuilder)
     {
         _entityBuilder = modelBuilder.Entity<TEntity>();
     }
 
     /// <summary>
-    /// Specifies the remote PostgreSQL table name and optional schema.
+    /// Specifies the remote MySQL table name.
+    /// Note: MySQL doesn't have schemas in the same way PostgreSQL does - use database.table notation.
     /// </summary>
-    /// <param name="table">The table name in PostgreSQL.</param>
-    /// <param name="schema">The schema name (default: "public").</param>
+    /// <param name="table">The table name in MySQL.</param>
     /// <returns>The builder for chaining.</returns>
-    public ExternalPostgresEntityBuilder<TEntity> FromTable(string table, string schema = "public")
+    public ExternalMySqlEntityBuilder<TEntity> FromTable(string table)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(table);
         _table = table;
-        _schema = schema;
         return this;
     }
 
     /// <summary>
-    /// Configures the PostgreSQL connection parameters.
+    /// Configures the MySQL connection parameters.
     /// </summary>
     /// <param name="configure">Action to configure the connection.</param>
     /// <returns>The builder for chaining.</returns>
-    public ExternalPostgresEntityBuilder<TEntity> Connection(Action<PostgresConnectionBuilder> configure)
+    public ExternalMySqlEntityBuilder<TEntity> Connection(Action<MySqlConnectionBuilder> configure)
     {
         ArgumentNullException.ThrowIfNull(configure);
-        var builder = new PostgresConnectionBuilder(_connection);
+        var builder = new MySqlConnectionBuilder(_connection);
         configure(builder);
         return this;
     }
 
     /// <summary>
-    /// Enables INSERT operations via INSERT INTO FUNCTION postgresql(...).
+    /// Enables INSERT operations via INSERT INTO FUNCTION mysql(...).
     /// By default, external entities are read-only.
     /// </summary>
     /// <returns>The builder for chaining.</returns>
-    public ExternalPostgresEntityBuilder<TEntity> AllowInserts()
+    public ExternalMySqlEntityBuilder<TEntity> AllowInserts()
     {
         _allowInserts = true;
         return this;
@@ -67,9 +66,34 @@ public class ExternalPostgresEntityBuilder<TEntity> where TEntity : class
     /// Explicitly marks as read-only (this is the default).
     /// </summary>
     /// <returns>The builder for chaining.</returns>
-    public ExternalPostgresEntityBuilder<TEntity> ReadOnly()
+    public ExternalMySqlEntityBuilder<TEntity> ReadOnly()
     {
         _allowInserts = false;
+        return this;
+    }
+
+    /// <summary>
+    /// Use REPLACE INTO instead of INSERT INTO for inserts.
+    /// MySQL-specific: converts INSERT INTO to REPLACE INTO (replace_query=1).
+    /// </summary>
+    /// <returns>The builder for chaining.</returns>
+    public ExternalMySqlEntityBuilder<TEntity> UseReplaceForInserts()
+    {
+        _useReplace = true;
+        return this;
+    }
+
+    /// <summary>
+    /// Sets the ON DUPLICATE KEY clause for MySQL inserts.
+    /// MySQL-specific: adds ON DUPLICATE KEY UPDATE clause.
+    /// Cannot be used with UseReplaceForInserts().
+    /// </summary>
+    /// <param name="clause">The ON DUPLICATE KEY UPDATE clause (e.g., "name = VALUES(name)").</param>
+    /// <returns>The builder for chaining.</returns>
+    public ExternalMySqlEntityBuilder<TEntity> OnDuplicateKey(string clause)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(clause);
+        _onDuplicateClause = clause;
         return this;
     }
 
@@ -80,7 +104,7 @@ public class ExternalPostgresEntityBuilder<TEntity> where TEntity : class
     /// <param name="propertyExpression">Expression selecting the property.</param>
     /// <param name="configure">Optional action to configure the property.</param>
     /// <returns>The builder for chaining.</returns>
-    public ExternalPostgresEntityBuilder<TEntity> Property<TProperty>(
+    public ExternalMySqlEntityBuilder<TEntity> Property<TProperty>(
         Expression<Func<TEntity, TProperty>> propertyExpression,
         Action<PropertyBuilder<TProperty>>? configure = null)
     {
@@ -94,7 +118,7 @@ public class ExternalPostgresEntityBuilder<TEntity> where TEntity : class
     /// </summary>
     /// <param name="propertyName">The name of the property to ignore.</param>
     /// <returns>The builder for chaining.</returns>
-    public ExternalPostgresEntityBuilder<TEntity> Ignore(string propertyName)
+    public ExternalMySqlEntityBuilder<TEntity> Ignore(string propertyName)
     {
         _entityBuilder.Ignore(propertyName);
         return this;
@@ -102,23 +126,40 @@ public class ExternalPostgresEntityBuilder<TEntity> where TEntity : class
 
     /// <summary>
     /// Applies the configuration to the entity type.
-    /// Called automatically by ExternalPostgresEntity extension method.
+    /// Called automatically by ExternalMySqlEntity extension method.
     /// </summary>
     internal void Build()
     {
+        // Validate conflicting options
+        if (_useReplace && !string.IsNullOrEmpty(_onDuplicateClause))
+        {
+            throw new InvalidOperationException(
+                "Cannot use both UseReplaceForInserts() and OnDuplicateKey() - they are mutually exclusive.");
+        }
+
         // External entities must be keyless - they use table functions, not tables
         _entityBuilder.HasNoKey();
 
         // Set core annotations
         _entityBuilder.HasAnnotation(ClickHouseAnnotationNames.IsExternalTableFunction, true);
-        _entityBuilder.HasAnnotation(ClickHouseAnnotationNames.ExternalProvider, "postgresql");
+        _entityBuilder.HasAnnotation(ClickHouseAnnotationNames.ExternalProvider, "mysql");
         _entityBuilder.HasAnnotation(ClickHouseAnnotationNames.ExternalReadOnly, !_allowInserts);
 
-        // Set table/schema - default to snake_case entity name if not specified
+        // Set table - default to snake_case entity name if not specified
         _entityBuilder.HasAnnotation(
             ClickHouseAnnotationNames.ExternalTable,
             _table ?? ToSnakeCase(typeof(TEntity).Name));
-        _entityBuilder.HasAnnotation(ClickHouseAnnotationNames.ExternalSchema, _schema);
+
+        // MySQL-specific options
+        if (_useReplace)
+        {
+            _entityBuilder.HasAnnotation(ClickHouseAnnotationNames.ExternalMySqlReplaceQuery, true);
+        }
+
+        if (!string.IsNullOrEmpty(_onDuplicateClause))
+        {
+            _entityBuilder.HasAnnotation(ClickHouseAnnotationNames.ExternalMySqlOnDuplicateClause, _onDuplicateClause);
+        }
 
         // Apply connection configuration
         _connection.ApplyTo(_entityBuilder);

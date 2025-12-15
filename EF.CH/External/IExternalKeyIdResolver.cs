@@ -1,4 +1,4 @@
-namespace EF.CH.Services;
+namespace EF.CH.External;
 
 /// <summary>
 /// Service interface for resolving external keys to local IDs.

@@ -250,4 +250,56 @@ public static class ClickHouseAnnotationNames
     public const string ExternalConnectionProfile = Prefix + "External:ConnectionProfile";
 
     #endregion
+
+    #region MySQL External Options
+
+    /// <summary>
+    /// Flag to use REPLACE INTO instead of INSERT INTO for MySQL.
+    /// </summary>
+    public const string ExternalMySqlReplaceQuery = Prefix + "External:MySql:ReplaceQuery";
+
+    /// <summary>
+    /// ON DUPLICATE KEY clause for MySQL inserts.
+    /// </summary>
+    public const string ExternalMySqlOnDuplicateClause = Prefix + "External:MySql:OnDuplicateClause";
+
+    #endregion
+
+    #region ODBC External Options
+
+    /// <summary>
+    /// Environment variable name for ODBC DSN.
+    /// </summary>
+    public const string ExternalOdbcDsnEnv = Prefix + "External:Odbc:DsnEnv";
+
+    /// <summary>
+    /// Literal value for ODBC DSN (not recommended for production).
+    /// </summary>
+    public const string ExternalOdbcDsnValue = Prefix + "External:Odbc:DsnValue";
+
+    #endregion
+
+    #region Redis External Options
+
+    /// <summary>
+    /// The key column name for Redis (becomes the Redis key).
+    /// </summary>
+    public const string ExternalRedisKeyColumn = Prefix + "External:Redis:KeyColumn";
+
+    /// <summary>
+    /// Explicit structure definition for Redis (e.g., "id UInt64, name String").
+    /// </summary>
+    public const string ExternalRedisStructure = Prefix + "External:Redis:Structure";
+
+    /// <summary>
+    /// Redis database index (0-15).
+    /// </summary>
+    public const string ExternalRedisDbIndex = Prefix + "External:Redis:DbIndex";
+
+    /// <summary>
+    /// Redis connection pool size.
+    /// </summary>
+    public const string ExternalRedisPoolSize = Prefix + "External:Redis:PoolSize";
+
+    #endregion
 }

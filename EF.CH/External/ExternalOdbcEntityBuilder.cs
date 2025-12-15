@@ -1,5 +1,4 @@
 using System.Linq.Expressions;
-using EF.CH.Extensions;
 using EF.CH.Metadata;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
@@ -7,57 +6,70 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 namespace EF.CH.External;
 
 /// <summary>
-/// Builder for configuring external PostgreSQL entities that use the postgresql() table function.
-/// External entities do not create ClickHouse tables - they query PostgreSQL directly via table functions.
+/// Builder for configuring external ODBC entities that use the odbc() table function.
+/// ODBC entities reference a pre-configured DSN in odbc.ini, rather than inline credentials.
+/// This is useful for connecting to databases like SQL Server that don't have native ClickHouse table functions.
 /// </summary>
 /// <typeparam name="TEntity">The entity type.</typeparam>
-public class ExternalPostgresEntityBuilder<TEntity> where TEntity : class
+public class ExternalOdbcEntityBuilder<TEntity> where TEntity : class
 {
     private readonly EntityTypeBuilder<TEntity> _entityBuilder;
-    private readonly PostgresConnectionConfig _connection = new();
 
     private string? _table;
-    private string _schema = "public";
+    private string? _database;
+    private string? _dsnEnv;
+    private string? _dsnValue;
     private bool _allowInserts;
 
-    internal ExternalPostgresEntityBuilder(ModelBuilder modelBuilder)
+    internal ExternalOdbcEntityBuilder(ModelBuilder modelBuilder)
     {
         _entityBuilder = modelBuilder.Entity<TEntity>();
     }
 
     /// <summary>
-    /// Specifies the remote PostgreSQL table name and optional schema.
+    /// Specifies the remote table name.
     /// </summary>
-    /// <param name="table">The table name in PostgreSQL.</param>
-    /// <param name="schema">The schema name (default: "public").</param>
+    /// <param name="table">The table name in the external database.</param>
     /// <returns>The builder for chaining.</returns>
-    public ExternalPostgresEntityBuilder<TEntity> FromTable(string table, string schema = "public")
+    public ExternalOdbcEntityBuilder<TEntity> FromTable(string table)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(table);
         _table = table;
-        _schema = schema;
         return this;
     }
 
     /// <summary>
-    /// Configures the PostgreSQL connection parameters.
+    /// Sets the ODBC Data Source Name (DSN) from an environment variable or literal value.
+    /// The DSN must be pre-configured in odbc.ini on the ClickHouse server.
     /// </summary>
-    /// <param name="configure">Action to configure the connection.</param>
+    /// <param name="env">Environment variable name containing the DSN (e.g., "MSSQL_DSN").</param>
+    /// <param name="value">Literal DSN value (e.g., "MsSqlProd").</param>
     /// <returns>The builder for chaining.</returns>
-    public ExternalPostgresEntityBuilder<TEntity> Connection(Action<PostgresConnectionBuilder> configure)
+    public ExternalOdbcEntityBuilder<TEntity> Dsn(string? env = null, string? value = null)
     {
-        ArgumentNullException.ThrowIfNull(configure);
-        var builder = new PostgresConnectionBuilder(_connection);
-        configure(builder);
+        if (env != null) _dsnEnv = env;
+        if (value != null) _dsnValue = value;
         return this;
     }
 
     /// <summary>
-    /// Enables INSERT operations via INSERT INTO FUNCTION postgresql(...).
+    /// Sets the database name for the ODBC connection.
+    /// </summary>
+    /// <param name="database">The database name.</param>
+    /// <returns>The builder for chaining.</returns>
+    public ExternalOdbcEntityBuilder<TEntity> Database(string database)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(database);
+        _database = database;
+        return this;
+    }
+
+    /// <summary>
+    /// Enables INSERT operations via INSERT INTO FUNCTION odbc(...).
     /// By default, external entities are read-only.
     /// </summary>
     /// <returns>The builder for chaining.</returns>
-    public ExternalPostgresEntityBuilder<TEntity> AllowInserts()
+    public ExternalOdbcEntityBuilder<TEntity> AllowInserts()
     {
         _allowInserts = true;
         return this;
@@ -67,7 +79,7 @@ public class ExternalPostgresEntityBuilder<TEntity> where TEntity : class
     /// Explicitly marks as read-only (this is the default).
     /// </summary>
     /// <returns>The builder for chaining.</returns>
-    public ExternalPostgresEntityBuilder<TEntity> ReadOnly()
+    public ExternalOdbcEntityBuilder<TEntity> ReadOnly()
     {
         _allowInserts = false;
         return this;
@@ -80,7 +92,7 @@ public class ExternalPostgresEntityBuilder<TEntity> where TEntity : class
     /// <param name="propertyExpression">Expression selecting the property.</param>
     /// <param name="configure">Optional action to configure the property.</param>
     /// <returns>The builder for chaining.</returns>
-    public ExternalPostgresEntityBuilder<TEntity> Property<TProperty>(
+    public ExternalOdbcEntityBuilder<TEntity> Property<TProperty>(
         Expression<Func<TEntity, TProperty>> propertyExpression,
         Action<PropertyBuilder<TProperty>>? configure = null)
     {
@@ -94,7 +106,7 @@ public class ExternalPostgresEntityBuilder<TEntity> where TEntity : class
     /// </summary>
     /// <param name="propertyName">The name of the property to ignore.</param>
     /// <returns>The builder for chaining.</returns>
-    public ExternalPostgresEntityBuilder<TEntity> Ignore(string propertyName)
+    public ExternalOdbcEntityBuilder<TEntity> Ignore(string propertyName)
     {
         _entityBuilder.Ignore(propertyName);
         return this;
@@ -102,7 +114,7 @@ public class ExternalPostgresEntityBuilder<TEntity> where TEntity : class
 
     /// <summary>
     /// Applies the configuration to the entity type.
-    /// Called automatically by ExternalPostgresEntity extension method.
+    /// Called automatically by ExternalOdbcEntity extension method.
     /// </summary>
     internal void Build()
     {
@@ -111,17 +123,30 @@ public class ExternalPostgresEntityBuilder<TEntity> where TEntity : class
 
         // Set core annotations
         _entityBuilder.HasAnnotation(ClickHouseAnnotationNames.IsExternalTableFunction, true);
-        _entityBuilder.HasAnnotation(ClickHouseAnnotationNames.ExternalProvider, "postgresql");
+        _entityBuilder.HasAnnotation(ClickHouseAnnotationNames.ExternalProvider, "odbc");
         _entityBuilder.HasAnnotation(ClickHouseAnnotationNames.ExternalReadOnly, !_allowInserts);
 
-        // Set table/schema - default to snake_case entity name if not specified
+        // Set table - default to snake_case entity name if not specified
         _entityBuilder.HasAnnotation(
             ClickHouseAnnotationNames.ExternalTable,
             _table ?? ToSnakeCase(typeof(TEntity).Name));
-        _entityBuilder.HasAnnotation(ClickHouseAnnotationNames.ExternalSchema, _schema);
 
-        // Apply connection configuration
-        _connection.ApplyTo(_entityBuilder);
+        // Set database
+        if (!string.IsNullOrEmpty(_database))
+        {
+            _entityBuilder.HasAnnotation(ClickHouseAnnotationNames.ExternalDatabaseValue, _database);
+        }
+
+        // Set DSN configuration
+        if (_dsnEnv != null)
+        {
+            _entityBuilder.HasAnnotation(ClickHouseAnnotationNames.ExternalOdbcDsnEnv, _dsnEnv);
+        }
+
+        if (_dsnValue != null)
+        {
+            _entityBuilder.HasAnnotation(ClickHouseAnnotationNames.ExternalOdbcDsnValue, _dsnValue);
+        }
     }
 
     private static string ToSnakeCase(string str)
