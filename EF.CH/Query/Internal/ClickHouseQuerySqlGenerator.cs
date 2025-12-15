@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Linq.Expressions;
+using System.Threading;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Query.SqlExpressions;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -32,6 +33,7 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     /// <summary>
     /// Sets query settings to be appended as SETTINGS clause.
     /// This is called during query translation and read during SQL generation.
+    /// Settings are automatically cleared after being consumed by GenerateSettings().
     /// </summary>
     internal static void SetQuerySettings(Dictionary<string, object> settings)
     {
@@ -41,6 +43,11 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     /// <summary>
     /// Clears query settings after SQL generation.
     /// </summary>
+    /// <remarks>
+    /// This method is no longer needed as settings are automatically cleared
+    /// when consumed by GenerateSettings(). Kept for backward compatibility.
+    /// </remarks>
+    [Obsolete("Settings are now auto-cleared after consumption. This method is no longer needed.")]
     internal static void ClearQuerySettings()
     {
         _currentQuerySettings = null;
@@ -123,10 +130,14 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
 
     /// <summary>
     /// Generates the SETTINGS clause for ClickHouse query settings.
+    /// Clears the settings after consumption to prevent state leakage between queries.
     /// </summary>
     private void GenerateSettings()
     {
-        if (_currentQuerySettings == null || _currentQuerySettings.Count == 0)
+        // Capture and clear settings atomically to prevent leakage
+        var settings = Interlocked.Exchange(ref _currentQuerySettings, null);
+
+        if (settings == null || settings.Count == 0)
         {
             return;
         }
@@ -135,7 +146,7 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
             .Append("SETTINGS ");
 
         var first = true;
-        foreach (var setting in _currentQuerySettings)
+        foreach (var setting in settings)
         {
             if (!first)
             {
