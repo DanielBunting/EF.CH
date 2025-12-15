@@ -1,24 +1,31 @@
 using System.Linq.Expressions;
+using EF.CH.External;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Query.SqlExpressions;
 
 namespace EF.CH.Query.Internal;
 
 /// <summary>
-/// Post-processes translated queries to apply ClickHouse-specific modifiers (FINAL, SAMPLE, SETTINGS).
+/// Post-processes translated queries to apply ClickHouse-specific modifiers (FINAL, SAMPLE, SETTINGS)
+/// and to rewrite external entity tables to use table functions.
 /// Runs after query translation but before SQL generation.
 /// </summary>
 public class ClickHouseQueryTranslationPostprocessor : RelationalQueryTranslationPostprocessor
 {
     private readonly RelationalQueryCompilationContext _queryCompilationContext;
+    private readonly IExternalConfigResolver _externalConfigResolver;
 
     public ClickHouseQueryTranslationPostprocessor(
         QueryTranslationPostprocessorDependencies dependencies,
         RelationalQueryTranslationPostprocessorDependencies relationalDependencies,
-        RelationalQueryCompilationContext queryCompilationContext)
+        RelationalQueryCompilationContext queryCompilationContext,
+        IExternalConfigResolver externalConfigResolver)
         : base(dependencies, relationalDependencies, queryCompilationContext)
     {
         _queryCompilationContext = queryCompilationContext;
+        _externalConfigResolver = externalConfigResolver;
     }
 
     public override Expression Process(Expression query)
@@ -32,7 +39,12 @@ public class ClickHouseQueryTranslationPostprocessor : RelationalQueryTranslatio
         // Get ClickHouse options set during translation phase
         var options = _queryCompilationContext.QueryCompilationContextOptions();
 
-        // Apply FINAL/SAMPLE modifiers to table expressions
+        // Apply external table function rewrites FIRST (before FINAL/SAMPLE, which don't apply to external tables)
+        query = new ClickHouseExternalTableFunctionVisitor(
+            _queryCompilationContext.Model,
+            _externalConfigResolver).Visit(query);
+
+        // Apply FINAL/SAMPLE modifiers to table expressions (only applies to native ClickHouse tables)
         if (options.UseFinal || options.SampleFraction.HasValue)
         {
             query = new ClickHouseTableModifierApplyingVisitor(options).Visit(query);
@@ -99,5 +111,84 @@ internal class ClickHouseTableModifierApplyingVisitor : ExpressionVisitor
         // For other extension expressions, use the default visitor behavior
         // base.VisitExtension calls node.VisitChildren which works for most expression types
         return base.VisitExtension(node);
+    }
+}
+
+/// <summary>
+/// Visits SelectExpression trees and replaces TableExpression instances for external entities
+/// with ClickHouseExternalTableFunctionExpression.
+/// </summary>
+internal class ClickHouseExternalTableFunctionVisitor : ExpressionVisitor
+{
+    private readonly IModel _model;
+    private readonly IExternalConfigResolver _externalConfigResolver;
+
+    public ClickHouseExternalTableFunctionVisitor(IModel model, IExternalConfigResolver externalConfigResolver)
+    {
+        _model = model;
+        _externalConfigResolver = externalConfigResolver;
+    }
+
+    protected override Expression VisitExtension(Expression node)
+    {
+        // Check if this is a TableExpression for an external entity
+        if (node is TableExpression tableExpression)
+        {
+            var entityType = FindEntityTypeByTableName(tableExpression.Name, tableExpression.Schema);
+
+            if (entityType != null && _externalConfigResolver.IsExternalTableFunction(entityType))
+            {
+                // Replace with external table function expression
+                var functionCall = _externalConfigResolver.ResolvePostgresTableFunction(entityType);
+                return new ClickHouseExternalTableFunctionExpression(
+                    tableExpression.Alias,
+                    "postgresql",
+                    functionCall,
+                    entityType.ClrType);
+            }
+
+            // Not an external entity - leave as-is
+            return node;
+        }
+
+        // Handle ShapedQueryExpression specially - it doesn't support VisitChildren
+        if (node is ShapedQueryExpression shapedQuery)
+        {
+            var newQueryExpression = Visit(shapedQuery.QueryExpression);
+            var newShaperExpression = Visit(shapedQuery.ShaperExpression);
+
+            if (newQueryExpression != shapedQuery.QueryExpression ||
+                newShaperExpression != shapedQuery.ShaperExpression)
+            {
+                return shapedQuery.Update(newQueryExpression, newShaperExpression);
+            }
+
+            return shapedQuery;
+        }
+
+        // EnumerableExpression.VisitChildren throws in EF Core 10+
+        if (node is EnumerableExpression)
+        {
+            return node;
+        }
+
+        return base.VisitExtension(node);
+    }
+
+    private IEntityType? FindEntityTypeByTableName(string tableName, string? schema)
+    {
+        // Look up entity type by table name and schema
+        foreach (var entityType in _model.GetEntityTypes())
+        {
+            var entityTableName = entityType.GetTableName();
+            var entitySchema = entityType.GetSchema() ?? _model.GetDefaultSchema();
+
+            if (entityTableName == tableName && entitySchema == schema)
+            {
+                return entityType;
+            }
+        }
+
+        return null;
     }
 }

@@ -187,3 +187,92 @@ public class ClickHouseTableModifierExpression : TableExpressionBase
     public override int GetHashCode()
         => HashCode.Combine(Table, UseFinal, SampleFraction, SampleOffset);
 }
+
+/// <summary>
+/// Represents an external table function call (e.g., postgresql(...)).
+/// Replaces TableExpression for entities configured as external table functions.
+/// </summary>
+public class ClickHouseExternalTableFunctionExpression : TableExpressionBase
+{
+    /// <summary>
+    /// Gets the function name (e.g., "postgresql").
+    /// </summary>
+    public string FunctionName { get; }
+
+    /// <summary>
+    /// Gets the complete function call with resolved parameters.
+    /// E.g., "postgresql('localhost:5432', 'mydb', 'customers', 'user', 'pass', 'public')"
+    /// </summary>
+    public string FunctionCall { get; }
+
+    /// <summary>
+    /// Gets the CLR type of the entity this expression represents.
+    /// </summary>
+    public Type EntityClrType { get; }
+
+    public ClickHouseExternalTableFunctionExpression(
+        string alias,
+        string functionName,
+        string functionCall,
+        Type entityClrType)
+        : base(alias)
+    {
+        FunctionName = functionName ?? throw new ArgumentNullException(nameof(functionName));
+        FunctionCall = functionCall ?? throw new ArgumentNullException(nameof(functionCall));
+        EntityClrType = entityClrType ?? throw new ArgumentNullException(nameof(entityClrType));
+    }
+
+    private ClickHouseExternalTableFunctionExpression(
+        string functionName,
+        string functionCall,
+        Type entityClrType,
+        string? alias,
+        IReadOnlyDictionary<string, IAnnotation>? annotations)
+        : base(alias, annotations)
+    {
+        FunctionName = functionName;
+        FunctionCall = functionCall;
+        EntityClrType = entityClrType;
+    }
+
+    protected override Expression VisitChildren(ExpressionVisitor visitor)
+        => this; // No children to visit - this is a leaf node
+
+    public override TableExpressionBase Clone(string? alias, ExpressionVisitor cloningExpressionVisitor)
+        => new ClickHouseExternalTableFunctionExpression(FunctionName, FunctionCall, EntityClrType, alias, null);
+
+    public override ClickHouseExternalTableFunctionExpression WithAlias(string newAlias)
+        => new(FunctionName, FunctionCall, EntityClrType, newAlias, Annotations);
+
+    protected override TableExpressionBase WithAnnotations(IReadOnlyDictionary<string, IAnnotation> annotations)
+        => new ClickHouseExternalTableFunctionExpression(FunctionName, FunctionCall, EntityClrType, Alias, annotations);
+
+    public override Expression Quote()
+        => New(
+            typeof(ClickHouseExternalTableFunctionExpression).GetConstructors()
+                .First(c => c.GetParameters().Length == 4),
+            Constant(Alias),
+            Constant(FunctionName),
+            Constant(FunctionCall),
+            Constant(EntityClrType, typeof(Type)));
+
+    protected override void Print(ExpressionPrinter expressionPrinter)
+    {
+        expressionPrinter.Append(FunctionCall);
+        if (!string.IsNullOrEmpty(Alias))
+        {
+            expressionPrinter.Append(" AS ");
+            expressionPrinter.Append(Alias);
+        }
+    }
+
+    public override bool Equals(object? obj)
+        => obj is ClickHouseExternalTableFunctionExpression other
+           && FunctionName == other.FunctionName
+           && FunctionCall == other.FunctionCall
+           && EntityClrType == other.EntityClrType
+           && Alias == other.Alias;
+
+    public override int GetHashCode()
+        => HashCode.Combine(FunctionName, FunctionCall, EntityClrType, Alias);
+}

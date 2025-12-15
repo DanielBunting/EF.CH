@@ -1,9 +1,12 @@
 using System.Collections;
 using System.Text;
+using EF.CH.External;
 using EF.CH.Infrastructure;
+using EF.CH.Metadata;
 using EF.CH.Storage.Internal.TypeMappings;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.EntityFrameworkCore.Update;
 
@@ -17,14 +20,20 @@ public class ClickHouseModificationCommandBatchFactory : IModificationCommandBat
     private readonly ModificationCommandBatchFactoryDependencies _dependencies;
     private readonly IRelationalTypeMappingSource _typeMappingSource;
     private readonly ClickHouseDeleteStrategy _deleteStrategy;
+    private readonly IExternalConfigResolver _externalConfigResolver;
+    private readonly ICurrentDbContext _currentDbContext;
 
     public ClickHouseModificationCommandBatchFactory(
         ModificationCommandBatchFactoryDependencies dependencies,
         IRelationalTypeMappingSource typeMappingSource,
-        IDbContextOptions options)
+        IDbContextOptions options,
+        IExternalConfigResolver externalConfigResolver,
+        ICurrentDbContext currentDbContext)
     {
         _dependencies = dependencies;
         _typeMappingSource = typeMappingSource;
+        _externalConfigResolver = externalConfigResolver;
+        _currentDbContext = currentDbContext;
 
         var clickHouseOptions = options.FindExtension<ClickHouseOptionsExtension>();
         _deleteStrategy = clickHouseOptions?.DeleteStrategy ?? ClickHouseDeleteStrategy.Lightweight;
@@ -32,7 +41,12 @@ public class ClickHouseModificationCommandBatchFactory : IModificationCommandBat
 
     public ModificationCommandBatch Create()
     {
-        return new ClickHouseModificationCommandBatch(_dependencies, _typeMappingSource, _deleteStrategy);
+        return new ClickHouseModificationCommandBatch(
+            _dependencies,
+            _typeMappingSource,
+            _deleteStrategy,
+            _externalConfigResolver,
+            _currentDbContext.Context.Model);
     }
 }
 
@@ -40,12 +54,15 @@ public class ClickHouseModificationCommandBatchFactory : IModificationCommandBat
 /// A modification command batch for ClickHouse INSERT and DELETE operations.
 /// ClickHouse doesn't support parameterized VALUES in INSERT statements via HTTP,
 /// so we generate inline values instead.
+/// Supports INSERT INTO FUNCTION for external entities.
 /// </summary>
 public class ClickHouseModificationCommandBatch : ModificationCommandBatch
 {
     private readonly ModificationCommandBatchFactoryDependencies _dependencies;
     private readonly IRelationalTypeMappingSource _typeMappingSource;
     private readonly ClickHouseDeleteStrategy _deleteStrategy;
+    private readonly IExternalConfigResolver _externalConfigResolver;
+    private readonly IModel _model;
     private readonly List<IReadOnlyModificationCommand> _commands = [];
     private readonly List<string> _statements = [];
     private readonly StringBuilder _sqlBuilder = new();
@@ -55,11 +72,15 @@ public class ClickHouseModificationCommandBatch : ModificationCommandBatch
     public ClickHouseModificationCommandBatch(
         ModificationCommandBatchFactoryDependencies dependencies,
         IRelationalTypeMappingSource typeMappingSource,
-        ClickHouseDeleteStrategy deleteStrategy)
+        ClickHouseDeleteStrategy deleteStrategy,
+        IExternalConfigResolver externalConfigResolver,
+        IModel model)
     {
         _dependencies = dependencies;
         _typeMappingSource = typeMappingSource;
         _deleteStrategy = deleteStrategy;
+        _externalConfigResolver = externalConfigResolver;
+        _model = model;
     }
 
     public override IReadOnlyList<IReadOnlyModificationCommand> ModificationCommands => _commands;
@@ -128,6 +149,14 @@ public class ClickHouseModificationCommandBatch : ModificationCommandBatch
         var sqlHelper = _dependencies.SqlGenerationHelper;
         var firstCommand = commands[0];
 
+        // Check if this is an external entity
+        var entityType = FindEntityTypeByTableName(firstCommand.TableName, firstCommand.Schema);
+        if (entityType != null && _externalConfigResolver.IsExternalTableFunction(entityType))
+        {
+            // External entity - use INSERT INTO FUNCTION
+            return BuildExternalInsertCommand(commands, entityType);
+        }
+
         _sqlBuilder.Append("INSERT INTO ");
         _sqlBuilder.Append(sqlHelper.DelimitIdentifier(firstCommand.TableName, firstCommand.Schema));
         _sqlBuilder.Append(" (");
@@ -180,6 +209,85 @@ public class ClickHouseModificationCommandBatch : ModificationCommandBatch
         }
 
         return _sqlBuilder.ToString();
+    }
+
+    /// <summary>
+    /// Builds an INSERT INTO FUNCTION statement for external entities.
+    /// </summary>
+    private string BuildExternalInsertCommand(List<IReadOnlyModificationCommand> commands, IEntityType entityType)
+    {
+        // Check if inserts are enabled for this external entity
+        if (!_externalConfigResolver.AreInsertsEnabled(entityType))
+        {
+            throw new InvalidOperationException(
+                $"External entity '{entityType.ClrType.Name}' is read-only. " +
+                "Call AllowInserts() in configuration to enable INSERT operations.");
+        }
+
+        _sqlBuilder.Clear();
+        var sqlHelper = _dependencies.SqlGenerationHelper;
+        var firstCommand = commands[0];
+
+        // Get the table function call
+        var functionCall = _externalConfigResolver.ResolvePostgresTableFunction(entityType);
+
+        _sqlBuilder.Append("INSERT INTO FUNCTION ");
+        _sqlBuilder.Append(functionCall);
+        _sqlBuilder.Append(" (");
+
+        var columns = firstCommand.ColumnModifications
+            .Where(c => c.IsWrite)
+            .ToList();
+
+        // Build column list (external entities don't support Nested types)
+        for (var i = 0; i < columns.Count; i++)
+        {
+            if (i > 0) _sqlBuilder.Append(", ");
+            _sqlBuilder.Append(sqlHelper.DelimitIdentifier(columns[i].ColumnName));
+        }
+
+        _sqlBuilder.Append(") VALUES ");
+
+        // Add VALUES for each row
+        for (var rowIndex = 0; rowIndex < commands.Count; rowIndex++)
+        {
+            if (rowIndex > 0) _sqlBuilder.Append(", ");
+
+            _sqlBuilder.Append("(");
+
+            var rowColumns = commands[rowIndex].ColumnModifications
+                .Where(c => c.IsWrite)
+                .ToList();
+
+            for (var i = 0; i < rowColumns.Count; i++)
+            {
+                if (i > 0) _sqlBuilder.Append(", ");
+                AppendValue(rowColumns[i]);
+            }
+
+            _sqlBuilder.Append(")");
+        }
+
+        return _sqlBuilder.ToString();
+    }
+
+    /// <summary>
+    /// Finds an entity type by its table name and schema.
+    /// </summary>
+    private IEntityType? FindEntityTypeByTableName(string tableName, string? schema)
+    {
+        foreach (var entityType in _model.GetEntityTypes())
+        {
+            var entityTableName = entityType.GetTableName();
+            var entitySchema = entityType.GetSchema() ?? _model.GetDefaultSchema();
+
+            if (entityTableName == tableName && entitySchema == schema)
+            {
+                return entityType;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>

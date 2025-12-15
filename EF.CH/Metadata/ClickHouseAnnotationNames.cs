@@ -176,4 +176,78 @@ public static class ClickHouseAnnotationNames
     public const string DictionaryFilterExpression = Prefix + "DictionaryFilterExpression";
 
     #endregion
+
+    #region External Table Functions
+
+    /// <summary>
+    /// Marks this entity as an external table function (no DDL generated).
+    /// </summary>
+    public const string IsExternalTableFunction = Prefix + "External:IsTableFunction";
+
+    /// <summary>
+    /// The external provider name (e.g., "postgresql", "mysql").
+    /// </summary>
+    public const string ExternalProvider = Prefix + "External:Provider";
+
+    /// <summary>
+    /// The remote table name.
+    /// </summary>
+    public const string ExternalTable = Prefix + "External:Table";
+
+    /// <summary>
+    /// The remote schema name (PostgreSQL only).
+    /// </summary>
+    public const string ExternalSchema = Prefix + "External:Schema";
+
+    /// <summary>
+    /// Whether the external entity is read-only (default: true).
+    /// </summary>
+    public const string ExternalReadOnly = Prefix + "External:ReadOnly";
+
+    /// <summary>
+    /// Environment variable name for host:port.
+    /// </summary>
+    public const string ExternalHostPortEnv = Prefix + "External:HostPortEnv";
+
+    /// <summary>
+    /// Literal value for host:port (not recommended for production).
+    /// </summary>
+    public const string ExternalHostPortValue = Prefix + "External:HostPortValue";
+
+    /// <summary>
+    /// Environment variable name for database.
+    /// </summary>
+    public const string ExternalDatabaseEnv = Prefix + "External:DatabaseEnv";
+
+    /// <summary>
+    /// Literal value for database.
+    /// </summary>
+    public const string ExternalDatabaseValue = Prefix + "External:DatabaseValue";
+
+    /// <summary>
+    /// Environment variable name for username.
+    /// </summary>
+    public const string ExternalUserEnv = Prefix + "External:UserEnv";
+
+    /// <summary>
+    /// Literal value for username (not recommended for production).
+    /// </summary>
+    public const string ExternalUserValue = Prefix + "External:UserValue";
+
+    /// <summary>
+    /// Environment variable name for password.
+    /// </summary>
+    public const string ExternalPasswordEnv = Prefix + "External:PasswordEnv";
+
+    /// <summary>
+    /// Literal value for password (not recommended for production).
+    /// </summary>
+    public const string ExternalPasswordValue = Prefix + "External:PasswordValue";
+
+    /// <summary>
+    /// Connection profile name from IConfiguration (ExternalConnections section).
+    /// </summary>
+    public const string ExternalConnectionProfile = Prefix + "External:ConnectionProfile";
+
+    #endregion
 }

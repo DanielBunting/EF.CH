@@ -2,6 +2,7 @@ using System.Data.Common;
 using System.Globalization;
 using System.Text;
 using EF.CH.Diagnostics;
+using EF.CH.External;
 using EF.CH.Metadata.Conventions;
 using EF.CH.Metadata.Internal;
 using EF.CH.Migrations.Internal;
@@ -18,6 +19,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.EntityFrameworkCore.Update;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -303,6 +305,14 @@ public static class ClickHouseServiceCollectionExtensions
         // This must be registered as an enumerable service since multiple plugins can exist.
         services.TryAddEnumerable(
             ServiceDescriptor.Singleton<IEvaluatableExpressionFilterPlugin, ClickHouseEvaluatableExpressionFilterPlugin>());
+
+        // Register external config resolver for postgresql() table function support.
+        // Optionally injects IConfiguration for connection profile support.
+        services.TryAddSingleton<IExternalConfigResolver>(sp =>
+        {
+            var configuration = sp.GetService<IConfiguration>();
+            return new ExternalConfigResolver(configuration);
+        });
 
         return services;
     }
