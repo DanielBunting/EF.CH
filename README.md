@@ -11,6 +11,7 @@ An Entity Framework Core provider for [ClickHouse](https://clickhouse.com/), bui
 - **EF Core Migrations** - DDL generation with ClickHouse-specific clauses
 - **DELETE Support** - Lightweight and mutation-based strategies
 - **Dictionaries** - In-memory key-value stores with dictGet translation
+- **External Entities** - Query PostgreSQL, MySQL, Redis, and ODBC sources via table functions
 - **Scaffolding** - Reverse engineering with C# enum generation
 
 ## Quick Start
@@ -245,6 +246,50 @@ var orders = db.Orders
 
 **Layouts:** `Flat`, `Hashed`, `ComplexKeyHashed`, `Cache`, `Direct`
 
+## External Entities
+
+Query remote databases directly through ClickHouse table functions:
+
+```csharp
+// Define external entity (keyless - uses table function, not a ClickHouse table)
+public class ExternalCustomer
+{
+    public int id { get; set; }
+    public string name { get; set; } = string.Empty;
+    public string email { get; set; } = string.Empty;
+}
+
+// Configure in OnModelCreating
+modelBuilder.ExternalPostgresEntity<ExternalCustomer>(ext => ext
+    .FromTable("customers", schema: "public")
+    .Connection(c => c
+        .HostPort(env: "PG_HOST")
+        .Database(env: "PG_DATABASE")
+        .Credentials("PG_USER", "PG_PASSWORD")));
+
+// Query like any other entity - generates postgresql() table function
+var customers = await context.ExternalCustomers
+    .Where(c => c.name.StartsWith("A"))
+    .ToListAsync();
+
+// JOIN with native ClickHouse tables
+var orderSummary = await context.Orders
+    .Join(context.ExternalCustomers, o => o.CustomerId, c => c.id,
+        (o, c) => new { c.name, o.Amount })
+    .ToListAsync();
+```
+
+**Supported Providers:**
+
+| Provider | Extension Method | Use Case |
+|----------|------------------|----------|
+| PostgreSQL | `ExternalPostgresEntity<T>()` | Direct credentials |
+| MySQL | `ExternalMySqlEntity<T>()` | REPLACE INTO, ON DUPLICATE KEY |
+| ODBC | `ExternalOdbcEntity<T>()` | SQL Server, Oracle via DSN |
+| Redis | `ExternalRedisEntity<T>()` | Key-value with auto-generated schema |
+
+See [docs/features/external-entities.md](docs/features/external-entities.md) for detailed configuration.
+
 ## Documentation
 
 | Topic | Description |
@@ -254,6 +299,7 @@ var orders = db.Orders
 | [Table Engines](docs/engines/) | MergeTree family guide |
 | [Type Mappings](docs/types/) | Complete type reference |
 | [Features](docs/features/) | Materialized views, partitioning, TTL, etc. |
+| [External Entities](docs/features/external-entities.md) | Query remote PostgreSQL, MySQL, Redis, ODBC |
 | [Migrations](docs/migrations.md) | EF Core migrations with ClickHouse |
 | [Scaffolding](docs/scaffolding.md) | Reverse engineering |
 | [Limitations](docs/limitations.md) | What doesn't work |
@@ -278,6 +324,8 @@ var orders = db.Orders
 | [OptimizeTableSample](samples/OptimizeTableSample/) | Programmatic OPTIMIZE TABLE |
 | [DictionarySample](samples/DictionarySample/) | In-memory dictionary lookups |
 | [DictionaryJoinSample](samples/DictionaryJoinSample/) | Dictionaries as JOIN replacement |
+| [ExternalPostgresSample](samples/ExternalPostgresSample/) | Query PostgreSQL from ClickHouse |
+| [ExternalRedisSample](samples/ExternalRedisSample/) | Redis key-value integration |
 
 ## License
 

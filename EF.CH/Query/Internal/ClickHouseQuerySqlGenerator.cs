@@ -173,11 +173,24 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     {
         return extensionExpression switch
         {
+            ClickHouseExternalTableFunctionExpression externalExpression => VisitExternalTableFunction(externalExpression),
             ClickHouseTableModifierExpression modifierExpression => VisitTableModifier(modifierExpression),
             ClickHouseFinalExpression finalExpression => VisitFinal(finalExpression),
             ClickHouseSampleExpression sampleExpression => VisitSample(sampleExpression),
             _ => base.VisitExtension(extensionExpression)
         };
+    }
+
+    /// <summary>
+    /// Generates external table function call for remote data sources.
+    /// E.g., postgresql('host:port', 'db', 'table', 'user', 'pass', 'schema') AS "alias"
+    /// </summary>
+    private Expression VisitExternalTableFunction(ClickHouseExternalTableFunctionExpression expression)
+    {
+        Sql.Append(expression.FunctionCall);
+        Sql.Append(" AS ");
+        Sql.Append(_sqlGenerationHelper.DelimitIdentifier(expression.Alias!));
+        return expression;
     }
 
     /// <summary>

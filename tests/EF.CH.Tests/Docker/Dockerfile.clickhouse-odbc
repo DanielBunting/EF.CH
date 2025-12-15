@@ -1,0 +1,24 @@
+FROM clickhouse/clickhouse-server:latest
+
+# Install ODBC dependencies
+RUN apt-get update && apt-get install -y \
+    unixodbc \
+    unixodbc-dev \
+    curl \
+    gnupg2 \
+    apt-transport-https \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Microsoft ODBC Driver 18 for SQL Server
+# Note: This uses Debian 12 (bookworm) repo as ClickHouse image is Debian-based
+RUN curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg \
+    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/debian/12/prod bookworm main" > /etc/apt/sources.list.d/mssql-release.list \
+    && apt-get update \
+    && ACCEPT_EULA=Y apt-get install -y msodbcsql18 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Enable clickhouse-odbc-bridge
+# The bridge is already included in the ClickHouse server image
+# It just needs to be started alongside the server
+
+# odbc.ini will be mounted at runtime with dynamic DSN configuration

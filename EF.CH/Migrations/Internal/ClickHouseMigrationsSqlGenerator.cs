@@ -27,6 +27,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
 
     /// <summary>
     /// Generates CREATE TABLE or CREATE MATERIALIZED VIEW with ClickHouse ENGINE clause.
+    /// Skips DDL for external entities (they use table functions, not physical tables).
     /// </summary>
     protected override void Generate(
         CreateTableOperation operation,
@@ -37,10 +38,21 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         ArgumentNullException.ThrowIfNull(operation);
         ArgumentNullException.ThrowIfNull(builder);
 
-        // Check if this is a materialized view or dictionary
+        // Check if this is a materialized view, dictionary, or external entity
         var entityType = model?.GetEntityTypes()
             .FirstOrDefault(e => e.GetTableName() == operation.Name
                               && (e.GetSchema() ?? model.GetDefaultSchema()) == operation.Schema);
+
+        // Skip DDL for external entities - they use table functions like postgresql(...)
+        var isExternal = GetAnnotation<bool?>(operation, ClickHouseAnnotationNames.IsExternalTableFunction)
+                      ?? GetEntityAnnotation<bool?>(entityType, ClickHouseAnnotationNames.IsExternalTableFunction)
+                      ?? false;
+
+        if (isExternal)
+        {
+            // External entities don't create ClickHouse tables - no DDL needed
+            return;
+        }
 
         var isMaterializedView = GetAnnotation<bool?>(operation, ClickHouseAnnotationNames.MaterializedView)
                               ?? GetEntityAnnotation<bool?>(entityType, ClickHouseAnnotationNames.MaterializedView)

@@ -1,3 +1,4 @@
+using EF.CH.External;
 using Microsoft.EntityFrameworkCore.Query;
 
 namespace EF.CH.Query.Internal;
@@ -9,18 +10,22 @@ public class ClickHouseQueryTranslationPostprocessorFactory : IQueryTranslationP
 {
     private readonly QueryTranslationPostprocessorDependencies _dependencies;
     private readonly RelationalQueryTranslationPostprocessorDependencies _relationalDependencies;
+    private readonly IExternalConfigResolver _externalConfigResolver;
 
     public ClickHouseQueryTranslationPostprocessorFactory(
         QueryTranslationPostprocessorDependencies dependencies,
-        RelationalQueryTranslationPostprocessorDependencies relationalDependencies)
+        RelationalQueryTranslationPostprocessorDependencies relationalDependencies,
+        IExternalConfigResolver externalConfigResolver)
     {
         _dependencies = dependencies;
         _relationalDependencies = relationalDependencies;
+        _externalConfigResolver = externalConfigResolver;
     }
 
     public virtual QueryTranslationPostprocessor Create(QueryCompilationContext queryCompilationContext)
         => new ClickHouseQueryTranslationPostprocessor(
             _dependencies,
             _relationalDependencies,
-            (RelationalQueryCompilationContext)queryCompilationContext);
+            (RelationalQueryCompilationContext)queryCompilationContext,
+            _externalConfigResolver);
 }
