@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Linq.Expressions;
 using EF.CH.Metadata;
 using Microsoft.EntityFrameworkCore;
@@ -140,7 +141,7 @@ public sealed class ClickHouseDictionary<TDictionary, TKey>
         ArgumentNullException.ThrowIfNull(attribute);
 
         var propertyName = GetPropertyName(attribute);
-        var sql = $"SELECT dictGet('{_metadata.Name}', '{propertyName}', {{0}})";
+        var sql = $"SELECT dictGet('{EscapeSqlString(_metadata.Name)}', '{EscapeSqlString(propertyName)}', {{0}})";
 
         var result = await _context.Database
             .SqlQueryRaw<TAttribute>(sql, key!)
@@ -167,7 +168,7 @@ public sealed class ClickHouseDictionary<TDictionary, TKey>
         ArgumentNullException.ThrowIfNull(attribute);
 
         var propertyName = GetPropertyName(attribute);
-        var sql = $"SELECT dictGetOrDefault('{_metadata.Name}', '{propertyName}', {{0}}, {{1}})";
+        var sql = $"SELECT dictGetOrDefault('{EscapeSqlString(_metadata.Name)}', '{EscapeSqlString(propertyName)}', {{0}}, {{1}})";
 
         var result = await _context.Database
             .SqlQueryRaw<TAttribute>(sql, key!, defaultValue!)
@@ -184,7 +185,7 @@ public sealed class ClickHouseDictionary<TDictionary, TKey>
     /// <returns>True if the key exists.</returns>
     public async Task<bool> ContainsKeyAsync(TKey key, CancellationToken cancellationToken = default)
     {
-        var sql = $"SELECT dictHas('{_metadata.Name}', {{0}})";
+        var sql = $"SELECT dictHas('{EscapeSqlString(_metadata.Name)}', {{0}})";
 
         var result = await _context.Database
             .SqlQueryRaw<byte>(sql, key!)
@@ -199,7 +200,7 @@ public sealed class ClickHouseDictionary<TDictionary, TKey>
     /// <param name="cancellationToken">Cancellation token.</param>
     public async Task RefreshAsync(CancellationToken cancellationToken = default)
     {
-        var sql = $"SYSTEM RELOAD DICTIONARY {_metadata.Name}";
+        var sql = $"SYSTEM RELOAD DICTIONARY `{EscapeIdentifier(_metadata.Name)}`";
         await _context.Database.ExecuteSqlRawAsync(sql, cancellationToken);
     }
 
@@ -239,9 +240,12 @@ public sealed class ClickHouseDictionary<TDictionary, TKey>
 
     private static DictionaryMetadata<TDictionary, TKey> ResolveMetadataFromModel(DbContext context)
     {
-        if (_cachedMetadata != null)
-            return _cachedMetadata;
+        // Fast path: return cached metadata if available (volatile read)
+        var cached = Volatile.Read(ref _cachedMetadata);
+        if (cached != null)
+            return cached;
 
+        // Slow path: resolve from model (may run concurrently on first access)
         var entityType = context.Model.FindEntityType(typeof(TDictionary))
             ?? throw new InvalidOperationException(
                 $"Entity type '{typeof(TDictionary).Name}' is not configured in OnModelCreating.");
@@ -258,13 +262,15 @@ public sealed class ClickHouseDictionary<TDictionary, TKey>
                 $"Dictionary '{typeof(TDictionary).Name}' key not configured. " +
                 "Use HasKey() or HasCompositeKey() in AsDictionary<>() configuration.");
 
-        _cachedMetadata = new DictionaryMetadata<TDictionary, TKey>(
+        var newMetadata = new DictionaryMetadata<TDictionary, TKey>(
             name: name,
             keyType: typeof(TKey),
             entityType: typeof(TDictionary),
             keyPropertyName: keyColumns[0]);
 
-        return _cachedMetadata;
+        // Thread-safe assignment: first writer wins, but all threads get valid metadata
+        Interlocked.CompareExchange(ref _cachedMetadata, newMetadata, null);
+        return _cachedMetadata!;
     }
 
     private static string ConvertToSnakeCase(string name)
@@ -288,6 +294,28 @@ public sealed class ClickHouseDictionary<TDictionary, TKey>
             }
         }
         return result.ToString();
+    }
+
+    /// <summary>
+    /// Escapes a string for use in SQL string literals by doubling single quotes.
+    /// </summary>
+    private static string EscapeSqlString(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return value;
+
+        return value.Replace("'", "''");
+    }
+
+    /// <summary>
+    /// Escapes a string for use as a ClickHouse identifier by escaping backticks.
+    /// </summary>
+    private static string EscapeIdentifier(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return value;
+
+        return value.Replace("`", "``");
     }
 }
 

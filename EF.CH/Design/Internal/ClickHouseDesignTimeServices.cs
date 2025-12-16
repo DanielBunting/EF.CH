@@ -30,9 +30,11 @@ public class ClickHouseDesignTimeServices : IDesignTimeServices
             .TryAdd<IAnnotationCodeGenerator, ClickHouseAnnotationCodeGenerator>()
             .TryAdd<IProviderConfigurationCodeGenerator, ClickHouseCodeGenerator>()
             .TryAdd<IDatabaseModelFactory, ClickHouseDatabaseModelFactory>()
-            .TryAdd<IModelCodeGenerator, ClickHouseCSharpModelGenerator>()
             .TryAddCoreServices();
 #pragma warning restore EF1001
+
+        // Register model code generator (provider-specific service in EF Core 10+)
+        services.TryAddSingleton<IModelCodeGenerator, ClickHouseCSharpModelGenerator>();
 
         // Register migrations code generator to include ClickHouse extension namespaces
         services.Replace(ServiceDescriptor.Singleton<IMigrationsCodeGenerator, ClickHouseCSharpMigrationsGenerator>());
