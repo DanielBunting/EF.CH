@@ -11,7 +11,7 @@ public class SampleDbContext : DbContext
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
     {
-        optionsBuilder.UseClickHouse("Host=localhost;Database=migration_sample");
+        optionsBuilder.UseClickHouse("Host=localhost;Database=migration_sample;User=default");
     }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
