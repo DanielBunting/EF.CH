@@ -954,5 +954,74 @@ public static class ClickHouseEntityTypeBuilderExtensions
         return builder;
     }
 
+    /// <summary>
+    /// Configures this entity as a ClickHouse dictionary sourced from an external database (PostgreSQL, MySQL) or HTTP endpoint.
+    /// </summary>
+    /// <typeparam name="TDictionary">The dictionary entity type.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="configure">Action to configure the dictionary.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    /// <remarks>
+    /// <para>
+    /// This method configures an entity to be created as a ClickHouse dictionary with an external data source.
+    /// Unlike <see cref="AsDictionary{TDictionary, TSource}"/> which sources from a ClickHouse table,
+    /// this overload sources data from external databases (PostgreSQL, MySQL) or HTTP endpoints.
+    /// </para>
+    /// <para>
+    /// External dictionaries are NOT created during EF Core migrations because they contain credentials.
+    /// Instead, use <c>context.EnsureDictionariesAsync()</c> at application startup to create them with
+    /// runtime-resolved credentials from environment variables or IConfiguration.
+    /// </para>
+    /// <para>
+    /// The dictionary entity should implement <see cref="Dictionaries.IClickHouseDictionary"/> as a marker interface.
+    /// </para>
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// // Define dictionary entity
+    /// public class CountryLookup : IClickHouseDictionary
+    /// {
+    ///     public ulong Id { get; set; }
+    ///     public string Name { get; set; } = string.Empty;
+    ///     public string IsoCode { get; set; } = string.Empty;
+    /// }
+    ///
+    /// // Configure in OnModelCreating
+    /// modelBuilder.Entity&lt;CountryLookup&gt;(entity =>
+    /// {
+    ///     entity.AsDictionary&lt;CountryLookup&gt;(cfg => cfg
+    ///         .HasKey(x => x.Id)
+    ///         .FromPostgreSql(pg => pg
+    ///             .FromTable("countries", schema: "public")
+    ///             .Connection(c => c
+    ///                 .HostPort(env: "PG_HOST")
+    ///                 .Database(env: "PG_DATABASE")
+    ///                 .Credentials("PG_USER", "PG_PASSWORD"))
+    ///             .Where("is_active = true")
+    ///             .InvalidateQuery("SELECT max(updated_at) FROM countries"))
+    ///         .UseHashedLayout()
+    ///         .HasLifetime(minSeconds: 60, maxSeconds: 300)
+    ///         .HasDefault(x => x.Name, "Unknown"));
+    /// });
+    ///
+    /// // Create dictionaries at startup (credentials resolved from config)
+    /// await context.EnsureDictionariesAsync();
+    /// </code>
+    /// </example>
+    public static EntityTypeBuilder<TDictionary> AsDictionary<TDictionary>(
+        this EntityTypeBuilder<TDictionary> builder,
+        Action<Dictionaries.ExternalDictionaryConfiguration<TDictionary>> configure)
+        where TDictionary : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(configure);
+
+        var configuration = new Dictionaries.ExternalDictionaryConfiguration<TDictionary>(builder);
+        configure(configuration);
+        configuration.Apply();
+
+        return builder;
+    }
+
     #endregion
 }
