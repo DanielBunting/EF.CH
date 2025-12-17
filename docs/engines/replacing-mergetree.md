@@ -228,7 +228,64 @@ public async Task UpsertUser(User user)
 }
 ```
 
-### Soft Delete
+### Physical Delete with `is_deleted` Column (ClickHouse 23.2+)
+
+ClickHouse 23.2+ supports native deletion via the `is_deleted` column. Unlike soft delete, this approach:
+- **Automatically excludes** deleted rows when using `FINAL`
+- **Physically removes** deleted rows during merge operations
+
+```csharp
+public class User
+{
+    public Guid Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public long Version { get; set; }
+    public byte IsDeleted { get; set; }  // UInt8: 0 = active, 1 = deleted
+}
+
+// Configure with is_deleted column
+entity.UseReplacingMergeTree(
+    versionColumn: x => x.Version,
+    isDeletedColumn: x => x.IsDeleted,  // Must be byte (UInt8)
+    orderByColumn: x => x.Id);
+```
+
+Generated DDL:
+```sql
+ENGINE = ReplacingMergeTree("Version", "IsDeleted")
+ORDER BY ("Id")
+```
+
+**Deletion Pattern:**
+
+```csharp
+public async Task DeleteUser(Guid userId)
+{
+    // Get current version
+    var user = await context.Users.Final()
+        .Where(u => u.Id == userId && u.IsDeleted == 0)
+        .FirstAsync();
+
+    // Insert delete marker with higher version
+    context.Users.Add(new User
+    {
+        Id = user.Id,
+        Name = user.Name,
+        Version = user.Version + 1,
+        IsDeleted = 1  // Mark as deleted
+    });
+    await context.SaveChangesAsync();
+}
+```
+
+**Behavior:**
+- Query with `FINAL` automatically excludes rows where `IsDeleted = 1`
+- During merge, rows with `IsDeleted = 1` are physically removed
+- No need for manual `WHERE IsDeleted = 0` filters when using `FINAL`
+
+### Soft Delete (Manual Filtering)
+
+For ClickHouse versions < 23.2, or if you need to query deleted rows, use manual soft delete:
 
 ```csharp
 public class User
@@ -250,6 +307,11 @@ public async Task SoftDeleteUser(Guid userId)
     });
     await context.SaveChangesAsync();
 }
+
+// Must manually filter
+var activeUsers = await context.Users.Final()
+    .Where(u => !u.IsDeleted)
+    .ToListAsync();
 ```
 
 ### Change History (Keep Both)

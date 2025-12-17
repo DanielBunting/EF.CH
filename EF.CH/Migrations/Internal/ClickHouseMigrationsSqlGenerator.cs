@@ -530,6 +530,8 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
                ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.Ttl);
         var versionColumn = GetAnnotation<string>(operation, ClickHouseAnnotationNames.VersionColumn)
                          ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.VersionColumn);
+        var isDeletedColumn = GetAnnotation<string>(operation, ClickHouseAnnotationNames.IsDeletedColumn)
+                           ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.IsDeletedColumn);
         var signColumn = GetAnnotation<string>(operation, ClickHouseAnnotationNames.SignColumn)
                       ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.SignColumn);
         var settings = GetAnnotation<IDictionary<string, string>>(operation, ClickHouseAnnotationNames.Settings)
@@ -540,6 +542,10 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         // Generate engine with parameters
         switch (engine)
         {
+            case "ReplacingMergeTree" when !string.IsNullOrEmpty(versionColumn) && !string.IsNullOrEmpty(isDeletedColumn):
+                // ReplacingMergeTree(version, is_deleted) - ClickHouse 23.2+
+                builder.Append($"ReplacingMergeTree({Dependencies.SqlGenerationHelper.DelimitIdentifier(versionColumn)}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(isDeletedColumn)})");
+                break;
             case "ReplacingMergeTree" when !string.IsNullOrEmpty(versionColumn):
                 builder.Append($"ReplacingMergeTree({Dependencies.SqlGenerationHelper.DelimitIdentifier(versionColumn)})");
                 break;
@@ -634,6 +640,8 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
                ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.Ttl);
         var versionColumn = GetAnnotation<string>(operation, ClickHouseAnnotationNames.VersionColumn)
                          ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.VersionColumn);
+        var isDeletedColumn = GetAnnotation<string>(operation, ClickHouseAnnotationNames.IsDeletedColumn)
+                           ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.IsDeletedColumn);
         var signColumn = GetAnnotation<string>(operation, ClickHouseAnnotationNames.SignColumn)
                       ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.SignColumn);
         var settings = GetAnnotation<IDictionary<string, string>>(operation, ClickHouseAnnotationNames.Settings)
@@ -645,6 +653,10 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         // Generate engine with parameters
         switch (engine)
         {
+            case "ReplacingMergeTree" when !string.IsNullOrEmpty(versionColumn) && !string.IsNullOrEmpty(isDeletedColumn):
+                // ReplacingMergeTree(version, is_deleted) - ClickHouse 23.2+
+                builder.Append($"ReplacingMergeTree({Dependencies.SqlGenerationHelper.DelimitIdentifier(versionColumn)}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(isDeletedColumn)})");
+                break;
             case "ReplacingMergeTree" when !string.IsNullOrEmpty(versionColumn):
                 builder.Append($"ReplacingMergeTree({Dependencies.SqlGenerationHelper.DelimitIdentifier(versionColumn)})");
                 break;

@@ -152,6 +152,18 @@ public class DailySales
     public decimal TotalRevenue { get; set; }
 }
 
+/// <summary>
+/// Target table for simple projection MV - demonstrates data transformation without GroupBy.
+/// </summary>
+public class ProcessedOrder
+{
+    public ulong ProductIdHash { get; set; }     // cityHash64(ProductId)
+    public DateTime OrderDate { get; set; }
+    public long Version { get; set; }            // toUnixTimestamp64Milli(OrderDate)
+    public decimal Revenue { get; set; }
+    public byte IsProcessed { get; set; }        // Constant = 1
+}
+
 // ============================================================
 // DbContext Definition
 // ============================================================
@@ -160,6 +172,7 @@ public class SalesDbContext : DbContext
 {
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<DailySales> DailySales => Set<DailySales>();
+    public DbSet<ProcessedOrder> ProcessedOrders => Set<ProcessedOrder>();
 
     protected override void OnConfiguring(DbContextOptionsBuilder options)
     {
@@ -177,15 +190,16 @@ public class SalesDbContext : DbContext
             entity.HasPartitionByMonth(x => x.OrderDate);
         });
 
-        // Materialized view target table
+        // ============================================================
+        // Materialized View Example 1: Aggregation with GroupBy (Raw SQL)
+        // ============================================================
         modelBuilder.Entity<DailySales>(entity =>
         {
             entity.ToTable("DailySales_MV");
             entity.HasNoKey();
             entity.UseSummingMergeTree(x => new { x.Date, x.ProductId });
 
-            // Define materialized view using raw SQL
-            // This creates an INSERT trigger that aggregates orders
+            // Raw SQL for aggregation (escape hatch for complex queries)
             entity.AsMaterializedViewRaw(
                 sourceTable: "Orders",
                 selectSql: @"
@@ -197,6 +211,33 @@ public class SalesDbContext : DbContext
                     FROM ""Orders""
                     GROUP BY ""Date"", ""ProductId""
                 ",
+                populate: false);
+        });
+
+        // ============================================================
+        // Materialized View Example 2: Simple Projection with LINQ (no GroupBy)
+        // ============================================================
+        // Demonstrates data transformation using ClickHouse functions:
+        // - CityHash64(): Hash string to UInt64
+        // - ToUnixTimestamp64Milli(): Convert DateTime to Int64 version
+        // - Constants: Add computed columns (IsProcessed = 1)
+        modelBuilder.Entity<ProcessedOrder>(entity =>
+        {
+            entity.ToTable("ProcessedOrders_MV");
+            entity.UseReplacingMergeTree(
+                x => x.Version,
+                x => new { x.ProductIdHash, x.OrderDate });
+
+            // LINQ-based projection (type-safe, no GroupBy needed)
+            entity.AsMaterializedView<ProcessedOrder, Order>(
+                query: orders => orders.Select(o => new ProcessedOrder
+                {
+                    ProductIdHash = o.ProductId.CityHash64(),            // Hash for efficient storage
+                    OrderDate = o.OrderDate,
+                    Version = o.OrderDate.ToUnixTimestamp64Milli(),      // Use date as version
+                    Revenue = o.Revenue,
+                    IsProcessed = 1                                      // Constant
+                }),
                 populate: false);
         });
     }

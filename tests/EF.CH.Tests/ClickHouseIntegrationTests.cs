@@ -625,6 +625,75 @@ public class ClickHouseIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ReplacingMergeTree_WithIsDeleted_ExcludesDeletedRowsWithFinal()
+    {
+        await using var context = CreateContext<DeletableUsersDbContext>();
+
+        await context.Database.EnsureDeletedAsync();
+        await context.Database.EnsureCreatedAsync();
+
+        // Verify engine type includes both Version and IsDeleted
+        var tableInfo = await context.Database.SqlQueryRaw<string>(
+            "SELECT engine_full AS \"Value\" FROM system.tables WHERE database = currentDatabase() AND name = 'DeletableUsers'"
+        ).FirstOrDefaultAsync();
+
+        Assert.NotNull(tableInfo);
+        Assert.Contains("ReplacingMergeTree", tableInfo);
+
+        // Insert an active user
+        var userId = Guid.NewGuid();
+        context.DeletableUsers.Add(new DeletableUser
+        {
+            Id = userId,
+            Name = "Bob",
+            Email = "bob@example.com",
+            Version = 1,
+            IsDeleted = 0  // Active
+        });
+        await context.SaveChangesAsync();
+
+        // Clear tracker and insert delete marker with higher version
+        context.ChangeTracker.Clear();
+
+        context.DeletableUsers.Add(new DeletableUser
+        {
+            Id = userId,
+            Name = "Bob",
+            Email = "bob@example.com",
+            Version = 2,
+            IsDeleted = 1  // Deleted
+        });
+        await context.SaveChangesAsync();
+
+        // Query WITHOUT FINAL - should see both rows (before merge)
+        var beforeMergeCount = await context.Database
+            .SqlQueryRaw<ulong>("SELECT count() as Value FROM \"DeletableUsers\"")
+            .FirstOrDefaultAsync();
+        Assert.Equal(2UL, beforeMergeCount);
+
+        // Query WITH FINAL - should exclude deleted rows
+        var withFinalActiveCount = await context.Database
+            .SqlQueryRaw<ulong>("SELECT count() as Value FROM \"DeletableUsers\" FINAL WHERE \"IsDeleted\" = 0")
+            .FirstOrDefaultAsync();
+        Assert.Equal(0UL, withFinalActiveCount);
+
+        // Force merge
+        await context.Database.ExecuteSqlRawAsync("OPTIMIZE TABLE \"DeletableUsers\" FINAL");
+
+        // After merge, only one row remains (the latest version with IsDeleted=1)
+        var afterMergeCount = await context.Database
+            .SqlQueryRaw<ulong>("SELECT count() as Value FROM \"DeletableUsers\"")
+            .FirstOrDefaultAsync();
+        Assert.Equal(1UL, afterMergeCount);
+
+        // But it's the deleted version - FINAL still excludes it
+        var afterMergeFinalCount = await context.Database
+            .SqlQueryRaw<ulong>("SELECT count() as Value FROM \"DeletableUsers\" FINAL WHERE \"IsDeleted\" = 0")
+            .FirstOrDefaultAsync();
+        Assert.Equal(0UL, afterMergeFinalCount);
+    }
+
+    [Fact]
     public async Task EnsureCreated_CreatesKeylessTable()
     {
         await using var context = CreateContext<MetricsDbContext>();
@@ -914,6 +983,41 @@ public class Sale
     public int Quantity { get; set; }
     public DateTime SaleDate { get; set; }
     public decimal Revenue { get; set; }
+}
+
+/// <summary>
+/// Context for testing ReplacingMergeTree with is_deleted column (ClickHouse 23.2+).
+/// </summary>
+public class DeletableUsersDbContext : DbContext
+{
+    public DeletableUsersDbContext(DbContextOptions<DeletableUsersDbContext> options) : base(options) { }
+
+    public DbSet<DeletableUser> DeletableUsers => Set<DeletableUser>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<DeletableUser>(entity =>
+        {
+            entity.ToTable("DeletableUsers");
+            entity.HasKey(e => e.Id);
+            entity.UseReplacingMergeTree(
+                x => x.Version,
+                x => x.IsDeleted,
+                x => x.Id);
+        });
+    }
+}
+
+/// <summary>
+/// Entity for testing ReplacingMergeTree with is_deleted column.
+/// </summary>
+public class DeletableUser
+{
+    public Guid Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string Email { get; set; } = string.Empty;
+    public long Version { get; set; }
+    public byte IsDeleted { get; set; }  // UInt8: 0 = active, 1 = deleted
 }
 
 #endregion
