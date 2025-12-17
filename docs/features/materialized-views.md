@@ -42,7 +42,38 @@ modelBuilder.Entity<DailySales>(entity =>
 });
 ```
 
-### 2. Raw SQL (Escape Hatch)
+### 2. Simple Projection (Data Transformation)
+
+For data transformation without aggregation, use a simple `Select()` without `GroupBy()`:
+
+```csharp
+modelBuilder.Entity<ProcessedRecord>(entity =>
+{
+    entity.ToTable("ProcessedRecords_MV");
+    entity.UseReplacingMergeTree(
+        versionColumn: x => x.Version,
+        orderByColumn: x => new { x.NameId, x.EventTime });
+
+    entity.AsMaterializedView<ProcessedRecord, RawRecord>(
+        query: raw => raw.Select(r => new ProcessedRecord
+        {
+            NameId = r.Name.CityHash64(),            // Hash for efficient storage
+            EventTime = r.EventTime,
+            Version = r.EventTime.ToUnixTimestamp64Milli(),  // Use timestamp as version
+            Value = r.Value,
+            IsActive = 1                             // Constant value
+        }),
+        populate: false);
+});
+```
+
+This pattern is useful for:
+- **ID Hashing**: Convert strings to efficient UInt64 with `CityHash64()`
+- **Version Generation**: Create version numbers from timestamps with `ToUnixTimestamp64Milli()`
+- **Adding Computed Columns**: Set constants or derived values
+- **Data Normalization**: Transform source data without aggregation
+
+### 3. Raw SQL (Escape Hatch)
 
 ```csharp
 modelBuilder.Entity<DailySales>(entity =>
@@ -225,12 +256,26 @@ In materialized view queries:
 
 | Operation | Support | Notes |
 |-----------|---------|-------|
-| `GroupBy` | ✅ | Required for aggregation |
-| `Select` | ✅ | Project to target entity |
-| `Sum`, `Count`, `Min`, `Max` | ✅ | Standard aggregates |
+| `Select` | ✅ | Project to target entity (with or without GroupBy) |
+| `GroupBy` | ✅ | For aggregation patterns |
+| `Sum`, `Count`, `Min`, `Max` | ✅ | Standard aggregates (requires GroupBy) |
 | `Where` | ⚠️ | Limited to source filters |
 | `Join` | ❌ | Use raw SQL instead |
 | `OrderBy` | ❌ | Not applicable |
+
+## ClickHouse Functions in LINQ
+
+The following ClickHouse functions can be used in LINQ expressions:
+
+| C# Method | ClickHouse SQL | Description |
+|-----------|----------------|-------------|
+| `str.CityHash64()` | `cityHash64(str)` | Fast non-cryptographic hash to UInt64 |
+| `dt.ToUnixTimestamp64Milli()` | `toUnixTimestamp64Milli(dt)` | Milliseconds since epoch (Int64) |
+| `dt.ToStartOfHour()` | `toStartOfHour(dt)` | Truncate to hour |
+| `dt.ToStartOfDay()` | `toStartOfDay(dt)` | Truncate to day |
+| `dt.ToStartOfMonth()` | `toStartOfMonth(dt)` | Truncate to month |
+| `dt.ToYYYYMM()` | `toYYYYMM(dt)` | Year-month as UInt32 |
+| `dt.Date` | `toDate(dt)` | Date portion only |
 
 ## Raw SQL for Complex Views
 

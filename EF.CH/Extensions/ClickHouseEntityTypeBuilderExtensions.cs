@@ -3,6 +3,7 @@ using EF.CH.Dictionaries;
 using EF.CH.Metadata;
 using EF.CH.Query.Internal;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
 namespace EF.CH.Extensions;
@@ -195,6 +196,55 @@ public static class ClickHouseEntityTypeBuilderExtensions
         var versionColumn = ExpressionExtensions.GetPropertyName(versionColumnExpression);
         var columns = ExpressionExtensions.GetPropertyNames(orderByExpression);
         return builder.UseReplacingMergeTree(versionColumn, columns);
+    }
+
+    /// <summary>
+    /// Configures the entity to use a ReplacingMergeTree engine with version and is_deleted columns.
+    /// </summary>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <typeparam name="TVersion">The version column type.</typeparam>
+    /// <typeparam name="TIsDeleted">The is_deleted column type (should be byte/UInt8).</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="versionColumnExpression">Expression selecting the version column.</param>
+    /// <param name="isDeletedColumnExpression">Expression selecting the is_deleted column (UInt8).</param>
+    /// <param name="orderByExpression">Expression selecting the ORDER BY columns.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    /// <remarks>
+    /// <para>
+    /// Requires ClickHouse 23.2+. When is_deleted is specified, rows where the winning version
+    /// has is_deleted=1 are physically removed during background merges.
+    /// </para>
+    /// <para>
+    /// With FINAL, deleted rows are automatically excluded from query results.
+    /// </para>
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// entity.UseReplacingMergeTree(
+    ///     x => x.Version,      // Version column
+    ///     x => x.IsDeleted,    // IsDeleted column (UInt8)
+    ///     x => new { x.Id });  // ORDER BY
+    /// </code>
+    /// </example>
+    public static EntityTypeBuilder<TEntity> UseReplacingMergeTree<TEntity, TVersion, TIsDeleted>(
+        this EntityTypeBuilder<TEntity> builder,
+        Expression<Func<TEntity, TVersion>> versionColumnExpression,
+        Expression<Func<TEntity, TIsDeleted>> isDeletedColumnExpression,
+        Expression<Func<TEntity, object>> orderByExpression)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(versionColumnExpression);
+        ArgumentNullException.ThrowIfNull(isDeletedColumnExpression);
+        ArgumentNullException.ThrowIfNull(orderByExpression);
+
+        var versionColumn = ExpressionExtensions.GetPropertyName(versionColumnExpression);
+        var isDeletedColumn = ExpressionExtensions.GetPropertyName(isDeletedColumnExpression);
+        var columns = ExpressionExtensions.GetPropertyNames(orderByExpression);
+
+        builder.UseReplacingMergeTree(versionColumn, columns);
+        builder.HasAnnotation(ClickHouseAnnotationNames.IsDeletedColumn, isDeletedColumn);
+
+        return builder;
     }
 
     /// <summary>
@@ -821,16 +871,18 @@ public static class ClickHouseEntityTypeBuilderExtensions
         var sourceEntityType = builder.Metadata.Model.FindEntityType(typeof(TSource));
         var sourceTableName = sourceEntityType?.GetTableName() ?? typeof(TSource).Name;
 
-        // Store query expression for later translation during migration
-        // We defer translation until the model is finalized
+        // Translate LINQ expression to SQL immediately
+        // This allows the SQL to be serialized in model snapshots
+        var translator = new Query.Internal.MaterializedViewSqlTranslator(
+            (IModel)builder.Metadata.Model,
+            sourceTableName);
+        var selectSql = translator.Translate<TSource, TEntity>(query);
+
         builder.HasNoKey();
         builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedView, true);
         builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewSource, sourceTableName);
+        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewQuery, selectSql);
         builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewPopulate, populate);
-
-        // Store the expression for later translation
-        // The translator will be invoked when the model is finalized
-        builder.HasAnnotation("ClickHouse:MaterializedViewExpression", query);
 
         return builder;
     }

@@ -223,6 +223,59 @@ public class MergeTreeDdlTests
         Assert.Equal("Version", entityType.FindAnnotation(ClickHouseAnnotationNames.VersionColumn)?.Value);
     }
 
+    [Fact]
+    public void ModelBuilder_UseReplacingMergeTree_WithIsDeleted_SetsAnnotations()
+    {
+        var builder = new ModelBuilder();
+
+        builder.Entity<TestReplacingWithDeleteEntity>(entity =>
+        {
+            entity.ToTable("deletable");
+            entity.HasKey(e => e.Id);
+            entity.UseReplacingMergeTree(
+                x => x.Version,
+                x => x.IsDeleted,
+                x => x.Id);
+        });
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(TestReplacingWithDeleteEntity))!;
+
+        Assert.Equal("ReplacingMergeTree", entityType.FindAnnotation(ClickHouseAnnotationNames.Engine)?.Value);
+        Assert.Equal("Version", entityType.FindAnnotation(ClickHouseAnnotationNames.VersionColumn)?.Value);
+        Assert.Equal("IsDeleted", entityType.FindAnnotation(ClickHouseAnnotationNames.IsDeletedColumn)?.Value);
+        Assert.Equal(new[] { "Id" }, entityType.FindAnnotation(ClickHouseAnnotationNames.OrderBy)?.Value);
+    }
+
+    [Fact]
+    public void CreateTable_WithReplacingMergeTree_AndIsDeleted_GeneratesCorrectDdl()
+    {
+        using var context = CreateContext();
+        var generator = GetMigrationsSqlGenerator(context);
+
+        var operation = new CreateTableOperation
+        {
+            Name = "deletable_users",
+            Columns =
+            {
+                new AddColumnOperation { Name = "Id", ClrType = typeof(Guid), ColumnType = "UUID" },
+                new AddColumnOperation { Name = "Name", ClrType = typeof(string), ColumnType = "String" },
+                new AddColumnOperation { Name = "Version", ClrType = typeof(long), ColumnType = "Int64" },
+                new AddColumnOperation { Name = "IsDeleted", ClrType = typeof(byte), ColumnType = "UInt8" }
+            }
+        };
+
+        operation.AddAnnotation(ClickHouseAnnotationNames.Engine, "ReplacingMergeTree");
+        operation.AddAnnotation(ClickHouseAnnotationNames.OrderBy, new[] { "Id" });
+        operation.AddAnnotation(ClickHouseAnnotationNames.VersionColumn, "Version");
+        operation.AddAnnotation(ClickHouseAnnotationNames.IsDeletedColumn, "IsDeleted");
+
+        var sql = GenerateSql(generator, operation);
+
+        Assert.Contains("ENGINE = ReplacingMergeTree(\"Version\", \"IsDeleted\")", sql);
+        Assert.Contains("ORDER BY (\"Id\")", sql);
+    }
+
     private static TestDbContext CreateContext()
     {
         var options = new DbContextOptionsBuilder<TestDbContext>()
@@ -250,4 +303,12 @@ public class TestMergeTreeEntity
     public DateTime EventTime { get; set; }
     public string EventType { get; set; } = string.Empty;
     public long Version { get; set; }
+}
+
+public class TestReplacingWithDeleteEntity
+{
+    public Guid Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public long Version { get; set; }
+    public byte IsDeleted { get; set; }  // UInt8: 0 = active, 1 = deleted
 }

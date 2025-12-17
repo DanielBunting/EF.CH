@@ -51,6 +51,12 @@ public static class ClickHouseAnnotationNames
     public const string VersionColumn = Prefix + "VersionColumn";
 
     /// <summary>
+    /// The is_deleted column for ReplacingMergeTree (ClickHouse 23.2+).
+    /// When specified, rows with is_deleted=1 are physically removed during merge.
+    /// </summary>
+    public const string IsDeletedColumn = Prefix + "IsDeletedColumn";
+
+    /// <summary>
     /// The sign column for CollapsingMergeTree.
     /// </summary>
     public const string SignColumn = Prefix + "SignColumn";

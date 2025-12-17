@@ -138,6 +138,58 @@ public class MaterializedViewTests : IAsyncLifetime
         Assert.Contains("must have a view query defined", ex.Message);
     }
 
+    [Fact]
+    public void MigrationsSqlGenerator_GeneratesSimpleProjectionMV()
+    {
+        using var context = CreateContext<SimpleProjectionMaterializedViewContext>();
+        var generator = context.GetService<IMigrationsSqlGenerator>();
+        var model = context.Model;
+
+        var entityType = model.FindEntityType(typeof(MvProcessedEvent));
+        Assert.NotNull(entityType);
+
+        var query = entityType.FindAnnotation("ClickHouse:MaterializedViewQuery")?.Value as string;
+
+        var createTableOp = new CreateTableOperation
+        {
+            Name = "ProcessedEvents_MV",
+            Columns =
+            {
+                new AddColumnOperation { Name = "EventNameId", ClrType = typeof(ulong), ColumnType = "UInt64" },
+                new AddColumnOperation { Name = "EventTime", ClrType = typeof(DateTime), ColumnType = "DateTime64(3)" },
+                new AddColumnOperation { Name = "Version", ClrType = typeof(long), ColumnType = "Int64" },
+                new AddColumnOperation { Name = "Value", ClrType = typeof(decimal), ColumnType = "Decimal(18,4)" },
+                new AddColumnOperation { Name = "IsActive", ClrType = typeof(byte), ColumnType = "UInt8" }
+            }
+        };
+
+        createTableOp.AddAnnotation("ClickHouse:MaterializedView", true);
+        createTableOp.AddAnnotation("ClickHouse:MaterializedViewSource", "RawEvents");
+        createTableOp.AddAnnotation("ClickHouse:MaterializedViewQuery", query);
+        createTableOp.AddAnnotation("ClickHouse:MaterializedViewPopulate", false);
+        createTableOp.AddAnnotation("ClickHouse:Engine", "ReplacingMergeTree");
+        createTableOp.AddAnnotation("ClickHouse:OrderBy", new[] { "EventNameId", "EventTime" });
+        createTableOp.AddAnnotation("ClickHouse:VersionColumn", "Version");
+
+        var commands = generator.Generate(new[] { createTableOp }, model);
+        var sql = commands.First().CommandText;
+
+        // Verify CREATE MATERIALIZED VIEW syntax
+        Assert.Contains("CREATE MATERIALIZED VIEW", sql);
+        Assert.Contains("\"ProcessedEvents_MV\"", sql);
+        Assert.Contains("ENGINE = ReplacingMergeTree(\"Version\")", sql);
+        Assert.Contains("ORDER BY", sql);
+        Assert.Contains("AS", sql);
+
+        // Verify ClickHouse functions are in the query
+        Assert.Contains("cityHash64", sql);
+        Assert.Contains("toUnixTimestamp64Milli", sql);
+
+        // Verify no GROUP BY (simple projection)
+        Assert.DoesNotContain("GROUP BY", sql);
+        Assert.DoesNotContain("POPULATE", sql);
+    }
+
     #endregion
 
     #region Fluent API Tests
@@ -166,9 +218,36 @@ public class MaterializedViewTests : IAsyncLifetime
         Assert.NotNull(entityType.FindAnnotation("ClickHouse:MaterializedViewSource")?.Value);
         Assert.False((bool?)entityType.FindAnnotation("ClickHouse:MaterializedViewPopulate")?.Value);
 
-        // The expression should be stored for later translation
-        var expressionAnnotation = entityType.FindAnnotation("ClickHouse:MaterializedViewExpression");
-        Assert.NotNull(expressionAnnotation?.Value);
+        // LINQ expression is translated to SQL at configuration time
+        var queryAnnotation = entityType.FindAnnotation("ClickHouse:MaterializedViewQuery");
+        Assert.NotNull(queryAnnotation?.Value);
+
+        var query = queryAnnotation.Value as string;
+        Assert.NotNull(query);
+        Assert.Contains("GROUP BY", query);  // Confirms LINQ GroupBy was translated
+    }
+
+    [Fact]
+    public void AsMaterializedView_SimpleProjection_SetsCorrectAnnotations()
+    {
+        using var context = CreateContext<SimpleProjectionMaterializedViewContext>();
+        var entityType = context.Model.FindEntityType(typeof(MvProcessedEvent));
+
+        Assert.NotNull(entityType);
+        Assert.True((bool?)entityType.FindAnnotation("ClickHouse:MaterializedView")?.Value);
+        Assert.Equal("RawEvents", entityType.FindAnnotation("ClickHouse:MaterializedViewSource")?.Value);
+        Assert.False((bool?)entityType.FindAnnotation("ClickHouse:MaterializedViewPopulate")?.Value);
+
+        // Verify the SQL query was generated (not stored as expression)
+        var query = entityType.FindAnnotation("ClickHouse:MaterializedViewQuery")?.Value as string;
+        Assert.NotNull(query);
+
+        // Simple projection should contain CityHash64 and toUnixTimestamp64Milli
+        Assert.Contains("cityHash64", query);
+        Assert.Contains("toUnixTimestamp64Milli", query);
+
+        // Simple projection should NOT contain GROUP BY
+        Assert.DoesNotContain("GROUP BY", query);
     }
 
     #endregion
@@ -227,6 +306,61 @@ public class MaterializedViewTests : IAsyncLifetime
         Assert.Equal(159.96m, product100.TotalRevenue);
     }
 
+    [Fact]
+    public async Task CreateMaterializedView_SimpleProjection_ExecutesSuccessfully()
+    {
+        await using var context = CreateContext<SimpleProjectionMaterializedViewContext>();
+
+        // Create source table first
+        await context.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS RawEvents (
+                EventName String,
+                EventTime DateTime64(3),
+                UserId String,
+                Value Decimal(18, 4)
+            ) ENGINE = MergeTree()
+            ORDER BY (EventName, EventTime)
+        ");
+
+        // Get the translated SQL query from the model
+        var entityType = context.Model.FindEntityType(typeof(MvProcessedEvent));
+        var selectSql = entityType?.FindAnnotation("ClickHouse:MaterializedViewQuery")?.Value as string;
+        Assert.NotNull(selectSql);
+
+        // Create the materialized view with simple projection
+        await context.Database.ExecuteSqlRawAsync($@"
+            CREATE MATERIALIZED VIEW IF NOT EXISTS ProcessedEvents_MV
+            ENGINE = ReplacingMergeTree(""Version"")
+            ORDER BY (""EventNameId"", ""EventTime"")
+            AS
+            {selectSql}
+        ");
+
+        // Insert some data into source table
+        await context.Database.ExecuteSqlRawAsync(@"
+            INSERT INTO RawEvents (EventName, EventTime, UserId, Value) VALUES
+            ('UserLogin', '2024-01-15 10:00:00', 'user1', 1.0),
+            ('UserLogin', '2024-01-15 10:05:00', 'user2', 1.0),
+            ('Purchase', '2024-01-15 11:00:00', 'user1', 99.99)
+        ");
+
+        // Query the materialized view
+        var results = await context.Database.SqlQueryRaw<MvProcessedEventResult>(
+            "SELECT EventNameId, EventTime, Version, Value, IsActive FROM ProcessedEvents_MV ORDER BY EventTime"
+        ).ToListAsync();
+
+        Assert.Equal(3, results.Count);
+
+        // Verify cityHash64 was applied (all EventNameId values should be non-zero)
+        Assert.All(results, r => Assert.NotEqual(0UL, r.EventNameId));
+
+        // Verify toUnixTimestamp64Milli was applied (Version > 0)
+        Assert.All(results, r => Assert.True(r.Version > 0));
+
+        // Verify constant IsActive = 1
+        Assert.All(results, r => Assert.Equal((byte)1, r.IsActive));
+    }
+
     #endregion
 
     private TContext CreateContext<TContext>() where TContext : DbContext
@@ -248,6 +382,24 @@ public class MvOrder
     public int ProductId { get; set; }
     public decimal Quantity { get; set; }
     public decimal Revenue { get; set; }
+}
+
+// Entities for simple projection MV tests (without GroupBy)
+public class MvRawEvent
+{
+    public string EventName { get; set; } = string.Empty;
+    public DateTime EventTime { get; set; }
+    public string UserId { get; set; } = string.Empty;
+    public decimal Value { get; set; }
+}
+
+public class MvProcessedEvent
+{
+    public ulong EventNameId { get; set; }          // cityHash64(EventName)
+    public DateTime EventTime { get; set; }
+    public long Version { get; set; }               // toUnixTimestamp64Milli(EventTime)
+    public decimal Value { get; set; }
+    public byte IsActive { get; set; }              // Constant = 1
 }
 
 public class MvDailySummary
@@ -272,6 +424,15 @@ public class MvDailySummaryResult
     public int ProductId { get; set; }
     public decimal TotalQuantity { get; set; }
     public decimal TotalRevenue { get; set; }
+}
+
+public class MvProcessedEventResult
+{
+    public ulong EventNameId { get; set; }
+    public DateTime EventTime { get; set; }
+    public long Version { get; set; }
+    public decimal Value { get; set; }
+    public byte IsActive { get; set; }
 }
 
 #endregion
@@ -349,6 +510,50 @@ public class LinqMaterializedViewContext : DbContext
                     }),
                 populate: false
             );
+        });
+    }
+}
+
+/// <summary>
+/// Context for testing simple projection MV (Select without GroupBy).
+/// Demonstrates data transformation with CityHash64, ToUnixTimestamp64Milli, and constants.
+/// </summary>
+public class SimpleProjectionMaterializedViewContext : DbContext
+{
+    public SimpleProjectionMaterializedViewContext(DbContextOptions<SimpleProjectionMaterializedViewContext> options)
+        : base(options) { }
+
+    public DbSet<MvRawEvent> RawEvents => Set<MvRawEvent>();
+    public DbSet<MvProcessedEvent> ProcessedEvents => Set<MvProcessedEvent>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        // Source table
+        modelBuilder.Entity<MvRawEvent>(entity =>
+        {
+            entity.ToTable("RawEvents");
+            entity.HasNoKey();
+            entity.UseMergeTree(x => new { x.EventName, x.EventTime });
+        });
+
+        // MV with simple projection (no GroupBy)
+        modelBuilder.Entity<MvProcessedEvent>(entity =>
+        {
+            entity.ToTable("ProcessedEvents_MV");
+            entity.UseReplacingMergeTree(
+                x => x.Version,
+                x => new { x.EventNameId, x.EventTime });
+
+            entity.AsMaterializedView<MvProcessedEvent, MvRawEvent>(
+                query: raw => raw.Select(r => new MvProcessedEvent
+                {
+                    EventNameId = r.EventName.CityHash64(),
+                    EventTime = r.EventTime,
+                    Version = r.EventTime.ToUnixTimestamp64Milli(),
+                    Value = r.Value,
+                    IsActive = 1
+                }),
+                populate: false);
         });
     }
 }

@@ -103,6 +103,31 @@ public static class ClickHouseFunctions
 
     #endregion
 
+    #region Timestamp Conversion Functions
+
+    /// <summary>
+    /// Converts a DateTime to Unix timestamp in milliseconds.
+    /// Translates to: toUnixTimestamp64Milli(column)
+    /// </summary>
+    public static long ToUnixTimestamp64Milli(this DateTime dateTime) => Throw<long>();
+
+    /// <summary>
+    /// Converts a nullable DateTime to Unix timestamp in milliseconds.
+    /// </summary>
+    public static long? ToUnixTimestamp64Milli(this DateTime? dateTime) => Throw<long?>();
+
+    #endregion
+
+    #region Hash Functions
+
+    /// <summary>
+    /// Computes the CityHash64 of a string.
+    /// Translates to: cityHash64(column)
+    /// </summary>
+    public static ulong CityHash64(this string value) => Throw<ulong>();
+
+    #endregion
+
     #region Date Extraction Functions
 
     /// <summary>

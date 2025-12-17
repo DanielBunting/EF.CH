@@ -223,13 +223,42 @@ internal class MaterializedViewExpressionVisitor<TSource> : ExpressionVisitor
             BinaryExpression binaryExpr => TranslateBinary(binaryExpr),
             UnaryExpression unaryExpr => TranslateUnary(unaryExpr),
             ConditionalExpression condExpr => TranslateConditional(condExpr),
+            DefaultExpression defaultExpr => TranslateDefault(defaultExpr),
             _ => throw new NotSupportedException(
                 $"Expression type {expr.GetType().Name} is not supported in materialized view definitions.")
         };
     }
 
+    private string TranslateDefault(DefaultExpression defaultExpr)
+    {
+        // Default values for common types
+        return defaultExpr.Type.Name switch
+        {
+            "Int64" or "Int32" or "Int16" or "SByte" => "0",
+            "UInt64" or "UInt32" or "UInt16" or "Byte" => "0",
+            "Double" or "Single" or "Decimal" => "0.0",
+            "String" => "''",
+            _ => "NULL"
+        };
+    }
+
     private string TranslateMemberAccess(MemberExpression memberExpr)
     {
+        // Handle static field access (e.g., UInt64.MaxValue)
+        if (memberExpr.Expression == null)
+        {
+            // Static member access
+            return memberExpr.Member switch
+            {
+                FieldInfo { Name: "MaxValue", DeclaringType.Name: "UInt64" } => "18446744073709551615",
+                FieldInfo { Name: "MinValue", DeclaringType.Name: "UInt64" } => "0",
+                FieldInfo { Name: "MaxValue", DeclaringType.Name: "Int64" } => "9223372036854775807",
+                FieldInfo { Name: "MinValue", DeclaringType.Name: "Int64" } => "-9223372036854775808",
+                _ => throw new NotSupportedException(
+                    $"Static member {memberExpr.Member.DeclaringType?.Name}.{memberExpr.Member.Name} is not supported.")
+            };
+        }
+
         // Check if this is accessing the grouping key (g.Key.X)
         if (memberExpr.Expression is MemberExpression parentMember)
         {
@@ -350,11 +379,23 @@ internal class MaterializedViewExpressionVisitor<TSource> : ExpressionVisitor
         return functionName switch
         {
             "ToYYYYMM" => $"toYYYYMM({arg})",
+            "ToYYYYMMDD" => $"toYYYYMMDD({arg})",
             "ToStartOfHour" => $"toStartOfHour({arg})",
             "ToStartOfDay" => $"toStartOfDay({arg})",
             "ToStartOfMonth" => $"toStartOfMonth({arg})",
             "ToStartOfYear" => $"toStartOfYear({arg})",
             "ToStartOfWeek" => $"toStartOfWeek({arg})",
+            "ToStartOfQuarter" => $"toStartOfQuarter({arg})",
+            "ToStartOfMinute" => $"toStartOfMinute({arg})",
+            "ToStartOfFiveMinutes" => $"toStartOfFiveMinutes({arg})",
+            "ToStartOfFifteenMinutes" => $"toStartOfFifteenMinutes({arg})",
+            "ToUnixTimestamp64Milli" => $"toUnixTimestamp64Milli({arg})",
+            "CityHash64" => $"cityHash64({arg})",
+            "ToISOYear" => $"toISOYear({arg})",
+            "ToISOWeek" => $"toISOWeek({arg})",
+            "ToDayOfWeek" => $"toDayOfWeek({arg})",
+            "ToDayOfYear" => $"toDayOfYear({arg})",
+            "ToQuarter" => $"toQuarter({arg})",
             _ => throw new NotSupportedException($"ClickHouse function {functionName} is not supported.")
         };
     }
@@ -366,6 +407,10 @@ internal class MaterializedViewExpressionVisitor<TSource> : ExpressionVisitor
             null => "NULL",
             string s => $"'{s.Replace("'", "''")}'",
             bool b => b ? "1" : "0",
+            sbyte sb => $"toInt8({sb})",
+            byte b => $"toUInt8({b})",
+            ulong ul => ul.ToString(),
+            long l => l.ToString(),
             DateTime dt => $"toDateTime64('{dt:yyyy-MM-dd HH:mm:ss.fff}', 3)",
             IFormattable f => f.ToString(null, System.Globalization.CultureInfo.InvariantCulture),
             _ => constExpr.Value.ToString() ?? "NULL"
