@@ -2,6 +2,7 @@ using System.Data.Common;
 using System.Globalization;
 using System.Text;
 using EF.CH.Diagnostics;
+using EF.CH.Dictionaries;
 using EF.CH.External;
 using EF.CH.Metadata.Conventions;
 using EF.CH.Metadata.Internal;
@@ -312,6 +313,14 @@ public static class ClickHouseServiceCollectionExtensions
         {
             var configuration = sp.GetService<IConfiguration>();
             return new ExternalConfigResolver(configuration);
+        });
+
+        // Register dictionary config resolver for external dictionary sources (PostgreSQL, MySQL, HTTP).
+        // Resolves credentials from environment variables or IConfiguration at runtime.
+        services.TryAddSingleton<IDictionaryConfigResolver>(sp =>
+        {
+            var configuration = sp.GetService<IConfiguration>();
+            return new DictionaryConfigResolver(configuration);
         });
 
         return services;

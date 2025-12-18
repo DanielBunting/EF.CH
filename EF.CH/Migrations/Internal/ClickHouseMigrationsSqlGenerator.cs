@@ -163,6 +163,28 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         MigrationCommandListBuilder builder,
         bool terminate)
     {
+        // Check if this is an external dictionary (PostgreSQL, MySQL, HTTP)
+        // External dictionaries are skipped in migrations because they contain credentials
+        // They should be created at runtime via context.EnsureDictionariesAsync()
+        var sourceProvider = GetAnnotation<string>(operation, ClickHouseAnnotationNames.DictionarySourceProvider)
+                          ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.DictionarySourceProvider)
+                          ?? "clickhouse";
+
+        if (sourceProvider != "clickhouse")
+        {
+            // Emit comment explaining that this dictionary is created at runtime
+            builder.AppendLine($"-- Dictionary '{operation.Name}' uses external source '{sourceProvider}'");
+            builder.AppendLine($"-- This dictionary is NOT created by migrations because it contains credentials.");
+            builder.AppendLine($"-- Create it at runtime using: await context.EnsureDictionariesAsync();");
+            builder.AppendLine();
+
+            if (terminate)
+            {
+                EndStatement(builder);
+            }
+            return;
+        }
+
         // Get dictionary configuration from annotations
         var sourceTable = GetAnnotation<string>(operation, ClickHouseAnnotationNames.DictionarySource)
                        ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.DictionarySource);

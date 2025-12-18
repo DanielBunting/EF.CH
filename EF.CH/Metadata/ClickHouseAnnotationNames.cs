@@ -183,6 +183,55 @@ public static class ClickHouseAnnotationNames
 
     #endregion
 
+    #region Dictionary External Sources
+
+    /// <summary>
+    /// The dictionary source provider type: "clickhouse" (default), "postgresql", "mysql", "http".
+    /// </summary>
+    public const string DictionarySourceProvider = Prefix + "DictionarySourceProvider";
+
+    /// <summary>
+    /// For external dictionary sources: table name in remote database.
+    /// </summary>
+    public const string DictionaryExternalTable = Prefix + "DictionaryExternalTable";
+
+    /// <summary>
+    /// For external dictionary sources: schema name (PostgreSQL only).
+    /// </summary>
+    public const string DictionaryExternalSchema = Prefix + "DictionaryExternalSchema";
+
+    /// <summary>
+    /// For external dictionary sources: WHERE clause filter.
+    /// </summary>
+    public const string DictionaryExternalWhere = Prefix + "DictionaryExternalWhere";
+
+    /// <summary>
+    /// For external dictionary sources: invalidate_query for cache refresh checking.
+    /// </summary>
+    public const string DictionaryInvalidateQuery = Prefix + "DictionaryInvalidateQuery";
+
+    /// <summary>
+    /// For MySQL dictionary sources: fail_on_connection_loss setting.
+    /// </summary>
+    public const string DictionaryMySqlFailOnConnectionLoss = Prefix + "DictionaryMySqlFailOnConnectionLoss";
+
+    /// <summary>
+    /// For HTTP dictionary sources: URL endpoint.
+    /// </summary>
+    public const string DictionaryHttpUrl = Prefix + "DictionaryHttpUrl";
+
+    /// <summary>
+    /// For HTTP dictionary sources: format (JSONEachRow, CSV, etc.).
+    /// </summary>
+    public const string DictionaryHttpFormat = Prefix + "DictionaryHttpFormat";
+
+    /// <summary>
+    /// For HTTP dictionary sources: custom headers as Dictionary&lt;string, string&gt;.
+    /// </summary>
+    public const string DictionaryHttpHeaders = Prefix + "DictionaryHttpHeaders";
+
+    #endregion
+
     #region External Table Functions
 
     /// <summary>
