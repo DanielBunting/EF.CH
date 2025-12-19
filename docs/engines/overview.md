@@ -32,6 +32,7 @@ What's your use case?
 | [AggregatingMergeTree](aggregating-mergetree.md) | Store aggregate state | `entity.UseAggregatingMergeTree(x => x.Key)` |
 | [CollapsingMergeTree](collapsing-mergetree.md) | State with sign column | `entity.UseCollapsingMergeTree(x => x.Sign, x => x.Key)` |
 | [VersionedCollapsingMergeTree](versioned-collapsing.md) | Out-of-order collapsing | `entity.UseVersionedCollapsingMergeTree(x => x.Sign, x => x.Version, x => x.Key)` |
+| [Null](null.md) | Discard data (MV source) | `entity.UseNullEngine()` |
 
 ## Common Configuration
 
@@ -171,4 +172,5 @@ TTL "OrderDate" + INTERVAL 2 YEAR
 - [SummingMergeTree](summing-mergetree.md) - Auto-aggregation
 - [AggregatingMergeTree](aggregating-mergetree.md) - Complex aggregates
 - [CollapsingMergeTree](collapsing-mergetree.md) - State tracking
+- [Null](null.md) - Discard data (MV source tables)
 - [ClickHouse Official Docs](https://clickhouse.com/docs/en/engines/table-engines/mergetree-family)

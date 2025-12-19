@@ -524,6 +524,72 @@ public static class ClickHouseEntityTypeBuilderExtensions
 
     #endregion
 
+    #region Null Engine
+
+    /// <summary>
+    /// Configures the entity to use the Null engine.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The Null engine discards all inserted data and returns empty results for SELECT queries.
+    /// It functions like /dev/null - data goes in but is never stored.
+    /// </para>
+    /// <para>
+    /// This is commonly used as a source table for materialized views when you don't need
+    /// to store the raw data, only the aggregated results in the views.
+    /// </para>
+    /// </remarks>
+    /// <param name="builder">The entity type builder.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    /// <example>
+    /// <code>
+    /// // Raw events go into Null table, triggering materialized views
+    /// modelBuilder.Entity&lt;RawEvent&gt;(entity =>
+    /// {
+    ///     entity.UseNullEngine();
+    /// });
+    ///
+    /// // Materialized view stores only aggregated data
+    /// modelBuilder.Entity&lt;HourlySummary&gt;(entity =>
+    /// {
+    ///     entity.UseSummingMergeTree(x => new { x.Hour, x.Category });
+    ///     entity.AsMaterializedView&lt;HourlySummary, RawEvent&gt;(...);
+    /// });
+    /// </code>
+    /// </example>
+    public static EntityTypeBuilder UseNullEngine(this EntityTypeBuilder builder)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, "Null");
+        return builder;
+    }
+
+    /// <summary>
+    /// Configures the entity to use the Null engine.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The Null engine discards all inserted data and returns empty results for SELECT queries.
+    /// It functions like /dev/null - data goes in but is never stored.
+    /// </para>
+    /// <para>
+    /// This is commonly used as a source table for materialized views when you don't need
+    /// to store the raw data, only the aggregated results in the views.
+    /// </para>
+    /// </remarks>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    public static EntityTypeBuilder<TEntity> UseNullEngine<TEntity>(
+        this EntityTypeBuilder<TEntity> builder)
+        where TEntity : class
+    {
+        ((EntityTypeBuilder)builder).UseNullEngine();
+        return builder;
+    }
+
+    #endregion
+
     #region Partition By
 
     /// <summary>
@@ -697,6 +763,109 @@ public static class ClickHouseEntityTypeBuilderExtensions
     {
         ((EntityTypeBuilder)builder).HasTtl(ttlExpression);
         return builder;
+    }
+
+    /// <summary>
+    /// Configures TTL using a TimeSpan interval.
+    /// Best for days, hours, minutes, and seconds.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// TimeSpan cannot accurately represent calendar months or years (which vary in length),
+    /// so for those intervals use the <see cref="ClickHouseInterval"/> overload instead.
+    /// </para>
+    /// <para>
+    /// The TimeSpan is converted to the largest whole unit that fits:
+    /// days, hours, minutes, or seconds.
+    /// </para>
+    /// </remarks>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <typeparam name="TProperty">The property type (should be DateTime or DateTimeOffset).</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="columnExpression">Expression selecting the datetime column for TTL.</param>
+    /// <param name="expireAfter">How long after the column value before the row expires.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    /// <example>
+    /// <code>
+    /// entity.HasTtl(x => x.CreatedAt, TimeSpan.FromDays(30));
+    /// entity.HasTtl(x => x.CreatedAt, TimeSpan.FromHours(24));
+    /// </code>
+    /// </example>
+    public static EntityTypeBuilder<TEntity> HasTtl<TEntity, TProperty>(
+        this EntityTypeBuilder<TEntity> builder,
+        Expression<Func<TEntity, TProperty>> columnExpression,
+        TimeSpan expireAfter)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(columnExpression);
+
+        var columnName = ExpressionExtensions.GetPropertyName(columnExpression);
+        var interval = ConvertTimeSpanToClickHouseInterval(expireAfter);
+        return builder.HasTtl($"\"{columnName}\" + {interval}");
+    }
+
+    /// <summary>
+    /// Configures TTL using a ClickHouseInterval.
+    /// Supports all interval units including months, quarters, and years.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Use this overload when you need calendar-based intervals like months or years
+    /// that cannot be accurately represented by <see cref="TimeSpan"/>.
+    /// </para>
+    /// </remarks>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <typeparam name="TProperty">The property type (should be DateTime or DateTimeOffset).</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="columnExpression">Expression selecting the datetime column for TTL.</param>
+    /// <param name="expireAfter">How long after the column value before the row expires.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    /// <example>
+    /// <code>
+    /// entity.HasTtl(x => x.CreatedAt, ClickHouseInterval.Months(1));
+    /// entity.HasTtl(x => x.CreatedAt, ClickHouseInterval.Years(1));
+    /// entity.HasTtl(x => x.CreatedAt, ClickHouseInterval.Quarters(1));
+    /// </code>
+    /// </example>
+    public static EntityTypeBuilder<TEntity> HasTtl<TEntity, TProperty>(
+        this EntityTypeBuilder<TEntity> builder,
+        Expression<Func<TEntity, TProperty>> columnExpression,
+        ClickHouseInterval expireAfter)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(columnExpression);
+
+        var columnName = ExpressionExtensions.GetPropertyName(columnExpression);
+        return builder.HasTtl($"\"{columnName}\" + {expireAfter.ToSql()}");
+    }
+
+    /// <summary>
+    /// Converts a TimeSpan to a ClickHouse INTERVAL expression string.
+    /// Uses the largest whole unit that fits.
+    /// </summary>
+    private static string ConvertTimeSpanToClickHouseInterval(TimeSpan timeSpan)
+    {
+        if (timeSpan <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(timeSpan), "TTL interval must be positive.");
+        }
+
+        // Use largest whole unit that fits
+        if (timeSpan.TotalDays >= 1 && timeSpan.TotalDays == Math.Floor(timeSpan.TotalDays))
+        {
+            return $"INTERVAL {(int)timeSpan.TotalDays} DAY";
+        }
+        if (timeSpan.TotalHours >= 1 && timeSpan.TotalHours == Math.Floor(timeSpan.TotalHours))
+        {
+            return $"INTERVAL {(int)timeSpan.TotalHours} HOUR";
+        }
+        if (timeSpan.TotalMinutes >= 1 && timeSpan.TotalMinutes == Math.Floor(timeSpan.TotalMinutes))
+        {
+            return $"INTERVAL {(int)timeSpan.TotalMinutes} MINUTE";
+        }
+        return $"INTERVAL {(int)timeSpan.TotalSeconds} SECOND";
     }
 
     /// <summary>
