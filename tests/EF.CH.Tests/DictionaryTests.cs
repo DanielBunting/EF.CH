@@ -963,3 +963,101 @@ public class DictionarySqlTranslationTests
 }
 
 #endregion
+
+#region Dictionary AsQueryable JOIN Tests
+
+public class DictionaryQueryJoinTests
+{
+    [Fact]
+    public void AsQueryable_SimpleJoin_TranslatesToDictionaryFunction()
+    {
+        using var context = CreateContext();
+
+        var query =
+            from o in context.DictTestOrders
+            join c in context.CountryDict.AsQueryable() on o.CountryId equals c.Id
+            select new { o.Id, c.Name };
+
+        var sql = query.ToQueryString();
+
+        Assert.Contains("dictionary('country_lookup')", sql);
+        Assert.Contains("JOIN", sql);
+    }
+
+    [Fact]
+    public void AsQueryable_MethodSyntaxJoin_TranslatesToDictionaryFunction()
+    {
+        using var context = CreateContext();
+
+        var query = context.DictTestOrders
+            .Join(
+                context.CountryDict.AsQueryable(),
+                o => o.CountryId,
+                c => c.Id,
+                (o, c) => new { o.Id, c.Name, c.IsoCode });
+
+        var sql = query.ToQueryString();
+
+        Assert.Contains("dictionary('country_lookup')", sql);
+        Assert.Contains("JOIN", sql);
+    }
+
+    [Fact]
+    public void AsQueryable_JoinWithWhere_TranslatesCorrectly()
+    {
+        using var context = CreateContext();
+
+        var query =
+            from o in context.DictTestOrders
+            join c in context.CountryDict.AsQueryable() on o.CountryId equals c.Id
+            where o.Amount > 100
+            select new { o.Id, c.Name, o.Amount };
+
+        var sql = query.ToQueryString();
+
+        Assert.Contains("dictionary('country_lookup')", sql);
+        Assert.Contains("100", sql);
+    }
+
+    [Fact]
+    public void AsQueryable_SelectFromDictionary_TranslatesToDictionaryFunction()
+    {
+        using var context = CreateContext();
+
+        // Direct query on dictionary via AsQueryable
+        var query = context.CountryDict.AsQueryable()
+            .Select(c => new { c.Id, c.Name });
+
+        var sql = query.ToQueryString();
+
+        Assert.Contains("dictionary('country_lookup')", sql);
+    }
+
+    [Fact]
+    public void AsQueryable_FilterOnDictionaryAttribute_TranslatesCorrectly()
+    {
+        using var context = CreateContext();
+
+        var query =
+            from o in context.DictTestOrders
+            join c in context.CountryDict.AsQueryable() on o.CountryId equals c.Id
+            where c.IsoCode == "US"
+            select new { o.Id, c.Name };
+
+        var sql = query.ToQueryString();
+
+        Assert.Contains("dictionary('country_lookup')", sql);
+        Assert.Contains("'US'", sql);
+    }
+
+    private static DictionaryTestContext CreateContext()
+    {
+        var options = new DbContextOptionsBuilder<DictionaryTestContext>()
+            .UseClickHouse("Host=localhost;Database=test")
+            .Options;
+
+        return new DictionaryTestContext(options);
+    }
+}
+
+#endregion
