@@ -293,6 +293,60 @@ Console.WriteLine("""
    """);
 
 // ============================================================
+// Pattern 7: Actual LINQ JOINs with AsQueryable()
+// ============================================================
+
+Console.WriteLine("\n--- Pattern 7: Actual LINQ JOINs with AsQueryable() ---\n");
+
+Console.WriteLine("When you need multiple dictionary attributes or filtering on dictionary columns,");
+Console.WriteLine("use AsQueryable() to enable actual LINQ JOINs:\n");
+
+Console.WriteLine("Table → Dictionary JOIN:");
+Console.WriteLine("""
+   // LINQ:
+   var enrichedOrders = db.Orders
+       .Join(
+           db.CustomerDict.AsQueryable(),
+           o => o.CustomerId,
+           c => c.Id,
+           (o, c) => new { o.Id, o.Amount, c.Name, c.Email });
+
+   // Translates to SQL:
+   SELECT "o"."Id", "o"."Amount", "c"."Name", "c"."Email"
+   FROM "orders" AS "o"
+   INNER JOIN dictionary('customer_lookup') AS "c" ON "o"."CustomerId" = "c"."Id"
+   """);
+
+Console.WriteLine("\nDictionary → Table JOIN (dictionary as driving table):");
+Console.WriteLine("""
+   // Find all orders for a specific customer by name
+   // LINQ:
+   var orders = db.CustomerDict.AsQueryable()
+       .Where(c => c.Name == "Alice")
+       .Join(
+           db.Orders,
+           c => c.Id,
+           o => o.CustomerId,
+           (c, o) => new { c.Name, o.Id, o.Amount });
+
+   // Translates to SQL:
+   SELECT "c"."Name", "o"."Id", "o"."Amount"
+   FROM dictionary('customer_lookup') AS "c"
+   INNER JOIN "orders" AS "o" ON "c"."Id" = "o"."CustomerId"
+   WHERE "c"."Name" = 'Alice'
+   """);
+
+Console.WriteLine("\nWhen to use AsQueryable() vs scalar lookups:");
+Console.WriteLine("""
+   | Pattern           | Use Case                                          |
+   |-------------------|---------------------------------------------------|
+   | .Get()            | Single attribute lookup in projection             |
+   | .GetOrDefault()   | Single attribute with fallback for missing keys   |
+   | .ContainsKey()    | Filter rows by key existence                      |
+   | .AsQueryable()    | Multiple attrs, filtering on dict columns, JOINs  |
+   """);
+
+// ============================================================
 // Performance Comparison
 // ============================================================
 

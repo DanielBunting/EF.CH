@@ -219,6 +219,45 @@ var enrichedOrders = db.Orders
     });
 ```
 
+### JOINs with AsQueryable
+
+For queries requiring actual JOINs with dictionaries (multiple attributes, filtering on dictionary columns, complex queries), use `AsQueryable()`:
+
+```csharp
+// Table → Dictionary: Enrich orders with all country data
+var enrichedOrders = db.Orders
+    .Join(
+        db.CountryDict.AsQueryable(),
+        o => o.CountryId,
+        c => c.Id,
+        (o, c) => new { o.Id, o.Amount, c.Name, c.IsoCode });
+
+// Dictionary → Table: Find all products in a category by name
+var products = db.CategoryDict.AsQueryable()
+    .Where(c => c.Name == "Electronics")
+    .Join(
+        db.Products,
+        c => c.CategoryId,
+        p => p.CategoryId,
+        (c, p) => new { p.ProductId, p.Name, c.Description });
+```
+
+Generated SQL uses `dictionary('name')` table function:
+```sql
+SELECT "o"."Id", "o"."Amount", "c"."Name", "c"."IsoCode"
+FROM "orders" AS "o"
+INNER JOIN dictionary('country_lookup') AS "c" ON "o"."CountryId" = "c"."Id"
+```
+
+**When to use each approach:**
+
+| Pattern | Use Case |
+|---------|----------|
+| `.Get()` | Single attribute lookup in projection |
+| `.GetOrDefault()` | Single attribute with fallback for missing keys |
+| `.ContainsKey()` | Filter rows by key existence |
+| `.AsQueryable()` | Multiple attributes, filtering on dictionary columns, complex queries |
+
 ## Direct Access (Async)
 
 For access outside LINQ queries:

@@ -228,6 +228,54 @@ public sealed class ClickHouseDictionary<TDictionary, TKey>
             .FirstOrDefaultAsync(cancellationToken);
     }
 
+    /// <summary>
+    /// Returns the dictionary as a queryable for use in LINQ JOINs.
+    /// </summary>
+    /// <returns>An IQueryable that can be used in JOIN operations.</returns>
+    /// <remarks>
+    /// When used in LINQ queries, this enables JOIN syntax with dictionaries:
+    /// <code>
+    /// var enrichedOrders =
+    ///     from o in context.Orders
+    ///     join c in context.CountryDict.AsQueryable() on o.CountryId equals c.Id
+    ///     select new { o.Id, c.Name };
+    /// </code>
+    /// This translates to:
+    /// <code>
+    /// SELECT o.Id, c.Name
+    /// FROM orders AS o
+    /// JOIN dictionary('country_lookup') AS c ON o.CountryId = c.Id
+    /// </code>
+    /// </remarks>
+    /// <example>
+    /// Query syntax:
+    /// <code>
+    /// var results = from o in context.Orders
+    ///               join c in context.CountryDict.AsQueryable() on o.CountryId equals c.Id
+    ///               join p in context.ProductDict.AsQueryable() on o.ProductId equals p.ProductId
+    ///               where c.Region == "Europe"
+    ///               select new { o.Id, c.Name, p.Name };
+    /// </code>
+    ///
+    /// Method syntax:
+    /// <code>
+    /// var results = context.Orders
+    ///     .Join(
+    ///         context.CountryDict.AsQueryable(),
+    ///         o => o.CountryId,
+    ///         c => c.Id,
+    ///         (o, c) => new { o.Id, c.Name });
+    /// </code>
+    /// </example>
+    public IQueryable<TDictionary> AsQueryable()
+    {
+        // Return the DbSet for this dictionary entity.
+        // The ClickHouseDictionaryTableFunctionVisitor in the postprocessor
+        // will detect that this is a dictionary entity and rewrite the
+        // TableExpression to use dictionary('name') table function.
+        return _context.Set<TDictionary>();
+    }
+
     private static string GetPropertyName<TAttribute>(Expression<Func<TDictionary, TAttribute>> expression)
     {
         if (expression.Body is MemberExpression member)

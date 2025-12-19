@@ -276,3 +276,87 @@ public class ClickHouseExternalTableFunctionExpression : TableExpressionBase
     public override int GetHashCode()
         => HashCode.Combine(FunctionName, FunctionCall, EntityClrType, Alias);
 }
+
+/// <summary>
+/// Represents a dictionary table function call (dictionary('name')).
+/// Replaces TableExpression for entities configured as dictionaries when used in JOINs.
+/// </summary>
+public class ClickHouseDictionaryTableExpression : TableExpressionBase
+{
+    /// <summary>
+    /// Gets the dictionary name.
+    /// </summary>
+    public string DictionaryName { get; }
+
+    /// <summary>
+    /// Gets the complete function call: dictionary('name')
+    /// </summary>
+    public string FunctionCall { get; }
+
+    /// <summary>
+    /// Gets the CLR type of the dictionary entity.
+    /// </summary>
+    public Type EntityClrType { get; }
+
+    public ClickHouseDictionaryTableExpression(
+        string alias,
+        string dictionaryName,
+        Type entityClrType)
+        : base(alias)
+    {
+        DictionaryName = dictionaryName ?? throw new ArgumentNullException(nameof(dictionaryName));
+        EntityClrType = entityClrType ?? throw new ArgumentNullException(nameof(entityClrType));
+        FunctionCall = $"dictionary('{dictionaryName}')";
+    }
+
+    private ClickHouseDictionaryTableExpression(
+        string dictionaryName,
+        Type entityClrType,
+        string? alias,
+        IReadOnlyDictionary<string, IAnnotation>? annotations)
+        : base(alias, annotations)
+    {
+        DictionaryName = dictionaryName;
+        EntityClrType = entityClrType;
+        FunctionCall = $"dictionary('{dictionaryName}')";
+    }
+
+    protected override Expression VisitChildren(ExpressionVisitor visitor)
+        => this; // No children to visit - this is a leaf node
+
+    public override TableExpressionBase Clone(string? alias, ExpressionVisitor cloningExpressionVisitor)
+        => new ClickHouseDictionaryTableExpression(DictionaryName, EntityClrType, alias, null);
+
+    public override ClickHouseDictionaryTableExpression WithAlias(string newAlias)
+        => new(DictionaryName, EntityClrType, newAlias, Annotations);
+
+    protected override TableExpressionBase WithAnnotations(IReadOnlyDictionary<string, IAnnotation> annotations)
+        => new ClickHouseDictionaryTableExpression(DictionaryName, EntityClrType, Alias, annotations);
+
+    public override Expression Quote()
+        => New(
+            typeof(ClickHouseDictionaryTableExpression).GetConstructors()
+                .First(c => c.GetParameters().Length == 3),
+            Constant(Alias),
+            Constant(DictionaryName),
+            Constant(EntityClrType, typeof(Type)));
+
+    protected override void Print(ExpressionPrinter expressionPrinter)
+    {
+        expressionPrinter.Append(FunctionCall);
+        if (!string.IsNullOrEmpty(Alias))
+        {
+            expressionPrinter.Append(" AS ");
+            expressionPrinter.Append(Alias);
+        }
+    }
+
+    public override bool Equals(object? obj)
+        => obj is ClickHouseDictionaryTableExpression other
+           && DictionaryName == other.DictionaryName
+           && EntityClrType == other.EntityClrType
+           && Alias == other.Alias;
+
+    public override int GetHashCode()
+        => HashCode.Combine(DictionaryName, EntityClrType, Alias);
+}

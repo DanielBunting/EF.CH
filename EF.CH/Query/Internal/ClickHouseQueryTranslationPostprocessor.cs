@@ -1,5 +1,7 @@
 using System.Linq.Expressions;
+using System.Text;
 using EF.CH.External;
+using EF.CH.Metadata;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
@@ -39,7 +41,11 @@ public class ClickHouseQueryTranslationPostprocessor : RelationalQueryTranslatio
         // Get ClickHouse options set during translation phase
         var options = _queryCompilationContext.QueryCompilationContextOptions();
 
-        // Apply external table function rewrites FIRST (before FINAL/SAMPLE, which don't apply to external tables)
+        // Apply dictionary table function rewrites FIRST
+        query = new ClickHouseDictionaryTableFunctionVisitor(
+            _queryCompilationContext.Model).Visit(query);
+
+        // Apply external table function rewrites (before FINAL/SAMPLE, which don't apply to external tables)
         query = new ClickHouseExternalTableFunctionVisitor(
             _queryCompilationContext.Model,
             _externalConfigResolver).Visit(query);
@@ -194,5 +200,118 @@ internal class ClickHouseExternalTableFunctionVisitor : ExpressionVisitor
         }
 
         return null;
+    }
+}
+
+/// <summary>
+/// Visits SelectExpression trees and replaces TableExpression instances for dictionary entities
+/// with ClickHouseDictionaryTableExpression to use the dictionary() table function.
+/// </summary>
+internal class ClickHouseDictionaryTableFunctionVisitor : ExpressionVisitor
+{
+    private readonly IModel _model;
+
+    public ClickHouseDictionaryTableFunctionVisitor(IModel model)
+    {
+        _model = model;
+    }
+
+    protected override Expression VisitExtension(Expression node)
+    {
+        // Check if this is a TableExpression for a dictionary entity
+        if (node is TableExpression tableExpression)
+        {
+            var entityType = FindEntityTypeByTableName(tableExpression.Name, tableExpression.Schema);
+
+            if (entityType != null && IsDictionaryEntity(entityType))
+            {
+                // Get dictionary name (uses table name or snake_case of type name)
+                var dictionaryName = GetDictionaryName(entityType);
+
+                // Replace with dictionary table function expression
+                return new ClickHouseDictionaryTableExpression(
+                    tableExpression.Alias,
+                    dictionaryName,
+                    entityType.ClrType);
+            }
+
+            // Not a dictionary entity - leave as-is
+            return node;
+        }
+
+        // Handle ShapedQueryExpression specially - it doesn't support VisitChildren
+        if (node is ShapedQueryExpression shapedQuery)
+        {
+            var newQueryExpression = Visit(shapedQuery.QueryExpression);
+            var newShaperExpression = Visit(shapedQuery.ShaperExpression);
+
+            if (newQueryExpression != shapedQuery.QueryExpression ||
+                newShaperExpression != shapedQuery.ShaperExpression)
+            {
+                return shapedQuery.Update(newQueryExpression, newShaperExpression);
+            }
+
+            return shapedQuery;
+        }
+
+        // EnumerableExpression.VisitChildren throws in EF Core 10+
+        if (node is EnumerableExpression)
+        {
+            return node;
+        }
+
+        return base.VisitExtension(node);
+    }
+
+    private bool IsDictionaryEntity(IEntityType entityType)
+    {
+        // Check for the Dictionary annotation
+        return entityType.FindAnnotation(ClickHouseAnnotationNames.Dictionary) != null;
+    }
+
+    private string GetDictionaryName(IEntityType entityType)
+    {
+        // Dictionary name is the table name (already in snake_case from configuration)
+        return entityType.GetTableName() ?? ConvertToSnakeCase(entityType.ClrType.Name);
+    }
+
+    private IEntityType? FindEntityTypeByTableName(string tableName, string? schema)
+    {
+        // Look up entity type by table name and schema
+        foreach (var entityType in _model.GetEntityTypes())
+        {
+            var entityTableName = entityType.GetTableName();
+            var entitySchema = entityType.GetSchema() ?? _model.GetDefaultSchema();
+
+            if (entityTableName == tableName && entitySchema == schema)
+            {
+                return entityType;
+            }
+        }
+
+        return null;
+    }
+
+    private static string ConvertToSnakeCase(string name)
+    {
+        if (string.IsNullOrEmpty(name))
+            return name;
+
+        var result = new StringBuilder();
+        for (var i = 0; i < name.Length; i++)
+        {
+            var c = name[i];
+            if (char.IsUpper(c))
+            {
+                if (i > 0)
+                    result.Append('_');
+                result.Append(char.ToLowerInvariant(c));
+            }
+            else
+            {
+                result.Append(c);
+            }
+        }
+        return result.ToString();
     }
 }

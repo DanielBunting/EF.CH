@@ -184,12 +184,25 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     {
         return extensionExpression switch
         {
+            ClickHouseDictionaryTableExpression dictionaryExpression => VisitDictionaryTable(dictionaryExpression),
             ClickHouseExternalTableFunctionExpression externalExpression => VisitExternalTableFunction(externalExpression),
             ClickHouseTableModifierExpression modifierExpression => VisitTableModifier(modifierExpression),
             ClickHouseFinalExpression finalExpression => VisitFinal(finalExpression),
             ClickHouseSampleExpression sampleExpression => VisitSample(sampleExpression),
             _ => base.VisitExtension(extensionExpression)
         };
+    }
+
+    /// <summary>
+    /// Generates dictionary table function call.
+    /// E.g., dictionary('country_lookup') AS "c"
+    /// </summary>
+    private Expression VisitDictionaryTable(ClickHouseDictionaryTableExpression expression)
+    {
+        Sql.Append(expression.FunctionCall);
+        Sql.Append(" AS ");
+        Sql.Append(_sqlGenerationHelper.DelimitIdentifier(expression.Alias!));
+        return expression;
     }
 
     /// <summary>
