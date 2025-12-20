@@ -7,66 +7,86 @@ using Microsoft.EntityFrameworkCore.Metadata;
 namespace EF.CH.Query.Internal;
 
 /// <summary>
-/// Translates LINQ expressions into ClickHouse SQL for materialized view definitions.
+/// Translates LINQ expressions into ClickHouse SQL for projection definitions.
 /// This is a design-time translator that processes expressions during OnModelCreating.
+/// Unlike materialized views, projections don't need a FROM clause as they operate
+/// on the parent table implicitly.
 /// </summary>
-public class MaterializedViewSqlTranslator
+public class ProjectionSqlTranslator
 {
     private readonly IModel _model;
-    private readonly string _sourceTableName;
-    private readonly StringBuilder _sql = new();
-    private readonly List<string> _selectColumns = [];
-    private readonly List<string> _groupByColumns = [];
+    private readonly string _tableName;
 
     /// <summary>
     /// Creates a new translator for the given model and source table.
     /// </summary>
-    public MaterializedViewSqlTranslator(IModel model, string sourceTableName)
+    public ProjectionSqlTranslator(IModel model, string tableName)
     {
         _model = model;
-        _sourceTableName = sourceTableName;
+        _tableName = tableName;
     }
 
     /// <summary>
-    /// Translates a LINQ query expression into a ClickHouse SELECT statement.
+    /// Translates a LINQ query expression into a ClickHouse projection SELECT statement.
     /// </summary>
     /// <typeparam name="TSource">The source entity type.</typeparam>
     /// <typeparam name="TResult">The result entity type.</typeparam>
     /// <param name="queryExpression">The LINQ query expression.</param>
-    /// <returns>The translated SELECT SQL.</returns>
+    /// <returns>The translated SELECT SQL (without FROM clause).</returns>
     public string Translate<TSource, TResult>(
         Expression<Func<IQueryable<TSource>, IQueryable<TResult>>> queryExpression)
         where TSource : class
         where TResult : class
     {
-        var visitor = new MaterializedViewExpressionVisitor<TSource>(
+        var visitor = new ProjectionExpressionVisitor<TSource>(
             _model,
-            _sourceTableName);
+            _tableName);
 
         return visitor.Translate(queryExpression);
+    }
+
+    /// <summary>
+    /// Translates separate GroupBy and Select expressions into a ClickHouse projection SELECT statement.
+    /// </summary>
+    /// <typeparam name="TSource">The source entity type.</typeparam>
+    /// <typeparam name="TKey">The grouping key type.</typeparam>
+    /// <typeparam name="TResult">The result type.</typeparam>
+    /// <param name="keySelector">The GROUP BY key selector expression.</param>
+    /// <param name="resultSelector">The SELECT result selector expression.</param>
+    /// <returns>The translated SELECT SQL (without FROM clause).</returns>
+    public string TranslateAggregation<TSource, TKey, TResult>(
+        Expression<Func<TSource, TKey>> keySelector,
+        Expression<Func<IGrouping<TKey, TSource>, TResult>> resultSelector)
+        where TSource : class
+    {
+        var visitor = new ProjectionExpressionVisitor<TSource>(
+            _model,
+            _tableName);
+
+        return visitor.TranslateAggregation(keySelector, resultSelector);
     }
 }
 
 /// <summary>
-/// Visits LINQ expression trees and builds ClickHouse SQL.
+/// Visits LINQ expression trees and builds ClickHouse projection SQL.
+/// Key difference from MaterializedViewExpressionVisitor: no FROM clause is generated.
 /// </summary>
 /// <typeparam name="TSource">The source entity type.</typeparam>
-internal class MaterializedViewExpressionVisitor<TSource> : ExpressionVisitor
+internal class ProjectionExpressionVisitor<TSource> : ExpressionVisitor
     where TSource : class
 {
     private readonly IModel _model;
-    private readonly string _sourceTableName;
+    private readonly string _tableName;
     private readonly IEntityType? _sourceEntityType;
-    private readonly StringBuilder _selectSql = new();
     private readonly List<string> _selectColumns = [];
     private readonly List<string> _groupByColumns = [];
     private string? _groupByParameter;
     private readonly Dictionary<string, string> _groupKeyMappings = new();
 
-    public MaterializedViewExpressionVisitor(IModel model, string sourceTableName)
+    public ProjectionExpressionVisitor(IModel model, string tableName)
     {
         _model = model;
-        _sourceTableName = sourceTableName;
+        _tableName = tableName;
         _sourceEntityType = model.FindEntityType(typeof(TSource));
     }
 
@@ -79,12 +99,33 @@ internal class MaterializedViewExpressionVisitor<TSource> : ExpressionVisitor
         // The expression body should be a method chain on the IQueryable parameter
         Visit(queryExpression.Body);
 
+        return BuildSql();
+    }
+
+    /// <summary>
+    /// Translates separate GroupBy and Select expressions to SQL.
+    /// </summary>
+    public string TranslateAggregation<TKey, TResult>(
+        Expression<Func<TSource, TKey>> keySelector,
+        Expression<Func<IGrouping<TKey, TSource>, TResult>> resultSelector)
+    {
+        // Process keySelector to extract GROUP BY columns
+        VisitGroupByKeySelector(keySelector);
+
+        // Process resultSelector to extract SELECT columns
+        _groupByParameter = resultSelector.Parameters[0].Name;
+        VisitSelectProjection(resultSelector);
+
+        return BuildSql();
+    }
+
+    private string BuildSql()
+    {
         var sql = new StringBuilder();
         sql.Append("SELECT ");
         sql.Append(string.Join(", ", _selectColumns));
-        sql.AppendLine();
-        sql.Append("FROM ");
-        sql.Append(QuoteIdentifier(_sourceTableName));
+
+        // Note: No FROM clause for projections (they operate on parent table implicitly)
 
         if (_groupByColumns.Count > 0)
         {
@@ -147,12 +188,14 @@ internal class MaterializedViewExpressionVisitor<TSource> : ExpressionVisitor
                 }
             }
         }
-        // Handle single column: x.Id
+        // Handle single column/expression: x.Id or x.Date.Date
         else if (body is MemberExpression memberExpr)
         {
             var columnSql = TranslateMemberAccess(memberExpr);
             _groupByColumns.Add(columnSql);
             _groupKeyMappings[memberExpr.Member.Name] = columnSql;
+            // Also store with empty key for direct g.Key access
+            _groupKeyMappings[""] = columnSql;
         }
         // Handle member init: new KeyClass { Date = x.Date }
         else if (body is MemberInitExpression memberInit)
@@ -225,7 +268,7 @@ internal class MaterializedViewExpressionVisitor<TSource> : ExpressionVisitor
             ConditionalExpression condExpr => TranslateConditional(condExpr),
             DefaultExpression defaultExpr => TranslateDefault(defaultExpr),
             _ => throw new NotSupportedException(
-                $"Expression type {expr.GetType().Name} is not supported in materialized view definitions.")
+                $"Expression type {expr.GetType().Name} is not supported in projection definitions.")
         };
     }
 
@@ -274,8 +317,25 @@ internal class MaterializedViewExpressionVisitor<TSource> : ExpressionVisitor
             }
         }
 
+        // Check if this is accessing g.Key directly (single-value key)
+        if (memberExpr.Member.Name == "Key" &&
+            memberExpr.Expression is ParameterExpression keyParam &&
+            keyParam.Name == _groupByParameter)
+        {
+            // For single-value keys, the key expression is stored with an empty string key
+            if (_groupKeyMappings.TryGetValue("", out var singleKeySql))
+            {
+                return singleKeySql;
+            }
+            // Fallback: if there's exactly one entry, use it
+            if (_groupKeyMappings.Count == 1)
+            {
+                return _groupKeyMappings.Values.First();
+            }
+        }
+
         // Check if this is accessing the source entity
-        if (memberExpr.Expression is ParameterExpression sourceParam)
+        if (memberExpr.Expression is ParameterExpression)
         {
             // Direct column access: x.ColumnName
             return GetColumnName(memberExpr.Member);
@@ -350,11 +410,23 @@ internal class MaterializedViewExpressionVisitor<TSource> : ExpressionVisitor
     private string TranslateAggregate(string function, MethodCallExpression methodExpr)
     {
         // Sum(x => x.Value) has 2 arguments: source and selector
-        if (methodExpr.Arguments.Count >= 2 &&
-            methodExpr.Arguments[1] is UnaryExpression { Operand: LambdaExpression selector })
+        if (methodExpr.Arguments.Count >= 2)
         {
-            var innerSql = TranslateExpression(selector.Body);
-            return $"{function}({innerSql})";
+            var selectorArg = methodExpr.Arguments[1];
+
+            // Lambda might be wrapped in UnaryExpression (Quote) or be direct
+            LambdaExpression? selector = selectorArg switch
+            {
+                UnaryExpression { Operand: LambdaExpression lambda } => lambda,
+                LambdaExpression lambda => lambda,
+                _ => null
+            };
+
+            if (selector != null)
+            {
+                var innerSql = TranslateExpression(selector.Body);
+                return $"{function}({innerSql})";
+            }
         }
 
         // Sum() with no selector - sum all values (rarely used)

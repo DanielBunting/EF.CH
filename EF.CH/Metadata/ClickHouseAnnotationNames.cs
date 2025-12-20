@@ -357,4 +357,14 @@ public static class ClickHouseAnnotationNames
     public const string ExternalRedisPoolSize = Prefix + "External:Redis:PoolSize";
 
     #endregion
+
+    #region Projections
+
+    /// <summary>
+    /// List of projection definitions for this entity.
+    /// Value type: List&lt;ProjectionDefinition&gt;
+    /// </summary>
+    public const string Projections = Prefix + "Projections";
+
+    #endregion
 }
