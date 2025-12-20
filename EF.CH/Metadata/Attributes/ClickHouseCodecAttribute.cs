@@ -140,5 +140,5 @@ public class NoCompressionAttribute : ClickHouseCodecAttribute
     /// <summary>
     /// Initializes a new instance of the <see cref="NoCompressionAttribute"/> class.
     /// </summary>
-    public NoCompressionAttribute() : base("None") { }
+    public NoCompressionAttribute() : base("NONE") { }
 }

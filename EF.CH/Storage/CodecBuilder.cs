@@ -43,7 +43,7 @@ public static class Codec
     /// <summary>
     /// No compression.
     /// </summary>
-    public const string None = "None";
+    public const string None = "NONE";
 
     /// <summary>
     /// Creates a ZSTD codec with specified compression level.
@@ -164,7 +164,7 @@ public class CodecChainBuilder
     public CodecChainBuilder None()
     {
         _codecs.Clear();
-        _codecs.Add("None");
+        _codecs.Add("NONE");
         return this;
     }
 

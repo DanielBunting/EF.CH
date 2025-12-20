@@ -208,7 +208,7 @@ public class CompressionCodecTests
         var annotation = property.FindAnnotation(ClickHouseAnnotationNames.CompressionCodec);
 
         Assert.NotNull(annotation);
-        Assert.Equal("None", annotation.Value);
+        Assert.Equal("NONE", annotation.Value);
     }
 
     #endregion
@@ -277,7 +277,7 @@ public class CompressionCodecTests
         var annotation = property.FindAnnotation(ClickHouseAnnotationNames.CompressionCodec);
 
         Assert.NotNull(annotation);
-        Assert.Equal("None", annotation.Value);
+        Assert.Equal("NONE", annotation.Value);
     }
 
     [Fact]
@@ -327,7 +327,7 @@ public class CompressionCodecTests
         Assert.Contains("\"Value\" Float64 CODEC(Gorilla, ZSTD(1))", script);
         Assert.Contains("\"RawPayload\" String CODEC(ZSTD(9))", script);
         // byte[] maps to Array(UInt8) in ClickHouse
-        Assert.Contains("\"UncompressedData\" Array(UInt8) CODEC(None)", script);
+        Assert.Contains("\"UncompressedData\" Array(UInt8) CODEC(NONE)", script);
     }
 
     [Fact]
@@ -341,7 +341,7 @@ public class CompressionCodecTests
         Assert.Contains("CODEC(Delta, ZSTD)", script);
         Assert.Contains("CODEC(Gorilla, ZSTD(1))", script);
         Assert.Contains("CODEC(ZSTD(9))", script);
-        Assert.Contains("CODEC(None)", script);
+        Assert.Contains("CODEC(NONE)", script);
         Assert.Contains("CODEC(Delta, ZSTD(5))", script);
     }
 
@@ -382,7 +382,7 @@ public class CompressionCodecTests
         builder.Delta().ZSTD(); // Add some codecs
         builder.None(); // Should clear them
 
-        Assert.Equal("None", builder.Build());
+        Assert.Equal("NONE", builder.Build());
     }
 
     #endregion

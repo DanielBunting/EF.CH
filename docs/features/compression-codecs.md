@@ -38,7 +38,7 @@ entity.Property(e => e.Value)
 
 ```csharp
 entity.Property(e => e.RawPayload).HasHighCompressionCodec();  // ZSTD(9)
-entity.Property(e => e.UncompressedData).HasNoCompression();   // CODEC(None)
+entity.Property(e => e.UncompressedData).HasNoCompression();   // CODEC(NONE)
 entity.Property(e => e.Timestamp).HasTimestampCodec();         // DoubleDelta, LZ4
 entity.Property(e => e.SensorId).HasSequentialCodec();         // Delta, ZSTD
 entity.Property(e => e.Value).HasFloatCodec();                 // Gorilla, ZSTD(1)
@@ -83,7 +83,7 @@ public class SensorReading
 | `Gorilla` | Float/Double | XOR-based encoding, excellent for sensor data |
 | `T64` | Sparse integers | Block transformation for integers with gaps |
 | `FPC(level)` | Float64 | Level 1-28 (default: 12) |
-| `None` | Pre-compressed data | Disables compression entirely |
+| `NONE` | Pre-compressed data | Disables compression entirely |
 
 ## Convenience Attributes
 
@@ -94,7 +94,7 @@ public class SensorReading
 | `[FloatCodec]` | `Gorilla, ZSTD(1)` | Sensor/metric floating-point values |
 | `[HighCompressionCodec]` | `ZSTD(9)` | Large text/binary data |
 | `[IntegerCodec]` | `T64, LZ4` | Sparse integer values |
-| `[NoCompression]` | `None` | Already compressed data (images, encrypted) |
+| `[NoCompression]` | `NONE` | Already compressed data (images, encrypted) |
 
 ## Complete Example
 
@@ -167,7 +167,7 @@ modelBuilder.Entity<Example>(entity =>
 | Sequential IDs | `Delta, ZSTD` | Consecutive values with small differences |
 | Floating-point metrics | `Gorilla, ZSTD(1)` | XOR-based, captures sensor noise well |
 | Large text/JSON | `ZSTD(9)` | High compression ratio |
-| Already compressed | `None` | Avoid double-compression overhead |
+| Already compressed | `NONE` | Avoid double-compression overhead |
 | Sparse integers | `T64, LZ4` | Block transformation for scattered values |
 
 ### By Use Case
