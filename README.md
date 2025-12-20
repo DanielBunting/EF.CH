@@ -14,6 +14,7 @@ An Entity Framework Core provider for [ClickHouse](https://clickhouse.com/), bui
 - **Dictionaries** - In-memory key-value stores with dictGet translation
 - **External Entities** - Query PostgreSQL, MySQL, Redis, and ODBC sources via table functions
 - **Scaffolding** - Reverse engineering with C# enum generation
+- **Compression Codecs** - Per-column compression via fluent API and attributes
 
 ## Quick Start
 
@@ -335,6 +336,7 @@ See [docs/features/external-entities.md](docs/features/external-entities.md) for
 | [Type Mappings](docs/types/) | Complete type reference |
 | [Features](docs/features/) | Materialized views, partitioning, TTL, etc. |
 | [Projections](docs/features/projections.md) | Table-level sort and aggregation optimizations |
+| [Compression Codecs](docs/features/compression-codecs.md) | Per-column compression configuration |
 | [External Entities](docs/features/external-entities.md) | Query remote PostgreSQL, MySQL, Redis, ODBC |
 | [Migrations](docs/migrations.md) | EF Core migrations with ClickHouse |
 | [Scaffolding](docs/scaffolding.md) | Reverse engineering |
