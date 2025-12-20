@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using EF.CH.Metadata;
+using EF.CH.Query.Internal.Expressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
@@ -75,7 +76,8 @@ public class ClickHouseSqlNullabilityProcessor : SqlNullabilityProcessor
     }
 
     /// <summary>
-    /// Visits extension expressions, handling ClickHouse-specific expressions like ClickHouseTableModifierExpression.
+    /// Visits extension expressions, handling ClickHouse-specific expressions like ClickHouseTableModifierExpression
+    /// and ClickHouseWindowFunctionExpression.
     /// </summary>
     protected override Expression VisitExtension(Expression node)
     {
@@ -94,7 +96,53 @@ public class ClickHouseSqlNullabilityProcessor : SqlNullabilityProcessor
                 : modifierExpression;
         }
 
+        if (node is ClickHouseWindowFunctionExpression windowExpression)
+        {
+            return VisitWindowFunction(windowExpression);
+        }
+
         return base.VisitExtension(node);
+    }
+
+    /// <summary>
+    /// Visits a window function expression, processing its child expressions for nullability.
+    /// </summary>
+    private ClickHouseWindowFunctionExpression VisitWindowFunction(ClickHouseWindowFunctionExpression windowExpression)
+    {
+        var changed = false;
+
+        // Visit arguments
+        var arguments = new List<SqlExpression>(windowExpression.Arguments.Count);
+        foreach (var arg in windowExpression.Arguments)
+        {
+            var visited = Visit(arg, allowOptimizedExpansion: false, out _);
+            changed |= visited != arg;
+            arguments.Add(visited);
+        }
+
+        // Visit partition by expressions
+        var partitionBy = new List<SqlExpression>(windowExpression.PartitionBy.Count);
+        foreach (var expr in windowExpression.PartitionBy)
+        {
+            var visited = Visit(expr, allowOptimizedExpansion: false, out _);
+            changed |= visited != expr;
+            partitionBy.Add(visited);
+        }
+
+        // Visit order by expressions
+        var orderBy = new List<OrderingExpression>(windowExpression.OrderBy.Count);
+        foreach (var ordering in windowExpression.OrderBy)
+        {
+            var visitedExpr = Visit(ordering.Expression, allowOptimizedExpansion: false, out _);
+            changed |= visitedExpr != ordering.Expression;
+            orderBy.Add(visitedExpr != ordering.Expression
+                ? new OrderingExpression(visitedExpr, ordering.IsAscending)
+                : ordering);
+        }
+
+        return changed
+            ? windowExpression.Update(arguments, partitionBy, orderBy, windowExpression.Frame)
+            : windowExpression;
     }
 
     /// <summary>
