@@ -16,6 +16,7 @@ An Entity Framework Core provider for [ClickHouse](https://clickhouse.com/), bui
 - **Scaffolding** - Reverse engineering with C# enum generation
 - **Compression Codecs** - Per-column compression via fluent API and attributes
 - **Window Functions** - Row numbering, ranking, lag/lead, running totals with fluent API
+- **Data Skipping Indices** - Minmax, bloom filter, token/ngram bloom filters, and set indices
 
 ## Quick Start
 
@@ -164,7 +165,7 @@ See [docs/types/](docs/types/) for the complete type mapping reference.
 | DELETE | Immediate | Lightweight (marks) or mutation (async rewrite) |
 | Auto-increment | `IDENTITY`, `SERIAL` | Not available - use UUID |
 | Foreign Keys | Enforced constraints | Application-level only |
-| Indexes | B-tree, hash, etc. | Primary key (ORDER BY) only |
+| Indexes | B-tree, hash, etc. | Primary key (ORDER BY) + skip indices |
 | Insert Pattern | Row-at-a-time OK | Batch thousands of rows |
 | Use Case | OLTP | OLAP/Analytics |
 
@@ -225,6 +226,68 @@ var analytics = context.Orders.Select(o => new
 **Available Functions:** `RowNumber`, `Rank`, `DenseRank`, `PercentRank`, `NTile`, `Lag`, `Lead`, `FirstValue`, `LastValue`, `NthValue`, `Sum`, `Avg`, `Count`, `Min`, `Max`
 
 See [docs/features/window-functions.md](docs/features/window-functions.md) for full documentation including fluent API style.
+
+## Data Skipping Indices
+
+Skip indices allow ClickHouse to skip reading granules that don't match query predicates, dramatically improving query performance for selective filters.
+
+```csharp
+modelBuilder.Entity<LogEvent>(entity =>
+{
+    entity.UseMergeTree(x => new { x.Timestamp, x.Id });
+
+    // Minmax for datetime range queries
+    entity.HasIndex(x => x.Timestamp)
+        .UseMinmax()
+        .HasGranularity(4);
+
+    // Bloom filter for array membership (has(Tags, 'error'))
+    entity.HasIndex(x => x.Tags)
+        .UseBloomFilter(falsePositive: 0.025)
+        .HasGranularity(3);
+
+    // Token bloom filter for log search (LIKE '%exception%')
+    entity.HasIndex(x => x.Message)
+        .UseTokenBF(size: 10240, hashes: 3, seed: 0)
+        .HasGranularity(4);
+
+    // Set index for low-cardinality columns
+    entity.HasIndex(x => x.Status)
+        .UseSet(maxRows: 100)
+        .HasGranularity(2);
+});
+```
+
+**Or use attributes:**
+
+```csharp
+public class LogEvent
+{
+    [MinMaxIndex(Granularity = 4)]
+    public DateTime Timestamp { get; set; }
+
+    [BloomFilterIndex(FalsePositive = 0.025, Granularity = 3)]
+    public string[] Tags { get; set; } = [];
+
+    [TokenBFIndex(Granularity = 4)]
+    public string Message { get; set; } = string.Empty;
+
+    [SetIndex(MaxRows = 100, Granularity = 2)]
+    public string Status { get; set; } = string.Empty;
+}
+```
+
+**Index Types:**
+
+| Type | Use Case |
+|------|----------|
+| `UseMinmax()` | Numeric/datetime range queries |
+| `UseBloomFilter(fpp)` | Exact matching, array membership |
+| `UseTokenBF(...)` | Tokenized text search (logs, URLs) |
+| `UseNgramBF(...)` | Fuzzy/substring text matching |
+| `UseSet(maxRows)` | Low-cardinality exact matching |
+
+See [docs/features/skip-indices.md](docs/features/skip-indices.md) for full documentation.
 
 ## Materialized Views
 
@@ -366,6 +429,7 @@ See [docs/features/external-entities.md](docs/features/external-entities.md) for
 | [Projections](docs/features/projections.md) | Table-level sort and aggregation optimizations |
 | [Compression Codecs](docs/features/compression-codecs.md) | Per-column compression configuration |
 | [Window Functions](docs/features/window-functions.md) | Ranking, lead/lag, running totals |
+| [Data Skipping Indices](docs/features/skip-indices.md) | Bloom filter, minmax, set, and token indices |
 | [External Entities](docs/features/external-entities.md) | Query remote PostgreSQL, MySQL, Redis, ODBC |
 | [Migrations](docs/migrations.md) | EF Core migrations with ClickHouse |
 | [Scaffolding](docs/scaffolding.md) | Reverse engineering |

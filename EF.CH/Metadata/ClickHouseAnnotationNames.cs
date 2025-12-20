@@ -377,4 +377,26 @@ public static class ClickHouseAnnotationNames
     public const string CompressionCodec = Prefix + "CompressionCodec";
 
     #endregion
+
+    #region Skip Indices
+
+    /// <summary>
+    /// The skip index type (SkipIndexType enum value).
+    /// Value type: SkipIndexType
+    /// </summary>
+    public const string SkipIndexType = Prefix + "SkipIndexType";
+
+    /// <summary>
+    /// The granularity for the skip index.
+    /// Value type: int (default: 3)
+    /// </summary>
+    public const string SkipIndexGranularity = Prefix + "SkipIndexGranularity";
+
+    /// <summary>
+    /// Index-type-specific parameters.
+    /// Value type: SkipIndexParams
+    /// </summary>
+    public const string SkipIndexParams = Prefix + "SkipIndexParams";
+
+    #endregion
 }

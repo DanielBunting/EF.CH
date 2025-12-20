@@ -1201,6 +1201,12 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
             throw ClickHouseUnsupportedOperationException.UniqueIndex(operation.Name, operation.Table);
         }
 
+        // Get skip index configuration from model annotations
+        var indexType = GetSkipIndexType(operation, model);
+        var granularity = GetSkipIndexGranularity(operation, model);
+        var indexParams = GetSkipIndexParams(operation, model);
+        var typeSpec = BuildTypeSpecification(indexType, indexParams);
+
         // ClickHouse uses ALTER TABLE ADD INDEX syntax for data skipping indexes
         var tableName = Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Table, operation.Schema);
         var indexName = Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name);
@@ -1215,13 +1221,96 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         builder.Append(string.Join(", ",
             operation.Columns.Select(c => Dependencies.SqlGenerationHelper.DelimitIdentifier(c))));
 
-        builder.Append(") TYPE minmax GRANULARITY 3");
+        builder.Append(") ");
+        builder.Append(typeSpec);
+        builder.Append(" GRANULARITY ");
+        builder.Append(granularity.ToString());
 
         if (terminate)
         {
             builder.AppendLine(Dependencies.SqlGenerationHelper.StatementTerminator);
             EndStatement(builder);
         }
+    }
+
+    /// <summary>
+    /// Gets the skip index type from the model or defaults to Minmax.
+    /// </summary>
+    private static SkipIndexType GetSkipIndexType(CreateIndexOperation operation, IModel? model)
+    {
+        // Check operation annotations first (from migration)
+        if (operation.FindAnnotation(ClickHouseAnnotationNames.SkipIndexType)?.Value is SkipIndexType operationType)
+            return operationType;
+
+        // Then check model annotations
+        var index = FindIndexInModel(model, operation.Table, operation.Name);
+        if (index?.FindAnnotation(ClickHouseAnnotationNames.SkipIndexType)?.Value is SkipIndexType modelType)
+            return modelType;
+
+        return SkipIndexType.Minmax;
+    }
+
+    /// <summary>
+    /// Gets the skip index granularity from the model or defaults to 3.
+    /// </summary>
+    private static int GetSkipIndexGranularity(CreateIndexOperation operation, IModel? model)
+    {
+        // Check operation annotations first (from migration)
+        if (operation.FindAnnotation(ClickHouseAnnotationNames.SkipIndexGranularity)?.Value is int operationGranularity)
+            return operationGranularity;
+
+        // Then check model annotations
+        var index = FindIndexInModel(model, operation.Table, operation.Name);
+        if (index?.FindAnnotation(ClickHouseAnnotationNames.SkipIndexGranularity)?.Value is int modelGranularity)
+            return modelGranularity;
+
+        return 3;
+    }
+
+    /// <summary>
+    /// Gets the skip index parameters from the model.
+    /// </summary>
+    private static SkipIndexParams? GetSkipIndexParams(CreateIndexOperation operation, IModel? model)
+    {
+        // Check operation annotations first (from migration)
+        if (operation.FindAnnotation(ClickHouseAnnotationNames.SkipIndexParams)?.Value is SkipIndexParams operationParams)
+            return operationParams;
+
+        // Then check model annotations
+        var index = FindIndexInModel(model, operation.Table, operation.Name);
+        return index?.FindAnnotation(ClickHouseAnnotationNames.SkipIndexParams)?.Value as SkipIndexParams;
+    }
+
+    /// <summary>
+    /// Finds an index in the model by table name and index name.
+    /// </summary>
+    private static IIndex? FindIndexInModel(IModel? model, string? tableName, string? indexName)
+    {
+        if (model == null || tableName == null || indexName == null)
+            return null;
+
+        foreach (var entityType in model.GetEntityTypes())
+        {
+            if (entityType.GetTableName() != tableName)
+                continue;
+
+            foreach (var index in entityType.GetIndexes())
+            {
+                if (index.GetDatabaseName() == indexName)
+                    return index;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Builds the TYPE specification for skip index DDL.
+    /// </summary>
+    private static string BuildTypeSpecification(SkipIndexType indexType, SkipIndexParams? indexParams)
+    {
+        var paramsOrDefault = indexParams ?? new SkipIndexParams();
+        return paramsOrDefault.BuildTypeSpecification(indexType);
     }
 
     /// <summary>
