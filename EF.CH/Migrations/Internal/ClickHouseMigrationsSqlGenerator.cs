@@ -2,6 +2,8 @@ using System.Linq.Expressions;
 using EF.CH.Dictionaries;
 using EF.CH.Infrastructure;
 using EF.CH.Metadata;
+using EF.CH.Migrations.Operations;
+using EF.CH.Projections;
 using EF.CH.Query.Internal;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
@@ -94,6 +96,52 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         {
             builder.AppendLine(Dependencies.SqlGenerationHelper.StatementTerminator);
             EndStatement(builder);
+
+            // Generate ADD PROJECTION statements after table creation
+            GenerateProjections(operation, entityType, builder);
+        }
+    }
+
+    /// <summary>
+    /// Generates ALTER TABLE ADD PROJECTION statements for entity projections.
+    /// </summary>
+    private void GenerateProjections(
+        CreateTableOperation operation,
+        IEntityType? entityType,
+        MigrationCommandListBuilder builder)
+    {
+        var projections = GetEntityAnnotation<List<Projections.ProjectionDefinition>>(
+            entityType, ClickHouseAnnotationNames.Projections);
+
+        if (projections == null || projections.Count == 0)
+            return;
+
+        var tableName = Dependencies.SqlGenerationHelper.DelimitIdentifier(
+            operation.Name, operation.Schema);
+
+        foreach (var projection in projections)
+        {
+            // ALTER TABLE "table" ADD PROJECTION "name" (SELECT ...)
+            builder.Append("ALTER TABLE ");
+            builder.Append(tableName);
+            builder.Append(" ADD PROJECTION ");
+            builder.Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(projection.Name));
+            builder.Append(" (");
+            builder.Append(projection.SelectSql);
+            builder.Append(")");
+            builder.AppendLine(Dependencies.SqlGenerationHelper.StatementTerminator);
+            EndStatement(builder);
+
+            // Optionally materialize existing data
+            if (projection.Materialize)
+            {
+                builder.Append("ALTER TABLE ");
+                builder.Append(tableName);
+                builder.Append(" MATERIALIZE PROJECTION ");
+                builder.Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(projection.Name));
+                builder.AppendLine(Dependencies.SqlGenerationHelper.StatementTerminator);
+                EndStatement(builder);
+            }
         }
     }
 
@@ -1208,6 +1256,129 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
                 ex);
         }
     }
+
+    /// <summary>
+    /// Routes custom migration operations to their handlers.
+    /// </summary>
+    protected override void Generate(
+        MigrationOperation operation,
+        IModel? model,
+        MigrationCommandListBuilder builder)
+    {
+        switch (operation)
+        {
+            case AddProjectionOperation addProjection:
+                Generate(addProjection, model, builder);
+                break;
+            case DropProjectionOperation dropProjection:
+                Generate(dropProjection, model, builder);
+                break;
+            case MaterializeProjectionOperation materializeProjection:
+                Generate(materializeProjection, model, builder);
+                break;
+            default:
+                base.Generate(operation, model, builder);
+                break;
+        }
+    }
+
+    #region Projection Operations
+
+    /// <summary>
+    /// Generates SQL for AddProjectionOperation.
+    /// </summary>
+    protected virtual void Generate(
+        AddProjectionOperation operation,
+        IModel? model,
+        MigrationCommandListBuilder builder)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        ArgumentNullException.ThrowIfNull(builder);
+
+        var tableName = Dependencies.SqlGenerationHelper.DelimitIdentifier(
+            operation.Table, operation.Schema);
+        var projectionName = Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name);
+
+        builder.Append("ALTER TABLE ");
+        builder.Append(tableName);
+        builder.Append(" ADD PROJECTION ");
+        builder.Append(projectionName);
+        builder.Append(" (");
+        builder.Append(operation.SelectSql);
+        builder.Append(")");
+        builder.AppendLine(Dependencies.SqlGenerationHelper.StatementTerminator);
+        EndStatement(builder);
+
+        // Materialize if requested
+        if (operation.Materialize)
+        {
+            builder.Append("ALTER TABLE ");
+            builder.Append(tableName);
+            builder.Append(" MATERIALIZE PROJECTION ");
+            builder.Append(projectionName);
+            builder.AppendLine(Dependencies.SqlGenerationHelper.StatementTerminator);
+            EndStatement(builder);
+        }
+    }
+
+    /// <summary>
+    /// Generates SQL for DropProjectionOperation.
+    /// </summary>
+    protected virtual void Generate(
+        DropProjectionOperation operation,
+        IModel? model,
+        MigrationCommandListBuilder builder)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        ArgumentNullException.ThrowIfNull(builder);
+
+        var tableName = Dependencies.SqlGenerationHelper.DelimitIdentifier(
+            operation.Table, operation.Schema);
+        var projectionName = Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name);
+
+        builder.Append("ALTER TABLE ");
+        builder.Append(tableName);
+        builder.Append(" DROP PROJECTION ");
+        if (operation.IfExists)
+        {
+            builder.Append("IF EXISTS ");
+        }
+        builder.Append(projectionName);
+        builder.AppendLine(Dependencies.SqlGenerationHelper.StatementTerminator);
+        EndStatement(builder);
+    }
+
+    /// <summary>
+    /// Generates SQL for MaterializeProjectionOperation.
+    /// </summary>
+    protected virtual void Generate(
+        MaterializeProjectionOperation operation,
+        IModel? model,
+        MigrationCommandListBuilder builder)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        ArgumentNullException.ThrowIfNull(builder);
+
+        var tableName = Dependencies.SqlGenerationHelper.DelimitIdentifier(
+            operation.Table, operation.Schema);
+        var projectionName = Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name);
+
+        builder.Append("ALTER TABLE ");
+        builder.Append(tableName);
+        builder.Append(" MATERIALIZE PROJECTION ");
+        builder.Append(projectionName);
+
+        if (!string.IsNullOrEmpty(operation.InPartition))
+        {
+            builder.Append(" IN PARTITION ");
+            builder.Append(operation.InPartition);
+        }
+
+        builder.AppendLine(Dependencies.SqlGenerationHelper.StatementTerminator);
+        EndStatement(builder);
+    }
+
+    #endregion
 
     /// <summary>
     /// Helper to get annotation value from operation.

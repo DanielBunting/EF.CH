@@ -8,6 +8,7 @@ An Entity Framework Core provider for [ClickHouse](https://clickhouse.com/), bui
 - **MergeTree Engine Family** - MergeTree, ReplacingMergeTree, SummingMergeTree, AggregatingMergeTree, CollapsingMergeTree
 - **Rich Type System** - Arrays, Maps, Tuples, Nested types, Enums, IPv4/IPv6, DateTime64
 - **Materialized Views** - LINQ-based and raw SQL definitions
+- **Projections** - Pre-sorted and pre-aggregated table-level optimizations
 - **EF Core Migrations** - DDL generation with ClickHouse-specific clauses
 - **DELETE Support** - Lightweight and mutation-based strategies
 - **Dictionaries** - In-memory key-value stores with dictGet translation
@@ -217,6 +218,40 @@ modelBuilder.Entity<HourlySummary>(entity =>
 });
 ```
 
+## Projections
+
+Projections are table-level optimizations stored alongside the main table data. Unlike materialized views, projections are **not separately queryable** - the query optimizer automatically uses them when beneficial.
+
+```csharp
+// Sort-order projection - auto-named: orders__prj_ord__customer_id__order_date
+entity.HasProjection()
+    .OrderBy(x => x.CustomerId)
+    .ThenBy(x => x.OrderDate)
+    .Build();
+
+// Aggregation projection - explicit name, anonymous type
+entity.HasProjection("daily_stats")
+    .GroupBy(x => x.OrderDate.Date)
+    .Select(g => new {
+        Date = g.Key,
+        TotalAmount = g.Sum(o => o.Amount),
+        OrderCount = g.Count()
+    })
+    .Build();
+
+// ClickHouse-specific aggregates (uniq, argMax, quantile, etc.)
+entity.HasProjection("advanced_stats")
+    .GroupBy(x => x.Date)
+    .Select(g => new {
+        Date = g.Key,
+        UniqueUsers = ClickHouseAggregates.Uniq(g, o => o.UserId),
+        TopProduct = ClickHouseAggregates.ArgMax(g, o => o.ProductId, o => o.Revenue)
+    })
+    .Build();
+```
+
+See [docs/features/projections.md](docs/features/projections.md) for full documentation including all ClickHouse aggregate functions.
+
 ## Dictionaries
 
 ClickHouse dictionaries are in-memory key-value stores for fast lookups:
@@ -299,6 +334,7 @@ See [docs/features/external-entities.md](docs/features/external-entities.md) for
 | [Table Engines](docs/engines/) | MergeTree family guide |
 | [Type Mappings](docs/types/) | Complete type reference |
 | [Features](docs/features/) | Materialized views, partitioning, TTL, etc. |
+| [Projections](docs/features/projections.md) | Table-level sort and aggregation optimizations |
 | [External Entities](docs/features/external-entities.md) | Query remote PostgreSQL, MySQL, Redis, ODBC |
 | [Migrations](docs/migrations.md) | EF Core migrations with ClickHouse |
 | [Scaffolding](docs/scaffolding.md) | Reverse engineering |

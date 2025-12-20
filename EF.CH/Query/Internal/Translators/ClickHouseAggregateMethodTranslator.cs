@@ -39,6 +39,12 @@ public class ClickHouseAggregateMethodCallTranslator
         // Store model for defaultForNull lookups
         _currentModel = model;
 
+        // Handle ClickHouseAggregates extension methods
+        if (method.DeclaringType?.FullName == "EF.CH.Extensions.ClickHouseAggregates")
+        {
+            return TranslateClickHouseAggregate(method, source, arguments);
+        }
+
         // Only handle Queryable and Enumerable extension methods
         if (method.DeclaringType != typeof(Queryable) &&
             method.DeclaringType != typeof(Enumerable))
@@ -406,6 +412,166 @@ public class ClickHouseAggregateMethodCallTranslator
                     }
                 }
             }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Translates ClickHouseAggregates extension methods to ClickHouse SQL aggregate functions.
+    /// </summary>
+    private SqlExpression? TranslateClickHouseAggregate(
+        MethodInfo method,
+        EnumerableExpression source,
+        IReadOnlyList<SqlExpression> arguments)
+    {
+        var methodName = method.Name;
+        var returnType = method.ReturnType;
+
+        // Get the aggregate argument (the selector expression result)
+        var argument = GetAggregateArgument(source, arguments.Count > 0 ? arguments[0] : null);
+
+        return methodName switch
+        {
+            // Phase 1 - Simple single-selector aggregates
+            "Uniq" => TranslateSimpleAggregate("uniq", argument, typeof(ulong)),
+            "UniqExact" => TranslateSimpleAggregate("uniqExact", argument, typeof(ulong)),
+            "AnyValue" => TranslateSimpleAggregate("any", argument, returnType),
+            "AnyLastValue" => TranslateSimpleAggregate("anyLast", argument, returnType),
+
+            // Phase 1 - Two-selector aggregates
+            "ArgMax" => TranslateTwoArgAggregate("argMax", arguments, returnType),
+            "ArgMin" => TranslateTwoArgAggregate("argMin", arguments, returnType),
+
+            // Phase 2 - Statistical aggregates
+            "Median" => TranslateSimpleAggregate("median", argument, typeof(double)),
+            "StddevPop" => TranslateSimpleAggregate("stddevPop", argument, typeof(double)),
+            "StddevSamp" => TranslateSimpleAggregate("stddevSamp", argument, typeof(double)),
+            "VarPop" => TranslateSimpleAggregate("varPop", argument, typeof(double)),
+            "VarSamp" => TranslateSimpleAggregate("varSamp", argument, typeof(double)),
+
+            // Phase 2 - Parameterized aggregates
+            "Quantile" => TranslateQuantile(arguments),
+
+            // Phase 3 - Array aggregates
+            "GroupArray" => TranslateGroupArray(arguments, returnType),
+            "GroupUniqArray" => TranslateSimpleAggregate("groupUniqArray", argument, returnType),
+            "TopK" => TranslateTopK(arguments, returnType),
+
+            _ => null
+        };
+    }
+
+    private SqlExpression? TranslateSimpleAggregate(string functionName, SqlExpression? argument, Type returnType)
+    {
+        if (argument == null)
+        {
+            return null;
+        }
+
+        return _sqlExpressionFactory.Function(
+            functionName,
+            new[] { argument },
+            nullable: true,
+            argumentsPropagateNullability: new[] { false },
+            returnType);
+    }
+
+    private SqlExpression? TranslateTwoArgAggregate(string functionName, IReadOnlyList<SqlExpression> arguments, Type returnType)
+    {
+        if (arguments.Count < 2)
+        {
+            return null;
+        }
+
+        return _sqlExpressionFactory.Function(
+            functionName,
+            new[] { arguments[0], arguments[1] },
+            nullable: true,
+            argumentsPropagateNullability: new[] { false, false },
+            returnType);
+    }
+
+    private SqlExpression? TranslateQuantile(IReadOnlyList<SqlExpression> arguments)
+    {
+        // Quantile(source, level, selector) - level is arguments[0], selector result is arguments[1]
+        if (arguments.Count < 2)
+        {
+            return null;
+        }
+
+        var levelArg = arguments[0];
+        var selectorArg = arguments[1];
+
+        // Extract the level constant
+        if (levelArg is not SqlConstantExpression levelConstant || levelConstant.Value is not double level)
+        {
+            return null;
+        }
+
+        // Create quantile(level)(column) as a nested function call
+        // ClickHouse parametric aggregate: quantile(0.95)(column)
+        var innerFunction = _sqlExpressionFactory.Function(
+            $"quantile({level.ToString(System.Globalization.CultureInfo.InvariantCulture)})",
+            new[] { selectorArg },
+            nullable: true,
+            argumentsPropagateNullability: new[] { false },
+            typeof(double));
+
+        return innerFunction;
+    }
+
+    private SqlExpression? TranslateGroupArray(IReadOnlyList<SqlExpression> arguments, Type returnType)
+    {
+        if (arguments.Count == 1)
+        {
+            // Simple groupArray(column)
+            return _sqlExpressionFactory.Function(
+                "groupArray",
+                new[] { arguments[0] },
+                nullable: true,
+                argumentsPropagateNullability: new[] { false },
+                returnType);
+        }
+        else if (arguments.Count >= 2)
+        {
+            // groupArray(maxSize)(column) - maxSize is arguments[0], selector is arguments[1]
+            var maxSizeArg = arguments[0];
+            var selectorArg = arguments[1];
+
+            if (maxSizeArg is SqlConstantExpression maxSizeConstant && maxSizeConstant.Value is int maxSize)
+            {
+                return _sqlExpressionFactory.Function(
+                    $"groupArray({maxSize})",
+                    new[] { selectorArg },
+                    nullable: true,
+                    argumentsPropagateNullability: new[] { false },
+                    returnType);
+            }
+        }
+
+        return null;
+    }
+
+    private SqlExpression? TranslateTopK(IReadOnlyList<SqlExpression> arguments, Type returnType)
+    {
+        // TopK(source, k, selector) - k is arguments[0], selector result is arguments[1]
+        if (arguments.Count < 2)
+        {
+            return null;
+        }
+
+        var kArg = arguments[0];
+        var selectorArg = arguments[1];
+
+        if (kArg is SqlConstantExpression kConstant && kConstant.Value is int k)
+        {
+            return _sqlExpressionFactory.Function(
+                $"topK({k})",
+                new[] { selectorArg },
+                nullable: true,
+                argumentsPropagateNullability: new[] { false },
+                returnType);
         }
 
         return null;

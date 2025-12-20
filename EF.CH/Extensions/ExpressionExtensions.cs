@@ -1,5 +1,6 @@
 using System.Linq.Expressions;
 using System.Reflection;
+using System.Text;
 
 namespace EF.CH.Extensions;
 
@@ -8,6 +9,44 @@ namespace EF.CH.Extensions;
 /// </summary>
 internal static class ExpressionExtensions
 {
+    /// <summary>
+    /// Converts a PascalCase or camelCase string to snake_case.
+    /// Examples: "OrderDate" → "order_date", "XMLParser" → "xml_parser", "ID" → "id"
+    /// </summary>
+    public static string ToSnakeCase(string input)
+    {
+        if (string.IsNullOrEmpty(input))
+            return input;
+
+        var sb = new StringBuilder();
+        for (var i = 0; i < input.Length; i++)
+        {
+            var c = input[i];
+            if (char.IsUpper(c))
+            {
+                // Insert underscore before uppercase if:
+                // - Not at the start, AND
+                // - Previous char is lowercase, OR
+                // - Next char is lowercase (handles "XMLParser" → "xml_parser")
+                if (i > 0)
+                {
+                    var prevIsLower = char.IsLower(input[i - 1]);
+                    var nextIsLower = i + 1 < input.Length && char.IsLower(input[i + 1]);
+                    if (prevIsLower || nextIsLower)
+                    {
+                        sb.Append('_');
+                    }
+                }
+                sb.Append(char.ToLowerInvariant(c));
+            }
+            else
+            {
+                sb.Append(c);
+            }
+        }
+        return sb.ToString();
+    }
+
     /// <summary>
     /// Extracts property names from an expression that selects one or more properties.
     /// Supports: x => x.Prop, x => new { x.Prop1, x.Prop2 }, x => (x.Prop1, x.Prop2)

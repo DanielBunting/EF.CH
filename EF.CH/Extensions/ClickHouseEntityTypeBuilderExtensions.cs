@@ -1193,4 +1193,174 @@ public static class ClickHouseEntityTypeBuilderExtensions
     }
 
     #endregion
+
+    #region Projections
+
+    /// <summary>
+    /// Starts configuring a projection with an auto-generated name.
+    /// </summary>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <returns>A projection builder for configuring sort-order or aggregation projections.</returns>
+    /// <remarks>
+    /// <para>
+    /// Projections are pre-computed aggregations or alternative sort orders stored alongside
+    /// the main table. ClickHouse automatically maintains projections during INSERT operations
+    /// and the query optimizer selects the best projection for each query.
+    /// </para>
+    /// <para>
+    /// The projection name is auto-generated based on the table name and columns:
+    /// - Sort-order: {TableName}_ord_{Column1}_{Column2}
+    /// - Aggregation: {TableName}_agg_{Field1}_{Field2}
+    /// </para>
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// // Sort-order projection - auto-named: Orders_ord_CustomerId_OrderDate
+    /// entity.HasProjection()
+    ///     .OrderBy(x => x.CustomerId)
+    ///     .ThenBy(x => x.OrderDate)
+    ///     .Build();
+    ///
+    /// // Aggregation projection - auto-named: Orders_agg_Date_TotalAmount_OrderCount
+    /// entity.HasProjection()
+    ///     .GroupBy(x => x.OrderDate.Date)
+    ///     .Select(g => new {
+    ///         Date = g.Key,
+    ///         TotalAmount = g.Sum(o => o.Amount),
+    ///         OrderCount = g.Count()
+    ///     })
+    ///     .Build();
+    /// </code>
+    /// </example>
+    public static Projections.ProjectionBuilder<TEntity> HasProjection<TEntity>(
+        this EntityTypeBuilder<TEntity> builder)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        return new Projections.ProjectionBuilder<TEntity>(builder);
+    }
+
+    /// <summary>
+    /// Starts configuring a projection with an explicit name.
+    /// </summary>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="name">The projection name (unique within the table).</param>
+    /// <returns>A projection builder for configuring sort-order or aggregation projections.</returns>
+    /// <remarks>
+    /// Projections are pre-computed aggregations or alternative sort orders stored alongside
+    /// the main table. ClickHouse automatically maintains projections during INSERT operations
+    /// and the query optimizer selects the best projection for each query.
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// // Sort-order projection with explicit name
+    /// entity.HasProjection("prj_by_customer")
+    ///     .OrderBy(x => x.CustomerId)
+    ///     .ThenBy(x => x.OrderDate)
+    ///     .Build();
+    ///
+    /// // Aggregation projection with explicit name
+    /// entity.HasProjection("daily_stats")
+    ///     .GroupBy(x => x.OrderDate.Date)
+    ///     .Select(g => new {
+    ///         Date = g.Key,
+    ///         TotalAmount = g.Sum(o => o.Amount),
+    ///         OrderCount = g.Count()
+    ///     })
+    ///     .Build();
+    /// </code>
+    /// </example>
+    public static Projections.ProjectionBuilder<TEntity> HasProjection<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        string name)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        return new Projections.ProjectionBuilder<TEntity>(builder, name);
+    }
+
+    /// <summary>
+    /// Adds a raw SQL projection to the entity's table.
+    /// </summary>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="name">The projection name (unique within the table).</param>
+    /// <param name="selectSql">The raw SQL SELECT query for the projection.</param>
+    /// <param name="materialize">Whether to materialize existing data (default: true).</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    /// <remarks>
+    /// Use this overload for complex projections that cannot be expressed using the fluent API.
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// entity.HasProjection(
+    ///     "prj_by_region",
+    ///     "SELECT * ORDER BY (\"Region\", \"OrderDate\")");
+    /// </code>
+    /// </example>
+    public static EntityTypeBuilder<TEntity> HasProjection<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        string name,
+        string selectSql,
+        bool materialize = true)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ArgumentException.ThrowIfNullOrWhiteSpace(selectSql);
+
+        AddProjectionWithValidation(builder, Projections.ProjectionDefinition.Raw(name, selectSql.Trim(), materialize));
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Removes a projection from the entity's table configuration.
+    /// </summary>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="name">The projection name to remove.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    public static EntityTypeBuilder<TEntity> RemoveProjection<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        string name)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+
+        var annotation = builder.Metadata.FindAnnotation(ClickHouseAnnotationNames.Projections);
+        if (annotation?.Value is List<Projections.ProjectionDefinition> projections)
+        {
+            projections.RemoveAll(p => p.Name == name);
+            builder.HasAnnotation(ClickHouseAnnotationNames.Projections, projections);
+        }
+
+        return builder;
+    }
+
+    private static void AddProjectionWithValidation<TEntity>(
+        EntityTypeBuilder<TEntity> builder,
+        Projections.ProjectionDefinition projection) where TEntity : class
+    {
+        var annotation = builder.Metadata.FindAnnotation(ClickHouseAnnotationNames.Projections);
+        var projections = annotation?.Value as List<Projections.ProjectionDefinition>
+            ?? [];
+
+        if (projections.Any(p => p.Name == projection.Name))
+        {
+            var tableName = builder.Metadata.GetTableName() ?? typeof(TEntity).Name;
+            throw new InvalidOperationException(
+                $"A projection named '{projection.Name}' already exists on table '{tableName}'. " +
+                "Projection names must be unique within a table.");
+        }
+
+        projections.Add(projection);
+        builder.HasAnnotation(ClickHouseAnnotationNames.Projections, projections);
+    }
+
+    #endregion
 }
