@@ -77,6 +77,40 @@ public class ClickHouseAnnotationCodeGenerator : AnnotationCodeGenerator
 
     #endregion
 
+    #region MethodInfo References - Index Level
+
+    private static readonly MethodInfo HasGranularityMethodInfo
+        = typeof(ClickHouseIndexBuilderExtensions).GetRuntimeMethod(
+            nameof(ClickHouseIndexBuilderExtensions.HasGranularity),
+            [typeof(IndexBuilder), typeof(int)])!;
+
+    private static readonly MethodInfo UseMinmaxMethodInfo
+        = typeof(ClickHouseIndexBuilderExtensions).GetRuntimeMethod(
+            nameof(ClickHouseIndexBuilderExtensions.UseMinmax),
+            [typeof(IndexBuilder)])!;
+
+    private static readonly MethodInfo UseBloomFilterMethodInfo
+        = typeof(ClickHouseIndexBuilderExtensions).GetRuntimeMethod(
+            nameof(ClickHouseIndexBuilderExtensions.UseBloomFilter),
+            [typeof(IndexBuilder), typeof(double)])!;
+
+    private static readonly MethodInfo UseTokenBFMethodInfo
+        = typeof(ClickHouseIndexBuilderExtensions).GetRuntimeMethod(
+            nameof(ClickHouseIndexBuilderExtensions.UseTokenBF),
+            [typeof(IndexBuilder), typeof(int), typeof(int), typeof(int)])!;
+
+    private static readonly MethodInfo UseNgramBFMethodInfo
+        = typeof(ClickHouseIndexBuilderExtensions).GetRuntimeMethod(
+            nameof(ClickHouseIndexBuilderExtensions.UseNgramBF),
+            [typeof(IndexBuilder), typeof(int), typeof(int), typeof(int), typeof(int)])!;
+
+    private static readonly MethodInfo UseSetMethodInfo
+        = typeof(ClickHouseIndexBuilderExtensions).GetRuntimeMethod(
+            nameof(ClickHouseIndexBuilderExtensions.UseSet),
+            [typeof(IndexBuilder), typeof(int)])!;
+
+    #endregion
+
     /// <summary>
     /// Engines supported by this code generator.
     /// </summary>
@@ -272,6 +306,88 @@ public class ClickHouseAnnotationCodeGenerator : AnnotationCodeGenerator
         {
             calls.Add(new MethodCallCodeFragment(HasCodecMethodInfo, codecSpec));
             annotations.Remove(ClickHouseAnnotationNames.CompressionCodec);
+        }
+
+        return calls;
+    }
+
+    #endregion
+
+    #region Index-Level Annotations
+
+    /// <summary>
+    /// Checks if an index annotation is handled by convention.
+    /// </summary>
+    protected override bool IsHandledByConvention(IIndex index, IAnnotation annotation)
+    {
+        // Check if this is a ClickHouse annotation we need to generate code for
+        if (annotation.Name.StartsWith(ClickHouseAnnotationNames.Prefix, StringComparison.Ordinal))
+        {
+            return false; // We need to generate code for this
+        }
+
+        return base.IsHandledByConvention(index, annotation);
+    }
+
+    /// <summary>
+    /// Generates fluent API calls for index annotations.
+    /// </summary>
+    public override IReadOnlyList<MethodCallCodeFragment> GenerateFluentApiCalls(
+        IIndex index,
+        IDictionary<string, IAnnotation> annotations)
+    {
+        var calls = new List<MethodCallCodeFragment>(base.GenerateFluentApiCalls(index, annotations));
+
+        // Handle SkipIndexType
+        if (annotations.TryGetValue(ClickHouseAnnotationNames.SkipIndexType, out var typeAnnotation)
+            && typeAnnotation.Value is SkipIndexType indexType)
+        {
+            var indexParams = annotations.TryGetValue(ClickHouseAnnotationNames.SkipIndexParams, out var paramsAnnotation)
+                ? paramsAnnotation.Value as SkipIndexParams
+                : null;
+
+            switch (indexType)
+            {
+                case SkipIndexType.Minmax:
+                    calls.Add(new MethodCallCodeFragment(UseMinmaxMethodInfo));
+                    break;
+
+                case SkipIndexType.BloomFilter:
+                    var falsePositive = indexParams?.BloomFilterFalsePositive ?? 0.025;
+                    calls.Add(new MethodCallCodeFragment(UseBloomFilterMethodInfo, falsePositive));
+                    break;
+
+                case SkipIndexType.TokenBF:
+                    var tokenSize = indexParams?.TokenBFSize ?? 10240;
+                    var tokenHashes = indexParams?.TokenBFHashes ?? 3;
+                    var tokenSeed = indexParams?.TokenBFSeed ?? 0;
+                    calls.Add(new MethodCallCodeFragment(UseTokenBFMethodInfo, tokenSize, tokenHashes, tokenSeed));
+                    break;
+
+                case SkipIndexType.NgramBF:
+                    var ngramSize = indexParams?.NgramSize ?? 4;
+                    var ngramBFSize = indexParams?.NgramBFSize ?? 10240;
+                    var ngramHashes = indexParams?.NgramBFHashes ?? 3;
+                    var ngramSeed = indexParams?.NgramBFSeed ?? 0;
+                    calls.Add(new MethodCallCodeFragment(UseNgramBFMethodInfo, ngramSize, ngramBFSize, ngramHashes, ngramSeed));
+                    break;
+
+                case SkipIndexType.Set:
+                    var maxRows = indexParams?.SetMaxRows ?? 100;
+                    calls.Add(new MethodCallCodeFragment(UseSetMethodInfo, maxRows));
+                    break;
+            }
+
+            annotations.Remove(ClickHouseAnnotationNames.SkipIndexType);
+            annotations.Remove(ClickHouseAnnotationNames.SkipIndexParams);
+        }
+
+        // Handle SkipIndexGranularity
+        if (annotations.TryGetValue(ClickHouseAnnotationNames.SkipIndexGranularity, out var granularityAnnotation)
+            && granularityAnnotation.Value is int granularity)
+        {
+            calls.Add(new MethodCallCodeFragment(HasGranularityMethodInfo, granularity));
+            annotations.Remove(ClickHouseAnnotationNames.SkipIndexGranularity);
         }
 
         return calls;

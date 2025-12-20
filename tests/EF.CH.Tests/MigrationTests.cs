@@ -1,5 +1,6 @@
 using EF.CH.Extensions;
 using EF.CH.Infrastructure;
+using EF.CH.Metadata;
 using EF.CH.Migrations.Internal;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -279,6 +280,144 @@ public class MigrationTests : IAsyncLifetime
         Assert.Contains("DROP INDEX", sql);
         Assert.Contains("\"IX_Test\"", sql);
     }
+
+    #region Skip Index DDL Generation Tests
+
+    [Fact]
+    public void MigrationsSqlGenerator_GeneratesBloomFilterIndex()
+    {
+        using var context = CreateContext();
+        var generator = context.GetService<IMigrationsSqlGenerator>();
+
+        var createIndexOperation = new CreateIndexOperation
+        {
+            Name = "IX_Tags",
+            Table = "TestTable",
+            Columns = ["Tags"],
+            IsUnique = false
+        };
+        createIndexOperation.AddAnnotation(ClickHouseAnnotationNames.SkipIndexType, SkipIndexType.BloomFilter);
+        createIndexOperation.AddAnnotation(ClickHouseAnnotationNames.SkipIndexGranularity, 3);
+        createIndexOperation.AddAnnotation(ClickHouseAnnotationNames.SkipIndexParams, SkipIndexParams.ForBloomFilter(0.025));
+
+        var commands = generator.Generate(new[] { createIndexOperation });
+        var sql = commands.First().CommandText;
+
+        Assert.Contains("ALTER TABLE", sql);
+        Assert.Contains("ADD INDEX", sql);
+        Assert.Contains("\"IX_Tags\"", sql);
+        Assert.Contains("TYPE bloom_filter(0.025)", sql);
+        Assert.Contains("GRANULARITY 3", sql);
+    }
+
+    [Fact]
+    public void MigrationsSqlGenerator_GeneratesTokenBFIndex()
+    {
+        using var context = CreateContext();
+        var generator = context.GetService<IMigrationsSqlGenerator>();
+
+        var createIndexOperation = new CreateIndexOperation
+        {
+            Name = "IX_ErrorMessage",
+            Table = "TestTable",
+            Columns = ["ErrorMessage"],
+            IsUnique = false
+        };
+        createIndexOperation.AddAnnotation(ClickHouseAnnotationNames.SkipIndexType, SkipIndexType.TokenBF);
+        createIndexOperation.AddAnnotation(ClickHouseAnnotationNames.SkipIndexGranularity, 4);
+        createIndexOperation.AddAnnotation(ClickHouseAnnotationNames.SkipIndexParams, SkipIndexParams.ForTokenBF(10240, 3, 0));
+
+        var commands = generator.Generate(new[] { createIndexOperation });
+        var sql = commands.First().CommandText;
+
+        Assert.Contains("ALTER TABLE", sql);
+        Assert.Contains("ADD INDEX", sql);
+        Assert.Contains("\"IX_ErrorMessage\"", sql);
+        Assert.Contains("TYPE tokenbf_v1(10240, 3, 0)", sql);
+        Assert.Contains("GRANULARITY 4", sql);
+    }
+
+    [Fact]
+    public void MigrationsSqlGenerator_GeneratesNgramBFIndex()
+    {
+        using var context = CreateContext();
+        var generator = context.GetService<IMigrationsSqlGenerator>();
+
+        var createIndexOperation = new CreateIndexOperation
+        {
+            Name = "IX_Description",
+            Table = "TestTable",
+            Columns = ["Description"],
+            IsUnique = false
+        };
+        createIndexOperation.AddAnnotation(ClickHouseAnnotationNames.SkipIndexType, SkipIndexType.NgramBF);
+        createIndexOperation.AddAnnotation(ClickHouseAnnotationNames.SkipIndexGranularity, 5);
+        createIndexOperation.AddAnnotation(ClickHouseAnnotationNames.SkipIndexParams, SkipIndexParams.ForNgramBF(4, 10240, 3, 0));
+
+        var commands = generator.Generate(new[] { createIndexOperation });
+        var sql = commands.First().CommandText;
+
+        Assert.Contains("ALTER TABLE", sql);
+        Assert.Contains("ADD INDEX", sql);
+        Assert.Contains("\"IX_Description\"", sql);
+        Assert.Contains("TYPE ngrambf_v1(4, 10240, 3, 0)", sql);
+        Assert.Contains("GRANULARITY 5", sql);
+    }
+
+    [Fact]
+    public void MigrationsSqlGenerator_GeneratesSetIndex()
+    {
+        using var context = CreateContext();
+        var generator = context.GetService<IMigrationsSqlGenerator>();
+
+        var createIndexOperation = new CreateIndexOperation
+        {
+            Name = "IX_Status",
+            Table = "TestTable",
+            Columns = ["Status"],
+            IsUnique = false
+        };
+        createIndexOperation.AddAnnotation(ClickHouseAnnotationNames.SkipIndexType, SkipIndexType.Set);
+        createIndexOperation.AddAnnotation(ClickHouseAnnotationNames.SkipIndexGranularity, 2);
+        createIndexOperation.AddAnnotation(ClickHouseAnnotationNames.SkipIndexParams, SkipIndexParams.ForSet(100));
+
+        var commands = generator.Generate(new[] { createIndexOperation });
+        var sql = commands.First().CommandText;
+
+        Assert.Contains("ALTER TABLE", sql);
+        Assert.Contains("ADD INDEX", sql);
+        Assert.Contains("\"IX_Status\"", sql);
+        Assert.Contains("TYPE set(100)", sql);
+        Assert.Contains("GRANULARITY 2", sql);
+    }
+
+    [Fact]
+    public void MigrationsSqlGenerator_GeneratesMinmaxWithCustomGranularity()
+    {
+        using var context = CreateContext();
+        var generator = context.GetService<IMigrationsSqlGenerator>();
+
+        var createIndexOperation = new CreateIndexOperation
+        {
+            Name = "IX_CreatedAt",
+            Table = "TestTable",
+            Columns = ["CreatedAt"],
+            IsUnique = false
+        };
+        createIndexOperation.AddAnnotation(ClickHouseAnnotationNames.SkipIndexType, SkipIndexType.Minmax);
+        createIndexOperation.AddAnnotation(ClickHouseAnnotationNames.SkipIndexGranularity, 5);
+
+        var commands = generator.Generate(new[] { createIndexOperation });
+        var sql = commands.First().CommandText;
+
+        Assert.Contains("ALTER TABLE", sql);
+        Assert.Contains("ADD INDEX", sql);
+        Assert.Contains("\"IX_CreatedAt\"", sql);
+        Assert.Contains("TYPE minmax", sql);
+        Assert.Contains("GRANULARITY 5", sql);
+    }
+
+    #endregion
 
     private MigrationDbContext CreateContext()
     {
