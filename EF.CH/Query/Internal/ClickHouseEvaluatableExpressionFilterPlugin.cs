@@ -6,7 +6,7 @@ namespace EF.CH.Query.Internal;
 
 /// <summary>
 /// Prevents EF Core from parameterizing arguments to ClickHouse-specific extension methods
-/// like Sample(), WithSetting(), and WithSettings().
+/// like Sample(), WithSetting(), WithSettings(), and window functions.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -15,9 +15,9 @@ namespace EF.CH.Query.Internal;
 /// This plugin tells EF Core to keep these values as constants in the expression tree.
 /// </para>
 /// <para>
-/// When EF Core visits a method call like <c>Sample(0.1)</c>, it normally would extract
-/// <c>0.1</c> as a parameter. With this plugin, the constant stays in place and our
-/// translator can read it directly.
+/// Window functions (RowNumber, Lag, Lead, etc.) and their WindowBuilder are
+/// marker methods that exist only for LINQ expression tree capture. They must not be
+/// evaluated before translation.
 /// </para>
 /// </remarks>
 public class ClickHouseEvaluatableExpressionFilterPlugin : IEvaluatableExpressionFilterPlugin
@@ -41,6 +41,39 @@ public class ClickHouseEvaluatableExpressionFilterPlugin : IEvaluatableExpressio
         if (expression is MethodCallExpression methodCall)
         {
             var method = methodCall.Method;
+            var declaringType = method.DeclaringType;
+
+            // Never evaluate any expression that returns WindowBuilder<T>.
+            // This type is a marker for window function OVER clauses and should
+            // be kept as-is for expression tree capture and translation.
+            if (method.ReturnType.IsGenericType &&
+                method.ReturnType.GetGenericTypeDefinition() == typeof(WindowBuilder<>))
+            {
+                return false;
+            }
+
+            // Never evaluate WindowBuilder<T> methods - these are marker methods
+            // that build an expression tree for window function translation
+            if (declaringType != null &&
+                declaringType.IsGenericType &&
+                declaringType.GetGenericTypeDefinition() == typeof(WindowBuilder<>))
+            {
+                return false;
+            }
+
+            // Never evaluate Window class methods - these are entry points
+            // for window function translation (RowNumber, Rank, Lag, Lead, etc.)
+            if (declaringType == typeof(Window))
+            {
+                return false;
+            }
+
+            // Never evaluate WindowSpec methods - these are used in lambda-style
+            // window function configuration and must be preserved for translation
+            if (declaringType == typeof(WindowSpec))
+            {
+                return false;
+            }
 
             if (method.IsGenericMethod)
             {

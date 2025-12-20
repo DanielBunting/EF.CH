@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Linq.Expressions;
 using System.Threading;
+using EF.CH.Query.Internal.Expressions;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Query.SqlExpressions;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -184,6 +185,7 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     {
         return extensionExpression switch
         {
+            ClickHouseWindowFunctionExpression windowExpression => VisitWindowFunction(windowExpression),
             ClickHouseDictionaryTableExpression dictionaryExpression => VisitDictionaryTable(dictionaryExpression),
             ClickHouseExternalTableFunctionExpression externalExpression => VisitExternalTableFunction(externalExpression),
             ClickHouseTableModifierExpression modifierExpression => VisitTableModifier(modifierExpression),
@@ -273,6 +275,95 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
         }
 
         return expression;
+    }
+
+    /// <summary>
+    /// Generates SQL for a window function expression.
+    /// E.g., row_number() OVER (PARTITION BY "Region" ORDER BY "Date" ASC)
+    /// </summary>
+    private Expression VisitWindowFunction(ClickHouseWindowFunctionExpression expression)
+    {
+        // Function name
+        Sql.Append(expression.FunctionName);
+        Sql.Append("(");
+
+        // Function arguments (e.g., value and offset for lagInFrame)
+        for (var i = 0; i < expression.Arguments.Count; i++)
+        {
+            if (i > 0) Sql.Append(", ");
+            Visit(expression.Arguments[i]);
+        }
+
+        Sql.Append(") OVER (");
+
+        var needsSpace = false;
+
+        // PARTITION BY clause
+        if (expression.PartitionBy.Count > 0)
+        {
+            Sql.Append("PARTITION BY ");
+            for (var i = 0; i < expression.PartitionBy.Count; i++)
+            {
+                if (i > 0) Sql.Append(", ");
+                Visit(expression.PartitionBy[i]);
+            }
+            needsSpace = true;
+        }
+
+        // ORDER BY clause
+        if (expression.OrderBy.Count > 0)
+        {
+            if (needsSpace) Sql.Append(" ");
+            Sql.Append("ORDER BY ");
+            for (var i = 0; i < expression.OrderBy.Count; i++)
+            {
+                if (i > 0) Sql.Append(", ");
+                Visit(expression.OrderBy[i].Expression);
+                Sql.Append(expression.OrderBy[i].IsAscending ? " ASC" : " DESC");
+            }
+            needsSpace = true;
+        }
+
+        // Frame clause
+        if (expression.Frame != null)
+        {
+            if (needsSpace) Sql.Append(" ");
+            GenerateFrameClause(expression.Frame);
+        }
+
+        Sql.Append(")");
+
+        return expression;
+    }
+
+    /// <summary>
+    /// Generates the window frame clause.
+    /// E.g., ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+    /// </summary>
+    private void GenerateFrameClause(WindowFrame frame)
+    {
+        Sql.Append(frame.Type == WindowFrameType.Rows ? "ROWS" : "RANGE");
+        Sql.Append(" BETWEEN ");
+        GenerateFrameBound(frame.StartBound, frame.StartOffset);
+        Sql.Append(" AND ");
+        GenerateFrameBound(frame.EndBound, frame.EndOffset);
+    }
+
+    /// <summary>
+    /// Generates a frame boundary specification.
+    /// </summary>
+    private void GenerateFrameBound(WindowFrameBound bound, int? offset)
+    {
+        var text = bound switch
+        {
+            WindowFrameBound.UnboundedPreceding => "UNBOUNDED PRECEDING",
+            WindowFrameBound.Preceding => $"{offset} PRECEDING",
+            WindowFrameBound.CurrentRow => "CURRENT ROW",
+            WindowFrameBound.Following => $"{offset} FOLLOWING",
+            WindowFrameBound.UnboundedFollowing => "UNBOUNDED FOLLOWING",
+            _ => throw new InvalidOperationException($"Unknown frame bound: {bound}")
+        };
+        Sql.Append(text);
     }
 
     /// <summary>

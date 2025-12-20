@@ -15,6 +15,7 @@ An Entity Framework Core provider for [ClickHouse](https://clickhouse.com/), bui
 - **External Entities** - Query PostgreSQL, MySQL, Redis, and ODBC sources via table functions
 - **Scaffolding** - Reverse engineering with C# enum generation
 - **Compression Codecs** - Per-column compression via fluent API and attributes
+- **Window Functions** - Row numbering, ranking, lag/lead, running totals with fluent API
 
 ## Quick Start
 
@@ -198,6 +199,33 @@ await context.Orders
 options.UseClickHouse("...", o => o.UseDeleteStrategy(ClickHouseDeleteStrategy.Mutation));
 ```
 
+## Window Functions
+
+```csharp
+using EF.CH.Extensions;
+
+var analytics = context.Orders.Select(o => new
+{
+    o.Id,
+    // Lambda style (recommended) - no .Value needed
+    RowNum = Window.RowNumber(w => w
+        .PartitionBy(o.Region)
+        .OrderBy(o.OrderDate)),
+
+    PrevAmount = Window.Lag(o.Amount, 1, w => w
+        .OrderBy(o.OrderDate)),
+
+    RunningTotal = Window.Sum(o.Amount, w => w
+        .PartitionBy(o.Region)
+        .OrderBy(o.OrderDate)
+        .Rows().UnboundedPreceding().CurrentRow())
+});
+```
+
+**Available Functions:** `RowNumber`, `Rank`, `DenseRank`, `PercentRank`, `NTile`, `Lag`, `Lead`, `FirstValue`, `LastValue`, `NthValue`, `Sum`, `Avg`, `Count`, `Min`, `Max`
+
+See [docs/features/window-functions.md](docs/features/window-functions.md) for full documentation including fluent API style.
+
 ## Materialized Views
 
 ```csharp
@@ -337,6 +365,7 @@ See [docs/features/external-entities.md](docs/features/external-entities.md) for
 | [Features](docs/features/) | Materialized views, partitioning, TTL, etc. |
 | [Projections](docs/features/projections.md) | Table-level sort and aggregation optimizations |
 | [Compression Codecs](docs/features/compression-codecs.md) | Per-column compression configuration |
+| [Window Functions](docs/features/window-functions.md) | Ranking, lead/lag, running totals |
 | [External Entities](docs/features/external-entities.md) | Query remote PostgreSQL, MySQL, Redis, ODBC |
 | [Migrations](docs/migrations.md) | EF Core migrations with ClickHouse |
 | [Scaffolding](docs/scaffolding.md) | Reverse engineering |
