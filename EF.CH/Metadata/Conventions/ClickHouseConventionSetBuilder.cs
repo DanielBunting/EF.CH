@@ -39,6 +39,9 @@ public class ClickHouseConventionSetBuilder : RelationalConventionSetBuilder
         // ClickHouse doesn't support auto-increment/identity columns
         conventionSet.ModelFinalizingConventions.Add(new ClickHouseValueGeneratedConvention());
 
+        // Add convention that discovers [ClickHouseCodec] attributes on properties
+        conventionSet.PropertyAddedConventions.Add(new ClickHouseCodecAttributeConvention());
+
         return conventionSet;
     }
 }

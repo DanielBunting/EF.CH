@@ -938,6 +938,15 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
             builder.Append(columnType);
         }
 
+        // Compression codec - applied after type, before default
+        var codecSpec = GetPropertyCodec(model, operation.Schema, operation.Table, operation.Name);
+        if (!string.IsNullOrEmpty(codecSpec))
+        {
+            builder.Append(" CODEC(");
+            builder.Append(codecSpec);
+            builder.Append(")");
+        }
+
         // Default value - default-for-null takes precedence
         if (defaultForNull != null)
         {
@@ -985,6 +994,33 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
 
         // Return the default-for-null value if configured
         return property.FindAnnotation(ClickHouseAnnotationNames.DefaultForNull)?.Value;
+    }
+
+    /// <summary>
+    /// Gets the compression codec for a property, if configured.
+    /// </summary>
+    private static string? GetPropertyCodec(IModel? model, string? schema, string table, string columnName)
+    {
+        if (model == null)
+            return null;
+
+        // Find the entity type by table name
+        var entityType = model.GetEntityTypes()
+            .FirstOrDefault(e => e.GetTableName() == table
+                              && (e.GetSchema() ?? model.GetDefaultSchema()) == schema);
+
+        if (entityType == null)
+            return null;
+
+        // Find the property by column name
+        var property = entityType.GetProperties()
+            .FirstOrDefault(p => (p.GetColumnName() ?? p.Name) == columnName);
+
+        if (property == null)
+            return null;
+
+        // Return the codec specification if configured
+        return property.FindAnnotation(ClickHouseAnnotationNames.CompressionCodec)?.Value as string;
     }
 
     /// <summary>
@@ -1113,6 +1149,15 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
             .Append(columnName)
             .Append(" ")
             .Append(columnType);
+
+        // Compression codec - applied after type, before default
+        var codecSpec = GetPropertyCodec(model, operation.Schema, operation.Table, operation.Name);
+        if (!string.IsNullOrEmpty(codecSpec))
+        {
+            builder.Append(" CODEC(");
+            builder.Append(codecSpec);
+            builder.Append(")");
+        }
 
         // Default value - default-for-null takes precedence
         if (defaultForNull != null)

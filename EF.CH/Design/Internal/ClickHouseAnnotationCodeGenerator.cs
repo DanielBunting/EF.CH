@@ -13,7 +13,7 @@ namespace EF.CH.Design.Internal;
 /// </summary>
 public class ClickHouseAnnotationCodeGenerator : AnnotationCodeGenerator
 {
-    #region MethodInfo References
+    #region MethodInfo References - Entity Level
 
     private static readonly MethodInfo UseMergeTreeMethodInfo
         = typeof(ClickHouseEntityTypeBuilderExtensions).GetRuntimeMethod(
@@ -64,6 +64,16 @@ public class ClickHouseAnnotationCodeGenerator : AnnotationCodeGenerator
         = typeof(ClickHouseEntityTypeBuilderExtensions).GetRuntimeMethod(
             nameof(ClickHouseEntityTypeBuilderExtensions.HasTtl),
             [typeof(EntityTypeBuilder), typeof(string)])!;
+
+    #endregion
+
+    #region MethodInfo References - Property Level
+
+    private static readonly MethodInfo HasCodecMethodInfo
+        = typeof(ClickHousePropertyBuilderCodecExtensions).GetMethods()
+            .First(m => m.Name == nameof(ClickHousePropertyBuilderCodecExtensions.HasCodec)
+                     && m.GetParameters().Length == 2
+                     && m.GetParameters()[1].ParameterType == typeof(string));
 
     #endregion
 
@@ -230,4 +240,42 @@ public class ClickHouseAnnotationCodeGenerator : AnnotationCodeGenerator
 
         return attributes;
     }
+
+    #region Property-Level Annotations
+
+    /// <summary>
+    /// Checks if a property annotation is handled by convention.
+    /// </summary>
+    protected override bool IsHandledByConvention(IProperty property, IAnnotation annotation)
+    {
+        // Check if this is a ClickHouse annotation we need to generate code for
+        if (annotation.Name.StartsWith(ClickHouseAnnotationNames.Prefix, StringComparison.Ordinal))
+        {
+            return false; // We need to generate code for this
+        }
+
+        return base.IsHandledByConvention(property, annotation);
+    }
+
+    /// <summary>
+    /// Generates fluent API calls for property annotations.
+    /// </summary>
+    public override IReadOnlyList<MethodCallCodeFragment> GenerateFluentApiCalls(
+        IProperty property,
+        IDictionary<string, IAnnotation> annotations)
+    {
+        var calls = new List<MethodCallCodeFragment>(base.GenerateFluentApiCalls(property, annotations));
+
+        // Handle CompressionCodec
+        if (annotations.TryGetValue(ClickHouseAnnotationNames.CompressionCodec, out var codecAnnotation)
+            && codecAnnotation.Value is string codecSpec)
+        {
+            calls.Add(new MethodCallCodeFragment(HasCodecMethodInfo, codecSpec));
+            annotations.Remove(ClickHouseAnnotationNames.CompressionCodec);
+        }
+
+        return calls;
+    }
+
+    #endregion
 }

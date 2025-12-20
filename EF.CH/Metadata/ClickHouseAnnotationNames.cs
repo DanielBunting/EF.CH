@@ -367,4 +367,14 @@ public static class ClickHouseAnnotationNames
     public const string Projections = Prefix + "Projections";
 
     #endregion
+
+    #region Compression Codecs
+
+    /// <summary>
+    /// Compression codec specification for a column.
+    /// Value is the codec string (e.g., "DoubleDelta, LZ4" or "ZSTD(9)").
+    /// </summary>
+    public const string CompressionCodec = Prefix + "CompressionCodec";
+
+    #endregion
 }

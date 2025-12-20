@@ -181,7 +181,8 @@ public partial class ClickHouseDatabaseModelFactory : IDatabaseModelFactory
                 is_in_partition_key,
                 is_in_sorting_key,
                 is_in_primary_key,
-                is_in_sampling_key
+                is_in_sampling_key,
+                compression_codec
             FROM system.columns
             WHERE database = '{escapedDatabase}'
               AND table IN ({string.Join(", ", escapedTables)})
@@ -204,7 +205,8 @@ public partial class ClickHouseDatabaseModelFactory : IDatabaseModelFactory
                 IsInPartitionKey = Convert.ToBoolean(reader.GetValue(reader.GetOrdinal("is_in_partition_key"))),
                 IsInSortingKey = Convert.ToBoolean(reader.GetValue(reader.GetOrdinal("is_in_sorting_key"))),
                 IsInPrimaryKey = Convert.ToBoolean(reader.GetValue(reader.GetOrdinal("is_in_primary_key"))),
-                IsInSamplingKey = Convert.ToBoolean(reader.GetValue(reader.GetOrdinal("is_in_sampling_key")))
+                IsInSamplingKey = Convert.ToBoolean(reader.GetValue(reader.GetOrdinal("is_in_sampling_key"))),
+                CompressionCodec = reader.IsDBNull("compression_codec") ? null : reader.GetString("compression_codec")
             });
         }
 
@@ -437,6 +439,12 @@ public partial class ClickHouseDatabaseModelFactory : IDatabaseModelFactory
         {
             dbColumn[ClickHouseAnnotationNames.EnumDefinition] = innerType;
             dbColumn[ClickHouseAnnotationNames.EnumTypeName] = enumTypeName;
+        }
+
+        // Store compression codec annotation if present
+        if (!string.IsNullOrEmpty(column.CompressionCodec))
+        {
+            dbColumn[ClickHouseAnnotationNames.CompressionCodec] = column.CompressionCodec;
         }
 
         // Handle Nested types - generate documentation comment with TODO
@@ -724,5 +732,6 @@ public partial class ClickHouseDatabaseModelFactory : IDatabaseModelFactory
         public bool IsInSortingKey { get; init; }
         public bool IsInPrimaryKey { get; init; }
         public bool IsInSamplingKey { get; init; }
+        public string? CompressionCodec { get; init; }
     }
 }
