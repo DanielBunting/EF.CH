@@ -17,6 +17,7 @@ An Entity Framework Core provider for [ClickHouse](https://clickhouse.com/), bui
 - **Compression Codecs** - Per-column compression via fluent API and attributes
 - **Window Functions** - Row numbering, ranking, lag/lead, running totals with fluent API
 - **Data Skipping Indices** - Minmax, bloom filter, token/ngram bloom filters, and set indices
+- **Time Series Gap Filling** - WITH FILL and INTERPOLATE for continuous time series data
 
 ## Quick Start
 
@@ -227,6 +228,47 @@ var analytics = context.Orders.Select(o => new
 
 See [docs/features/window-functions.md](docs/features/window-functions.md) for full documentation including fluent API style.
 
+## Time Series Gap Filling
+
+Fill gaps in time series data with ClickHouse's `WITH FILL` and `INTERPOLATE` clauses:
+
+```csharp
+using EF.CH.Extensions;
+
+// Basic gap filling - insert missing hourly rows
+var hourlyData = context.Readings
+    .OrderBy(x => x.Hour)
+    .Interpolate(x => x.Hour, TimeSpan.FromHours(1));
+
+// With FROM/TO bounds for complete date range
+var fullRange = context.Readings
+    .OrderBy(x => x.Date)
+    .Interpolate(x => x.Date, TimeSpan.FromDays(1), startDate, endDate);
+
+// Forward-fill values from previous row
+var filledData = context.Readings
+    .OrderBy(x => x.Hour)
+    .Interpolate(x => x.Hour, TimeSpan.FromHours(1),
+                 x => x.Value, InterpolateMode.Prev);
+
+// Multiple columns with builder
+var multiColumn = context.Readings
+    .OrderBy(x => x.Hour)
+    .Interpolate(x => x.Hour, TimeSpan.FromHours(1), i => i
+        .Fill(x => x.Temperature, InterpolateMode.Prev)
+        .Fill(x => x.Count, 0));
+```
+
+**Step Types:**
+
+| Type | Use Case | Example |
+|------|----------|---------|
+| `TimeSpan` | Hours, minutes, seconds, days | `TimeSpan.FromHours(1)` |
+| `ClickHouseInterval` | Months, quarters, years | `ClickHouseInterval.Months(1)` |
+| `int` | Numeric sequences | `10` |
+
+See [docs/features/interpolate.md](docs/features/interpolate.md) for full documentation.
+
 ## Data Skipping Indices
 
 Skip indices allow ClickHouse to skip reading granules that don't match query predicates, dramatically improving query performance for selective filters.
@@ -430,6 +472,7 @@ See [docs/features/external-entities.md](docs/features/external-entities.md) for
 | [Compression Codecs](docs/features/compression-codecs.md) | Per-column compression configuration |
 | [Window Functions](docs/features/window-functions.md) | Ranking, lead/lag, running totals |
 | [Data Skipping Indices](docs/features/skip-indices.md) | Bloom filter, minmax, set, and token indices |
+| [Time Series Gap Filling](docs/features/interpolate.md) | WITH FILL and INTERPOLATE for continuous data |
 | [External Entities](docs/features/external-entities.md) | Query remote PostgreSQL, MySQL, Redis, ODBC |
 | [Migrations](docs/migrations.md) | EF Core migrations with ClickHouse |
 | [Scaffolding](docs/scaffolding.md) | Reverse engineering |

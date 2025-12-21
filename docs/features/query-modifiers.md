@@ -227,6 +227,7 @@ context.Users
 
 ## See Also
 
+- [Time Series Gap Filling](interpolate.md) - `Interpolate()` for WITH FILL and INTERPOLATE clauses
 - [ReplacingMergeTree](../engines/replacing-mergetree.md) - Uses `Final()` for deduplication
 - [ClickHouse FINAL Docs](https://clickhouse.com/docs/en/sql-reference/statements/select/from#final-modifier)
 - [ClickHouse SAMPLE Docs](https://clickhouse.com/docs/en/sql-reference/statements/select/sample)
