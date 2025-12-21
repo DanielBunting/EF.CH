@@ -399,4 +399,26 @@ public static class ClickHouseAnnotationNames
     public const string SkipIndexParams = Prefix + "SkipIndexParams";
 
     #endregion
+
+    #region Computed Columns
+
+    /// <summary>
+    /// MATERIALIZED column expression - computed on INSERT, stored on disk.
+    /// Value is the ClickHouse SQL expression (e.g., "Amount * 1.1").
+    /// </summary>
+    public const string MaterializedExpression = Prefix + "MaterializedExpression";
+
+    /// <summary>
+    /// ALIAS column expression - computed at query time, not stored.
+    /// Value is the ClickHouse SQL expression (e.g., "concat(FirstName, ' ', LastName)").
+    /// </summary>
+    public const string AliasExpression = Prefix + "AliasExpression";
+
+    /// <summary>
+    /// DEFAULT expression - ClickHouse SQL expression computed if no value provided.
+    /// Value is the ClickHouse SQL expression (e.g., "now()", "generateUUIDv4()").
+    /// </summary>
+    public const string DefaultExpression = Prefix + "DefaultExpression";
+
+    #endregion
 }

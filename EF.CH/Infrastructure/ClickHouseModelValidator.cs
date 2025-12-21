@@ -1,3 +1,4 @@
+using EF.CH.Metadata;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -58,6 +59,15 @@ public class ClickHouseModelValidator : RelationalModelValidator
 
                     // If there's a custom value generator factory, that's OK
                     if (property.GetValueGeneratorFactory() != null)
+                        continue;
+
+                    // If this is a MATERIALIZED column, it's expected to have ValueGeneratedOnAdd
+                    // since ClickHouse computes the value on INSERT
+                    if (property.FindAnnotation(ClickHouseAnnotationNames.MaterializedExpression) != null)
+                        continue;
+
+                    // If this is a DEFAULT expression column, it has a ClickHouse default
+                    if (property.FindAnnotation(ClickHouseAnnotationNames.DefaultExpression) != null)
                         continue;
 
                     // If ValueGeneratedNever was explicitly set, skip (shouldn't have OnAdd flag anyway)
