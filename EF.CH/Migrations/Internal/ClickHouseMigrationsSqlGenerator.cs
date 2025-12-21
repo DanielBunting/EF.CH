@@ -938,18 +938,30 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
             builder.Append(columnType);
         }
 
-        // Compression codec - applied after type, before default
-        var codecSpec = GetPropertyCodec(model, operation.Schema, operation.Table, operation.Name);
-        if (!string.IsNullOrEmpty(codecSpec))
-        {
-            builder.Append(" CODEC(");
-            builder.Append(codecSpec);
-            builder.Append(")");
-        }
+        // Check for MATERIALIZED / ALIAS / DEFAULT expression (mutually exclusive)
+        // These take precedence over operation.DefaultValue and operation.DefaultValueSql
+        var materializedExpr = GetPropertyMaterializedExpression(model, operation.Schema, operation.Table, operation.Name);
+        var aliasExpr = GetPropertyAliasExpression(model, operation.Schema, operation.Table, operation.Name);
+        var defaultExpr = GetPropertyDefaultExpression(model, operation.Schema, operation.Table, operation.Name);
 
-        // Default value - default-for-null takes precedence
-        if (defaultForNull != null)
+        if (!string.IsNullOrEmpty(materializedExpr))
         {
+            builder.Append(" MATERIALIZED ");
+            builder.Append(materializedExpr);
+        }
+        else if (!string.IsNullOrEmpty(aliasExpr))
+        {
+            builder.Append(" ALIAS ");
+            builder.Append(aliasExpr);
+        }
+        else if (!string.IsNullOrEmpty(defaultExpr))
+        {
+            builder.Append(" DEFAULT ");
+            builder.Append(defaultExpr);
+        }
+        else if (defaultForNull != null)
+        {
+            // Default-for-null takes precedence over operation defaults
             var typeMapping = _typeMappingSource.FindMapping(defaultForNull.GetType());
             builder.Append(" DEFAULT ");
             builder.Append(typeMapping?.GenerateSqlLiteral(defaultForNull)
@@ -966,6 +978,15 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         {
             builder.Append(" DEFAULT ");
             builder.Append(operation.DefaultValueSql);
+        }
+
+        // Compression codec - applied after MATERIALIZED/ALIAS/DEFAULT expressions
+        var codecSpec = GetPropertyCodec(model, operation.Schema, operation.Table, operation.Name);
+        if (!string.IsNullOrEmpty(codecSpec))
+        {
+            builder.Append(" CODEC(");
+            builder.Append(codecSpec);
+            builder.Append(")");
         }
     }
 
@@ -1021,6 +1042,87 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
 
         // Return the codec specification if configured
         return property.FindAnnotation(ClickHouseAnnotationNames.CompressionCodec)?.Value as string;
+    }
+
+    /// <summary>
+    /// Gets the MATERIALIZED expression for a property, if configured.
+    /// </summary>
+    private static string? GetPropertyMaterializedExpression(IModel? model, string? schema, string table, string columnName)
+    {
+        if (model == null)
+            return null;
+
+        // Find the entity type by table name
+        var entityType = model.GetEntityTypes()
+            .FirstOrDefault(e => e.GetTableName() == table
+                              && (e.GetSchema() ?? model.GetDefaultSchema()) == schema);
+
+        if (entityType == null)
+            return null;
+
+        // Find the property by column name
+        var property = entityType.GetProperties()
+            .FirstOrDefault(p => (p.GetColumnName() ?? p.Name) == columnName);
+
+        if (property == null)
+            return null;
+
+        // Return the MATERIALIZED expression if configured
+        return property.FindAnnotation(ClickHouseAnnotationNames.MaterializedExpression)?.Value as string;
+    }
+
+    /// <summary>
+    /// Gets the ALIAS expression for a property, if configured.
+    /// </summary>
+    private static string? GetPropertyAliasExpression(IModel? model, string? schema, string table, string columnName)
+    {
+        if (model == null)
+            return null;
+
+        // Find the entity type by table name
+        var entityType = model.GetEntityTypes()
+            .FirstOrDefault(e => e.GetTableName() == table
+                              && (e.GetSchema() ?? model.GetDefaultSchema()) == schema);
+
+        if (entityType == null)
+            return null;
+
+        // Find the property by column name
+        var property = entityType.GetProperties()
+            .FirstOrDefault(p => (p.GetColumnName() ?? p.Name) == columnName);
+
+        if (property == null)
+            return null;
+
+        // Return the ALIAS expression if configured
+        return property.FindAnnotation(ClickHouseAnnotationNames.AliasExpression)?.Value as string;
+    }
+
+    /// <summary>
+    /// Gets the DEFAULT expression for a property, if configured.
+    /// </summary>
+    private static string? GetPropertyDefaultExpression(IModel? model, string? schema, string table, string columnName)
+    {
+        if (model == null)
+            return null;
+
+        // Find the entity type by table name
+        var entityType = model.GetEntityTypes()
+            .FirstOrDefault(e => e.GetTableName() == table
+                              && (e.GetSchema() ?? model.GetDefaultSchema()) == schema);
+
+        if (entityType == null)
+            return null;
+
+        // Find the property by column name
+        var property = entityType.GetProperties()
+            .FirstOrDefault(p => (p.GetColumnName() ?? p.Name) == columnName);
+
+        if (property == null)
+            return null;
+
+        // Return the DEFAULT expression if configured
+        return property.FindAnnotation(ClickHouseAnnotationNames.DefaultExpression)?.Value as string;
     }
 
     /// <summary>

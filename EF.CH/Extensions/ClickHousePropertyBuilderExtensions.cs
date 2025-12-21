@@ -350,4 +350,189 @@ public static class ClickHousePropertyBuilderExtensions
     }
 
     #endregion
+
+    #region Computed Columns
+
+    /// <summary>
+    /// Configures the property as a MATERIALIZED column.
+    /// The expression is computed on INSERT and stored on disk.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// MATERIALIZED columns are not returned by <c>SELECT *</c> by default.
+    /// Use explicit column selection to read them.
+    /// </para>
+    /// <para>
+    /// This method also sets <c>ValueGeneratedOnAdd</c> to exclude the column from INSERTs,
+    /// since ClickHouse computes the value.
+    /// </para>
+    /// </remarks>
+    /// <typeparam name="TProperty">The property type.</typeparam>
+    /// <param name="propertyBuilder">The property builder.</param>
+    /// <param name="expression">ClickHouse SQL expression (e.g., "Amount * 1.1", "toYear(CreatedAt)")</param>
+    /// <returns>The property builder for chaining.</returns>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="expression"/> is null or whitespace.</exception>
+    /// <example>
+    /// <code>
+    /// modelBuilder.Entity&lt;Order&gt;(entity =>
+    /// {
+    ///     entity.Property(e => e.TotalWithTax)
+    ///         .IsMaterialized("Amount * 1.1");
+    ///
+    ///     entity.Property(e => e.OrderYear)
+    ///         .IsMaterialized("toYear(OrderDate)");
+    /// });
+    /// </code>
+    /// </example>
+    public static PropertyBuilder<TProperty> IsMaterialized<TProperty>(
+        this PropertyBuilder<TProperty> propertyBuilder,
+        string expression)
+    {
+        ArgumentNullException.ThrowIfNull(propertyBuilder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(expression);
+
+        propertyBuilder.HasAnnotation(ClickHouseAnnotationNames.MaterializedExpression, expression);
+        propertyBuilder.ValueGeneratedOnAdd();
+        return propertyBuilder;
+    }
+
+    /// <summary>
+    /// Configures the property as a MATERIALIZED column.
+    /// </summary>
+    /// <param name="propertyBuilder">The property builder.</param>
+    /// <param name="expression">ClickHouse SQL expression.</param>
+    /// <returns>The property builder for chaining.</returns>
+    public static PropertyBuilder IsMaterialized(
+        this PropertyBuilder propertyBuilder,
+        string expression)
+    {
+        ArgumentNullException.ThrowIfNull(propertyBuilder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(expression);
+
+        propertyBuilder.HasAnnotation(ClickHouseAnnotationNames.MaterializedExpression, expression);
+        propertyBuilder.ValueGeneratedOnAdd();
+        return propertyBuilder;
+    }
+
+    /// <summary>
+    /// Configures the property as an ALIAS column.
+    /// The expression is computed at query time and not stored.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// ALIAS columns cannot be inserted into and have no storage cost.
+    /// They are computed on every read.
+    /// </para>
+    /// <para>
+    /// This method also sets <c>ValueGeneratedOnAddOrUpdate</c> to exclude the column
+    /// from all modifications.
+    /// </para>
+    /// </remarks>
+    /// <typeparam name="TProperty">The property type.</typeparam>
+    /// <param name="propertyBuilder">The property builder.</param>
+    /// <param name="expression">ClickHouse SQL expression (e.g., "concat(FirstName, ' ', LastName)")</param>
+    /// <returns>The property builder for chaining.</returns>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="expression"/> is null or whitespace.</exception>
+    /// <example>
+    /// <code>
+    /// modelBuilder.Entity&lt;Person&gt;(entity =>
+    /// {
+    ///     entity.Property(e => e.FullName)
+    ///         .IsAlias("concat(FirstName, ' ', LastName)");
+    ///
+    ///     entity.Property(e => e.DoubleValue)
+    ///         .IsAlias("Value * 2");
+    /// });
+    /// </code>
+    /// </example>
+    public static PropertyBuilder<TProperty> IsAlias<TProperty>(
+        this PropertyBuilder<TProperty> propertyBuilder,
+        string expression)
+    {
+        ArgumentNullException.ThrowIfNull(propertyBuilder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(expression);
+
+        propertyBuilder.HasAnnotation(ClickHouseAnnotationNames.AliasExpression, expression);
+        propertyBuilder.ValueGeneratedOnAddOrUpdate();
+        return propertyBuilder;
+    }
+
+    /// <summary>
+    /// Configures the property as an ALIAS column.
+    /// </summary>
+    /// <param name="propertyBuilder">The property builder.</param>
+    /// <param name="expression">ClickHouse SQL expression.</param>
+    /// <returns>The property builder for chaining.</returns>
+    public static PropertyBuilder IsAlias(
+        this PropertyBuilder propertyBuilder,
+        string expression)
+    {
+        ArgumentNullException.ThrowIfNull(propertyBuilder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(expression);
+
+        propertyBuilder.HasAnnotation(ClickHouseAnnotationNames.AliasExpression, expression);
+        propertyBuilder.ValueGeneratedOnAddOrUpdate();
+        return propertyBuilder;
+    }
+
+    /// <summary>
+    /// Configures a DEFAULT expression for the column.
+    /// The expression is computed if no value is provided on INSERT.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is different from EF Core's <c>DefaultValueSql</c> in that it uses
+    /// ClickHouse-specific SQL syntax and functions.
+    /// </para>
+    /// <para>
+    /// Unlike MATERIALIZED columns, DEFAULT columns can be explicitly set during INSERT.
+    /// The expression is only evaluated when no value is provided.
+    /// </para>
+    /// </remarks>
+    /// <typeparam name="TProperty">The property type.</typeparam>
+    /// <param name="propertyBuilder">The property builder.</param>
+    /// <param name="expression">ClickHouse SQL expression (e.g., "now()", "generateUUIDv4()")</param>
+    /// <returns>The property builder for chaining.</returns>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="expression"/> is null or whitespace.</exception>
+    /// <example>
+    /// <code>
+    /// modelBuilder.Entity&lt;Event&gt;(entity =>
+    /// {
+    ///     entity.Property(e => e.CreatedAt)
+    ///         .HasDefaultExpression("now()");
+    ///
+    ///     entity.Property(e => e.TraceId)
+    ///         .HasDefaultExpression("generateUUIDv4()");
+    /// });
+    /// </code>
+    /// </example>
+    public static PropertyBuilder<TProperty> HasDefaultExpression<TProperty>(
+        this PropertyBuilder<TProperty> propertyBuilder,
+        string expression)
+    {
+        ArgumentNullException.ThrowIfNull(propertyBuilder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(expression);
+
+        propertyBuilder.HasAnnotation(ClickHouseAnnotationNames.DefaultExpression, expression);
+        return propertyBuilder;
+    }
+
+    /// <summary>
+    /// Configures a DEFAULT expression for the column.
+    /// </summary>
+    /// <param name="propertyBuilder">The property builder.</param>
+    /// <param name="expression">ClickHouse SQL expression.</param>
+    /// <returns>The property builder for chaining.</returns>
+    public static PropertyBuilder HasDefaultExpression(
+        this PropertyBuilder propertyBuilder,
+        string expression)
+    {
+        ArgumentNullException.ThrowIfNull(propertyBuilder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(expression);
+
+        propertyBuilder.HasAnnotation(ClickHouseAnnotationNames.DefaultExpression, expression);
+        return propertyBuilder;
+    }
+
+    #endregion
 }

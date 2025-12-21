@@ -19,6 +19,7 @@ An Entity Framework Core provider for [ClickHouse](https://clickhouse.com/), bui
 - **Data Skipping Indices** - Minmax, bloom filter, token/ngram bloom filters, and set indices
 - **Time Series Gap Filling** - WITH FILL and INTERPOLATE for continuous time series data
 - **Query Modifiers** - FINAL, SAMPLE, PREWHERE, and SETTINGS for query-level hints
+- **Computed Columns** - MATERIALIZED, ALIAS, and DEFAULT expression columns
 
 ## Quick Start
 
@@ -184,6 +185,50 @@ entity.HasTtl("CreatedAt + INTERVAL 90 DAY");
 // Sampling - for approximate queries on large datasets
 entity.HasSampleBy("intHash32(UserId)");
 ```
+
+## Computed Columns
+
+ClickHouse supports three types of computed columns:
+
+```csharp
+public class Order
+{
+    public Guid Id { get; set; }
+    public decimal Amount { get; set; }
+    public string FirstName { get; set; } = string.Empty;
+    public string LastName { get; set; } = string.Empty;
+
+    // MATERIALIZED - computed on INSERT, stored on disk
+    [MaterializedColumn("Amount * 1.1")]
+    public decimal TotalWithTax { get; set; }
+
+    // ALIAS - computed at query time, not stored
+    [AliasColumn("concat(FirstName, ' ', LastName)")]
+    public string FullName { get; set; } = string.Empty;
+
+    // DEFAULT expression - computed if no value provided
+    [DefaultExpression("now()")]
+    public DateTime CreatedAt { get; set; }
+}
+
+// Or via fluent API
+modelBuilder.Entity<Order>(entity =>
+{
+    entity.Property(e => e.TotalWithTax).IsMaterialized("Amount * 1.1");
+    entity.Property(e => e.FullName).IsAlias("concat(FirstName, ' ', LastName)");
+    entity.Property(e => e.CreatedAt).HasDefaultExpression("now()");
+});
+```
+
+| Type | Storage | Performance | Use Case |
+|------|---------|-------------|----------|
+| `MATERIALIZED` | Stored on disk | Fast reads | Derived values needed frequently |
+| `ALIAS` | Not stored | Computed each query | Virtual columns, rarely used |
+| `DEFAULT` | Stored when provided | Normal | Auto-generated values like timestamps |
+
+**Note:** MATERIALIZED columns are excluded from `SELECT *` by default. Use explicit column selection to read them.
+
+See [docs/features/computed-columns.md](docs/features/computed-columns.md) for full documentation.
 
 ## Query Modifiers
 
@@ -510,6 +555,7 @@ See [docs/features/external-entities.md](docs/features/external-entities.md) for
 | [Data Skipping Indices](docs/features/skip-indices.md) | Bloom filter, minmax, set, and token indices |
 | [Time Series Gap Filling](docs/features/interpolate.md) | WITH FILL and INTERPOLATE for continuous data |
 | [Query Modifiers](docs/features/query-modifiers.md) | FINAL, SAMPLE, PREWHERE, SETTINGS query hints |
+| [Computed Columns](docs/features/computed-columns.md) | MATERIALIZED, ALIAS, DEFAULT expression columns |
 | [External Entities](docs/features/external-entities.md) | Query remote PostgreSQL, MySQL, Redis, ODBC |
 | [Migrations](docs/migrations.md) | EF Core migrations with ClickHouse |
 | [Scaffolding](docs/scaffolding.md) | Reverse engineering |
