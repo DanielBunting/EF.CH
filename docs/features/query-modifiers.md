@@ -1,6 +1,6 @@
 # Query Modifiers
 
-EF.CH provides LINQ extension methods for ClickHouse-specific query modifiers: `Final()`, `Sample()`, and `WithSettings()`.
+EF.CH provides LINQ extension methods for ClickHouse-specific query modifiers: `Final()`, `Sample()`, `PreWhere()`, and `WithSettings()`.
 
 ## Final()
 
@@ -91,6 +91,75 @@ modelBuilder.Entity<Event>(entity =>
 - Approximate counts and aggregations
 - Quick previews of data distribution
 
+## PreWhere()
+
+Applies optimized pre-filtering that reads only the filter columns before reading remaining columns. This reduces I/O for large tables with selective filters.
+
+### Usage
+
+```csharp
+// Filter on indexed column - reads Date first, then remaining columns for matching rows
+var events = await context.Events
+    .PreWhere(e => e.Date > DateTime.UtcNow.AddDays(-7))
+    .ToListAsync();
+```
+
+Generates:
+```sql
+SELECT ... FROM "Events"
+PREWHERE "Date" > @p0
+```
+
+### Combined Conditions
+
+```csharp
+// Multiple conditions in single PreWhere
+var events = await context.Events
+    .PreWhere(e => e.Date > cutoffDate && e.Type == "click")
+    .ToListAsync();
+```
+
+Generates:
+```sql
+SELECT ... FROM "Events"
+PREWHERE ("Date" > @p0) AND ("Type" = 'click')
+```
+
+### When to Use PREWHERE
+
+**Ideal for:**
+- Filter on indexed/sorted columns (ORDER BY key columns)
+- Highly selective filters that eliminate most rows (>90% filtered out)
+- Large tables where I/O reduction matters
+- Queries reading many columns but filtering on few
+
+**Avoid when:**
+- Filters match most rows anyway (low selectivity)
+- Small tables where overhead isn't worth it
+- Complex expressions that can't be pushed down
+
+### Performance Example
+
+For a 1TB table with 100 columns, filtering on an indexed date column:
+
+```csharp
+// PREWHERE: Reads only Date column (~10GB), then full columns for matching rows
+var efficient = await context.LargeTable
+    .PreWhere(e => e.Date > cutoffDate)  // Eliminates 95% of rows
+    .ToListAsync();
+
+// WHERE: Reads all 100 columns (~1TB), then filters
+var lesEfficient = await context.LargeTable
+    .Where(e => e.Date > cutoffDate)
+    .ToListAsync();
+```
+
+### Limitations
+
+- Only one `PreWhere()` call per query - combine conditions in a single call
+- Best performance on primary key columns (ORDER BY columns)
+- ClickHouse may auto-optimize simple WHERE to PREWHERE in some cases
+
 ## WithSettings()
 
 Applies ClickHouse query settings to control execution behavior.
@@ -156,7 +225,8 @@ Modifiers can be chained:
 ```csharp
 var result = await context.Users
     .Final()                              // Deduplicate first
-    .Where(u => u.Country == "US")        // Filter
+    .PreWhere(u => u.CreatedAt > cutoff)  // Pre-filter on indexed column
+    .Where(u => u.Country == "US")        // Additional filter
     .WithSetting("max_threads", 8)        // Control resources
     .OrderByDescending(u => u.CreatedAt)
     .Take(100)
@@ -209,6 +279,7 @@ Modifiers should generally come early in the query:
 context.Users
     .Final()
     .Sample(0.1)
+    .PreWhere(u => u.CreatedAt > cutoff)
     .Where(u => u.IsActive)
     .Select(u => new { u.Id, u.Name });
 
@@ -223,6 +294,7 @@ context.Users
 
 - **Sample requires SAMPLE BY**: Table must be configured with `HasSampleBy()`
 - **Final overhead**: Merges rows in memory, impacting performance
+- **PreWhere single call**: Only one `PreWhere()` per query - combine conditions in one call
 - **Settings scope**: Applied per-query, not connection-wide
 
 ## See Also
@@ -231,4 +303,5 @@ context.Users
 - [ReplacingMergeTree](../engines/replacing-mergetree.md) - Uses `Final()` for deduplication
 - [ClickHouse FINAL Docs](https://clickhouse.com/docs/en/sql-reference/statements/select/from#final-modifier)
 - [ClickHouse SAMPLE Docs](https://clickhouse.com/docs/en/sql-reference/statements/select/sample)
+- [ClickHouse PREWHERE Docs](https://clickhouse.com/docs/en/sql-reference/statements/select/prewhere)
 - [ClickHouse SETTINGS Docs](https://clickhouse.com/docs/en/sql-reference/statements/select#settings-in-select-query)

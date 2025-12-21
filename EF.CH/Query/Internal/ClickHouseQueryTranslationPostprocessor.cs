@@ -69,6 +69,12 @@ public class ClickHouseQueryTranslationPostprocessor : RelationalQueryTranslatio
             ClickHouseQuerySqlGenerator.SetWithFillOptions(options);
         }
 
+        // Pass PREWHERE expression via thread-local to SQL generator
+        if (options.PreWhereExpression != null)
+        {
+            ClickHouseQuerySqlGenerator.SetPreWhereExpression(options.PreWhereExpression);
+        }
+
         return query;
     }
 }

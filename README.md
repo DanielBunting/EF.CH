@@ -18,6 +18,7 @@ An Entity Framework Core provider for [ClickHouse](https://clickhouse.com/), bui
 - **Window Functions** - Row numbering, ranking, lag/lead, running totals with fluent API
 - **Data Skipping Indices** - Minmax, bloom filter, token/ngram bloom filters, and set indices
 - **Time Series Gap Filling** - WITH FILL and INTERPOLATE for continuous time series data
+- **Query Modifiers** - FINAL, SAMPLE, PREWHERE, and SETTINGS for query-level hints
 
 ## Quick Start
 
@@ -183,6 +184,41 @@ entity.HasTtl("CreatedAt + INTERVAL 90 DAY");
 // Sampling - for approximate queries on large datasets
 entity.HasSampleBy("intHash32(UserId)");
 ```
+
+## Query Modifiers
+
+ClickHouse-specific query hints via LINQ extension methods:
+
+```csharp
+using EF.CH.Extensions;
+
+// FINAL - force deduplication for ReplacingMergeTree
+var users = await context.Users
+    .Final()
+    .ToListAsync();
+
+// SAMPLE - probabilistic sampling (~10% of rows)
+var sample = await context.Events
+    .Sample(0.1)
+    .ToListAsync();
+
+// PREWHERE - optimized pre-filtering (reads filter columns first)
+var filtered = await context.Events
+    .PreWhere(e => e.Date > cutoffDate)
+    .ToListAsync();
+
+// SETTINGS - query-level execution hints
+var events = await context.Events
+    .WithSetting("max_threads", 4)
+    .ToListAsync();
+```
+
+**When to use PREWHERE:**
+- Filter on indexed/sorted columns (ORDER BY key columns)
+- Highly selective filters that eliminate most rows
+- Large tables where I/O reduction matters
+
+See [docs/features/query-modifiers.md](docs/features/query-modifiers.md) for full documentation.
 
 ## DELETE Operations
 
@@ -473,6 +509,7 @@ See [docs/features/external-entities.md](docs/features/external-entities.md) for
 | [Window Functions](docs/features/window-functions.md) | Ranking, lead/lag, running totals |
 | [Data Skipping Indices](docs/features/skip-indices.md) | Bloom filter, minmax, set, and token indices |
 | [Time Series Gap Filling](docs/features/interpolate.md) | WITH FILL and INTERPOLATE for continuous data |
+| [Query Modifiers](docs/features/query-modifiers.md) | FINAL, SAMPLE, PREWHERE, SETTINGS query hints |
 | [External Entities](docs/features/external-entities.md) | Query remote PostgreSQL, MySQL, Redis, ODBC |
 | [Migrations](docs/migrations.md) | EF Core migrations with ClickHouse |
 | [Scaffolding](docs/scaffolding.md) | Reverse engineering |
@@ -493,7 +530,7 @@ See [docs/features/external-entities.md](docs/features/external-entities.md) for
 | [MapTypeSample](samples/MapTypeSample/) | Working with Map(K, V) dictionaries |
 | [EnumTypeSample](samples/EnumTypeSample/) | ClickHouse enum type mapping |
 | [PartitioningSample](samples/PartitioningSample/) | Table partitioning strategies |
-| [QueryModifiersSample](samples/QueryModifiersSample/) | Final(), Sample(), WithSettings() |
+| [QueryModifiersSample](samples/QueryModifiersSample/) | Final(), Sample(), PreWhere(), WithSettings() |
 | [DeleteStrategiesSample](samples/DeleteStrategiesSample/) | Lightweight vs mutation deletes |
 | [OptimizeTableSample](samples/OptimizeTableSample/) | Programmatic OPTIMIZE TABLE |
 | [DictionarySample](samples/DictionarySample/) | In-memory dictionary lookups |

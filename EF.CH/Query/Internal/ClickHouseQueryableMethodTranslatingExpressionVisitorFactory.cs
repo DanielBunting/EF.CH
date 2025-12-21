@@ -120,6 +120,12 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
             {
                 return TranslateInterpolate(methodCallExpression);
             }
+
+            // Handle PreWhere extension method
+            if (genericDef == ClickHouseQueryableExtensions.PreWhereMethodInfo)
+            {
+                return TranslatePreWhere(methodCallExpression);
+            }
         }
 
         return base.VisitMethodCall(methodCallExpression);
@@ -358,6 +364,45 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
     }
 
     /// <summary>
+    /// Translates the PreWhere() extension method.
+    /// Uses the same predicate translation as Where() but stores separately for PREWHERE clause generation.
+    /// </summary>
+    private Expression TranslatePreWhere(MethodCallExpression methodCallExpression)
+    {
+        // Visit the source to get the translated query
+        var source = Visit(methodCallExpression.Arguments[0]);
+
+        if (source is not ShapedQueryExpression shapedQuery)
+        {
+            throw new InvalidOperationException("PreWhere can only be applied to a query source.");
+        }
+
+        // Get the predicate lambda
+        var predicateLambda = UnwrapLambda(methodCallExpression.Arguments[1]);
+
+        // Translate the predicate using EF Core's infrastructure
+        var translatedPredicate = TranslateLambdaExpression(shapedQuery, predicateLambda);
+
+        if (translatedPredicate == null)
+        {
+            throw new InvalidOperationException(
+                "Could not translate PREWHERE predicate to SQL. " +
+                "Ensure all expressions are server-evaluable.");
+        }
+
+        // Store for SQL generation - only one PreWhere call per query
+        if (_options.PreWhereExpression != null)
+        {
+            throw new InvalidOperationException(
+                "PreWhere can only be called once per query. Combine conditions in a single PreWhere call.");
+        }
+
+        _options.PreWhereExpression = translatedPredicate;
+
+        return source;
+    }
+
+    /// <summary>
     /// Unwraps a lambda expression from Quote wrapping.
     /// </summary>
     private static LambdaExpression UnwrapLambda(Expression expression)
@@ -568,6 +613,11 @@ public class ClickHouseQueryCompilationContextOptions
     /// Whether any INTERPOLATE specifications have been added.
     /// </summary>
     public bool HasInterpolate => InterpolateSpecs.Count > 0;
+
+    /// <summary>
+    /// The translated PREWHERE predicate expression.
+    /// </summary>
+    public SqlExpression? PreWhereExpression { get; set; }
 }
 
 /// <summary>

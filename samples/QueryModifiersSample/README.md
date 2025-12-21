@@ -1,11 +1,12 @@
 # QueryModifiersSample
 
-Demonstrates ClickHouse-specific query modifiers: `Final()`, `Sample()`, and `WithSettings()`.
+Demonstrates ClickHouse-specific query modifiers: `Final()`, `Sample()`, `PreWhere()`, and `WithSettings()`.
 
 ## What This Shows
 
 - `Final()` for ReplacingMergeTree deduplication
 - `Sample()` for probabilistic sampling on large datasets
+- `PreWhere()` for optimized pre-filtering (reads filter columns first)
 - `WithSettings()` for query-level execution settings
 - `WithSetting()` shorthand for single settings
 
@@ -15,6 +16,7 @@ Demonstrates ClickHouse-specific query modifiers: `Final()`, `Sample()`, and `Wi
 |----------|---------|---------------|
 | `Final()` | Force deduplication | `SELECT ... FROM table FINAL` |
 | `Sample(0.1)` | Sample 10% of rows | `SELECT ... FROM table SAMPLE 0.1` |
+| `PreWhere(predicate)` | Optimized pre-filtering | `SELECT ... PREWHERE condition` |
 | `WithSettings()` | Custom settings | `SELECT ... SETTINGS key=value` |
 
 ## Prerequisites
@@ -62,6 +64,13 @@ Sampled 98 events (expected ~100)
 Purchase events in sample: 32
 Extrapolated total purchases: ~320
 
+--- PreWhere() - optimized pre-filtering on ORDER BY key ---
+Found 503 events after cutoff using PREWHERE.
+PREWHERE reads only Timestamp column first, then full rows for matches.
+
+--- PreWhere() with combined conditions ---
+Found 168 recent purchases using PREWHERE.
+
 --- WithSettings() - controlling query execution ---
 Found 330 purchase events with custom settings.
 
@@ -70,6 +79,9 @@ Retrieved 100 events with row limit setting.
 
 --- Combining Final() with other operations ---
 Found 3 deduplicated active users.
+
+--- Combining Final() and PreWhere() ---
+Found 2 recently updated users (deduplicated with PREWHERE).
 
 Done!
 ```
@@ -103,6 +115,25 @@ var sample = await context.Events
 ```csharp
 entity.HasSampleBy("intHash32(Id)");
 ```
+
+### PreWhere() for Optimized Filtering
+
+```csharp
+// Reads only Date column first, then full columns for matching rows
+var events = await context.Events
+    .PreWhere(e => e.Timestamp > DateTime.UtcNow.AddDays(-7))
+    .ToListAsync();
+
+// Combine conditions in a single PreWhere call
+var filtered = await context.Events
+    .PreWhere(e => e.Timestamp > cutoff && e.EventType == "purchase")
+    .ToListAsync();
+```
+
+**Best for:**
+- Filter on ORDER BY key columns
+- Highly selective filters (>90% rows eliminated)
+- Large tables with many columns
 
 ### WithSettings() for Execution Control
 
