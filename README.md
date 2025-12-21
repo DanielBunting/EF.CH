@@ -21,6 +21,7 @@ An Entity Framework Core provider for [ClickHouse](https://clickhouse.com/), bui
 - **Query Modifiers** - FINAL, SAMPLE, PREWHERE, and SETTINGS for query-level hints
 - **Computed Columns** - MATERIALIZED, ALIAS, and DEFAULT expression columns
 - **Aggregate Combinators** - State, Merge, If, and Array combinators for AggregatingMergeTree
+- **Native JSON Type** - ClickHouse 24.8+ subcolumn access with extension method API
 
 ## Quick Start
 
@@ -157,6 +158,8 @@ See [docs/engines/](docs/engines/) for detailed documentation on each engine.
 | `T[]`, `List<T>` | `Array(T)` |
 | `Dictionary<K,V>` | `Map(K, V)` |
 | `enum` | `Enum8` or `Enum16` (auto-selected) |
+| `JsonElement`, `JsonDocument` | `JSON` |
+| `T` (POCO class) | `JSON` (via value converter) |
 
 See [docs/types/](docs/types/) for the complete type mapping reference.
 
@@ -539,6 +542,63 @@ context.HourlySummary
 
 See [docs/features/aggregate-combinators.md](docs/features/aggregate-combinators.md) for full documentation.
 
+## Native JSON Type
+
+Query JSON columns with ClickHouse 24.8+ native subcolumn syntax via extension methods.
+
+```csharp
+using EF.CH.Extensions;
+
+// Configure JSON column
+modelBuilder.Entity<Event>(entity =>
+{
+    entity.Property(e => e.Payload)
+        .HasColumnType("JSON")
+        .HasMaxDynamicPaths(2048);  // Optional
+});
+
+// Query with extension methods - translates to subcolumn syntax
+var results = await context.Events
+    .Where(e => e.Payload.GetPath<string>("user.email") == "test@example.com")
+    .Where(e => e.Payload.HasPath("metrics.score"))
+    .Select(e => new {
+        e.Id,
+        Email = e.Payload.GetPath<string>("user.email"),
+        Score = e.Payload.GetPathOrDefault<int>("metrics.score", 0),
+        FirstTag = e.Payload.GetPath<string>("tags[0]")
+    })
+    .ToListAsync();
+
+// Generated SQL:
+// SELECT "Id", "Payload"."user"."email",
+//        ifNull("Payload"."metrics"."score", 0),
+//        "Payload"."tags"[1]
+// FROM "Events"
+// WHERE "Payload"."user"."email" = 'test@example.com'
+//   AND "Payload"."metrics"."score" IS NOT NULL
+```
+
+**Extension Methods:**
+
+| Method | SQL | Description |
+|--------|-----|-------------|
+| `GetPath<T>(path)` | `"col"."path"` | Extract typed value |
+| `GetPathOrDefault<T>(path, default)` | `ifNull("col"."path", default)` | With fallback |
+| `HasPath(path)` | `"col"."path" IS NOT NULL` | Check existence |
+| `GetArray<T>(path)` | `"col"."path"` | Extract array |
+
+**Typed POCO Support:**
+
+```csharp
+public class Order
+{
+    [ClickHouseJson(IsTyped = true)]
+    public OrderMetadata Metadata { get; set; } = new();
+}
+```
+
+See [docs/types/json.md](docs/types/json.md) for full documentation.
+
 ## Dictionaries
 
 ClickHouse dictionaries are in-memory key-value stores for fast lookups:
@@ -620,6 +680,7 @@ See [docs/features/external-entities.md](docs/features/external-entities.md) for
 | [ClickHouse Concepts](docs/clickhouse-concepts.md) | Key differences from RDBMS |
 | [Table Engines](docs/engines/) | MergeTree family guide |
 | [Type Mappings](docs/types/) | Complete type reference |
+| [JSON Types](docs/types/json.md) | Native JSON with extension method API |
 | [Features](docs/features/) | Materialized views, partitioning, TTL, etc. |
 | [Projections](docs/features/projections.md) | Table-level sort and aggregation optimizations |
 | [Compression Codecs](docs/features/compression-codecs.md) | Per-column compression configuration |
@@ -656,6 +717,7 @@ See [docs/features/external-entities.md](docs/features/external-entities.md) for
 | [DictionaryJoinSample](samples/DictionaryJoinSample/) | Dictionaries as JOIN replacement |
 | [ExternalPostgresSample](samples/ExternalPostgresSample/) | Query PostgreSQL from ClickHouse |
 | [ExternalRedisSample](samples/ExternalRedisSample/) | Redis key-value integration |
+| [JsonTypeSample](samples/JsonTypeSample/) | Native JSON with subcolumn queries |
 
 ## License
 

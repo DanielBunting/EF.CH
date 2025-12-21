@@ -922,6 +922,16 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
             ?? GetColumnType(operation.Schema, operation.Table, operation.Name, operation, model)
             ?? "String"; // Default to String if type cannot be determined
 
+        // Check for JSON type parameters (max_dynamic_paths, max_dynamic_types)
+        if (string.Equals(columnType, "JSON", StringComparison.OrdinalIgnoreCase))
+        {
+            var (maxPaths, maxTypes) = GetJsonParameters(model, operation.Schema, operation.Table, operation.Name);
+            if (maxPaths.HasValue || maxTypes.HasValue)
+            {
+                columnType = BuildJsonType(maxPaths, maxTypes);
+            }
+        }
+
         // Check for default-for-null annotation
         var defaultForNull = GetPropertyDefaultForNull(model, operation.Schema, operation.Table, operation.Name);
 
@@ -1042,6 +1052,53 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
 
         // Return the codec specification if configured
         return property.FindAnnotation(ClickHouseAnnotationNames.CompressionCodec)?.Value as string;
+    }
+
+    /// <summary>
+    /// Gets JSON type parameters (max_dynamic_paths, max_dynamic_types) for a property, if configured.
+    /// </summary>
+    private static (int? maxDynamicPaths, int? maxDynamicTypes) GetJsonParameters(IModel? model, string? schema, string table, string columnName)
+    {
+        if (model == null)
+            return (null, null);
+
+        // Find the entity type by table name
+        var entityType = model.GetEntityTypes()
+            .FirstOrDefault(e => e.GetTableName() == table
+                              && (e.GetSchema() ?? model.GetDefaultSchema()) == schema);
+
+        if (entityType == null)
+            return (null, null);
+
+        // Find the property by column name
+        var property = entityType.GetProperties()
+            .FirstOrDefault(p => (p.GetColumnName() ?? p.Name) == columnName);
+
+        if (property == null)
+            return (null, null);
+
+        // Get JSON parameters from annotations
+        var maxPaths = property.FindAnnotation(ClickHouseAnnotationNames.JsonMaxDynamicPaths)?.Value as int?;
+        var maxTypes = property.FindAnnotation(ClickHouseAnnotationNames.JsonMaxDynamicTypes)?.Value as int?;
+
+        return (maxPaths, maxTypes);
+    }
+
+    /// <summary>
+    /// Builds the JSON type string with optional parameters.
+    /// </summary>
+    private static string BuildJsonType(int? maxDynamicPaths, int? maxDynamicTypes)
+    {
+        if (maxDynamicPaths == null && maxDynamicTypes == null)
+            return "JSON";
+
+        var parameters = new List<string>();
+        if (maxDynamicPaths.HasValue)
+            parameters.Add($"max_dynamic_paths={maxDynamicPaths.Value}");
+        if (maxDynamicTypes.HasValue)
+            parameters.Add($"max_dynamic_types={maxDynamicTypes.Value}");
+
+        return $"JSON({string.Join(", ", parameters)})";
     }
 
     /// <summary>
@@ -1231,6 +1288,16 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         var columnType = operation.ColumnType
             ?? GetColumnType(operation.Schema, operation.Table, operation.Name, operation, model)
             ?? "String";
+
+        // Check for JSON type parameters (max_dynamic_paths, max_dynamic_types)
+        if (string.Equals(columnType, "JSON", StringComparison.OrdinalIgnoreCase))
+        {
+            var (maxPaths, maxTypes) = GetJsonParameters(model, operation.Schema, operation.Table, operation.Name);
+            if (maxPaths.HasValue || maxTypes.HasValue)
+            {
+                columnType = BuildJsonType(maxPaths, maxTypes);
+            }
+        }
 
         // Check for default-for-null annotation
         var defaultForNull = GetPropertyDefaultForNull(model, operation.Schema, operation.Table, operation.Name);

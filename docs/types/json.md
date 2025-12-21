@@ -1,13 +1,23 @@
 # JSON Types
 
-ClickHouse has native JSON support for semi-structured data. EF.CH maps `System.Text.Json` types to ClickHouse's `JSON` type.
+ClickHouse has native JSON support for semi-structured data. EF.CH provides full LINQ integration with ClickHouse 24.8+ native JSON subcolumn syntax.
+
+## Overview
+
+- **Native JSON type** with subcolumn access (`"column"."path"."field"`)
+- **Extension method API** for type-safe LINQ queries
+- **Typed POCO support** with automatic serialization
+- **Configurable parameters** (max_dynamic_paths, max_dynamic_types)
+
+**Requirements:** ClickHouse 24.8+ for native JSON subcolumn syntax.
 
 ## Type Mappings
 
-| .NET Type | ClickHouse Type |
-|-----------|-----------------|
-| `JsonElement` | `JSON` |
-| `JsonDocument` | `JSON` |
+| .NET Type | ClickHouse Type | Notes |
+|-----------|-----------------|-------|
+| `JsonElement` | `JSON` | Recommended for flexible schema |
+| `JsonDocument` | `JSON` | Disposable, use with care |
+| `T` (POCO class) | `JSON` | Via value converter, snake_case naming |
 
 ## Entity Definition
 
@@ -26,30 +36,220 @@ public class Event
 
 ## Configuration
 
-JSON types work without special configuration:
+### Fluent API
 
 ```csharp
 modelBuilder.Entity<Event>(entity =>
 {
     entity.HasKey(e => e.Id);
     entity.UseMergeTree(x => new { x.Timestamp, x.Id });
-    // JSON properties just work
+
+    // Basic JSON column
+    entity.Property(e => e.Payload)
+        .HasColumnType("JSON");
+
+    // With parameters (controls ClickHouse storage optimization)
+    entity.Property(e => e.Metadata)
+        .HasColumnType("JSON")
+        .HasMaxDynamicPaths(2048)      // Default: 1024
+        .HasMaxDynamicTypes(64);        // Default: 32
 });
 ```
+
+### Attribute Configuration
+
+```csharp
+public class Event
+{
+    public Guid Id { get; set; }
+
+    [ClickHouseJson(MaxDynamicPaths = 1024, MaxDynamicTypes = 32)]
+    public JsonElement Payload { get; set; }
+
+    [ClickHouseJson(IsTyped = true)]
+    public OrderMetadata OrderInfo { get; set; } = new();
+}
+```
+
+### JSON Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `max_dynamic_paths` | 1024 | Max paths stored as separate subcolumns |
+| `max_dynamic_types` | 32 | Max data types per path |
+
+Higher values = more flexibility, more memory. Lower values = better compression.
 
 ## Generated DDL
 
 ```sql
 CREATE TABLE "Events" (
-    "Id" UUID NOT NULL,
-    "Timestamp" DateTime64(3) NOT NULL,
-    "EventType" String NOT NULL,
-    "Payload" JSON NOT NULL,
-    "Metadata" Nullable(JSON)
-)
-ENGINE = MergeTree
+    "Id" UUID,
+    "Timestamp" DateTime64(3),
+    "EventType" String,
+    "Payload" JSON,
+    "Metadata" Nullable(JSON(max_dynamic_paths=2048, max_dynamic_types=64))
+) ENGINE = MergeTree()
 ORDER BY ("Timestamp", "Id")
 ```
+
+## Querying with Extension Methods
+
+EF.CH provides extension methods that translate to ClickHouse's native JSON subcolumn syntax.
+
+### Available Methods
+
+| Method | ClickHouse SQL | Description |
+|--------|---------------|-------------|
+| `GetPath<T>(path)` | `"col"."path"."field"` | Extract typed value at path |
+| `GetPathOrDefault<T>(path, default)` | `ifNull("col"."path", default)` | Extract with fallback |
+| `HasPath(path)` | `"col"."path" IS NOT NULL` | Check if path exists |
+| `GetArray<T>(path)` | `"col"."path"` | Extract array at path |
+| `GetObject(path)` | `"col"."path"` | Extract nested object |
+
+### Path Syntax
+
+```
+user.email           → "Payload"."user"."email"
+tags[0]              → "Payload"."tags"[1]           (auto-converts to 1-based)
+order.items[0].name  → "Payload"."order"."items"[1]."name"
+```
+
+### Query Examples
+
+```csharp
+using EF.CH.Extensions;
+
+// Filter by JSON path value
+var activeUsers = await context.Events
+    .Where(e => e.Payload.GetPath<string>("user.status") == "active")
+    .ToListAsync();
+
+// Generated SQL:
+// SELECT ... FROM "Events" WHERE "Payload"."user"."status" = 'active'
+
+// Check path existence
+var premiumEvents = await context.Events
+    .Where(e => e.Payload.HasPath("premium.features"))
+    .ToListAsync();
+
+// Generated SQL:
+// SELECT ... FROM "Events" WHERE "Payload"."premium"."features" IS NOT NULL
+
+// Project JSON values
+var userEmails = await context.Events
+    .Select(e => new {
+        e.Id,
+        Email = e.Payload.GetPath<string>("user.email"),
+        Score = e.Payload.GetPathOrDefault<int>("metrics.score", 0),
+        FirstTag = e.Payload.GetPath<string>("tags[0]"),
+        AllTags = e.Payload.GetArray<string>("tags")
+    })
+    .ToListAsync();
+
+// Generated SQL:
+// SELECT "Id",
+//        "Payload"."user"."email",
+//        ifNull("Payload"."metrics"."score", 0),
+//        "Payload"."tags"[1],
+//        "Payload"."tags"
+// FROM "Events"
+
+// Combine with other filters
+var recentHighValue = await context.Events
+    .Where(e => e.Timestamp > DateTime.UtcNow.AddDays(-7))
+    .Where(e => e.Payload.GetPath<decimal>("amount") > 1000)
+    .Where(e => e.Payload.HasPath("verified"))
+    .OrderByDescending(e => e.Payload.GetPath<decimal>("amount"))
+    .Take(100)
+    .ToListAsync();
+```
+
+### Nested Object Access
+
+```csharp
+// Access deeply nested properties
+var shippingCities = await context.Orders
+    .Select(o => new {
+        o.Id,
+        City = o.Metadata.GetPath<string>("shipping.address.city"),
+        Country = o.Metadata.GetPath<string>("shipping.address.country")
+    })
+    .ToListAsync();
+
+// Get nested object as JsonElement for further processing
+var addresses = await context.Orders
+    .Select(o => new {
+        o.Id,
+        Address = o.Metadata.GetObject("shipping.address")
+    })
+    .ToListAsync();
+```
+
+## Typed POCO Support
+
+Map C# classes directly to JSON columns with automatic serialization.
+
+### Configuration
+
+```csharp
+public class OrderMetadata
+{
+    public string CustomerName { get; set; } = string.Empty;
+    public string CustomerEmail { get; set; } = string.Empty;
+    public ShippingAddress? ShippingAddress { get; set; }
+    public List<string> Tags { get; set; } = [];
+}
+
+public class ShippingAddress
+{
+    public string Street { get; set; } = string.Empty;
+    public string City { get; set; } = string.Empty;
+    public string Country { get; set; } = string.Empty;
+}
+
+public class Order
+{
+    public Guid Id { get; set; }
+
+    [ClickHouseJson(IsTyped = true)]
+    public OrderMetadata Metadata { get; set; } = new();
+}
+
+// Or via fluent API
+entity.Property(e => e.Metadata)
+    .HasColumnType("JSON")
+    .IsTypedJson();
+```
+
+### Serialization
+
+Typed POCOs use `System.Text.Json` with snake_case naming:
+
+```csharp
+// C# property
+public string CustomerName { get; set; }
+
+// Stored in ClickHouse as
+{"customer_name": "John Doe"}
+```
+
+### Querying Typed POCOs
+
+Use extension methods for LINQ queries:
+
+```csharp
+// Query using extension methods
+var seattleOrders = await context.Orders
+    .Where(o => o.Metadata.GetPath<string>("shipping_address.city") == "Seattle")
+    .Select(o => new {
+        o.Id,
+        Customer = o.Metadata.GetPath<string>("customer_name")
+    })
+    .ToListAsync();
+```
+
+**Note:** Direct property access (`o.Metadata.ShippingAddress.City`) is not translated to SQL. Use `GetPath<T>()` for server-side filtering.
 
 ## Inserting Data
 
@@ -73,19 +273,6 @@ context.Events.Add(new Event
 await context.SaveChangesAsync();
 ```
 
-### From Dictionary
-
-```csharp
-var data = new Dictionary<string, object>
-{
-    ["level"] = "error",
-    ["message"] = "Connection timeout",
-    ["details"] = new { host = "db.example.com", port = 5432 }
-};
-
-var payload = JsonSerializer.SerializeToElement(data);
-```
-
 ### From JSON String
 
 ```csharp
@@ -93,123 +280,24 @@ var jsonString = """{"key": "value", "count": 42}""";
 var payload = JsonDocument.Parse(jsonString).RootElement;
 ```
 
-## Querying
-
-### Basic Queries
-
-JSON columns can be retrieved in queries:
+### Typed POCO
 
 ```csharp
-var events = await context.Events
-    .Where(e => e.EventType == "user_interaction")
-    .Select(e => new { e.Id, e.Payload })
-    .ToListAsync();
-```
-
-### Accessing JSON Properties
-
-Access JSON properties after materialization:
-
-```csharp
-var events = await context.Events
-    .Where(e => e.EventType == "purchase")
-    .ToListAsync();
-
-foreach (var evt in events)
+context.Orders.Add(new Order
 {
-    if (evt.Payload.TryGetProperty("amount", out var amount))
+    Id = Guid.NewGuid(),
+    Metadata = new OrderMetadata
     {
-        Console.WriteLine($"Amount: {amount.GetDecimal()}");
+        CustomerName = "John Doe",
+        CustomerEmail = "john@example.com",
+        ShippingAddress = new ShippingAddress
+        {
+            City = "Seattle",
+            Country = "USA"
+        }
     }
-}
-```
-
-### Raw SQL for JSON Functions
-
-For server-side JSON operations, use raw SQL:
-
-```csharp
-var results = await context.Database
-    .SqlQuery<JsonQueryResult>($"""
-        SELECT
-            "Id",
-            JSONExtractString("Payload", 'userId') AS UserId,
-            JSONExtractFloat("Payload", 'amount') AS Amount
-        FROM "Events"
-        WHERE JSONExtractString("Payload", 'status') = 'completed'
-        """)
-    .ToListAsync();
-```
-
-## Real-World Examples
-
-### Event Tracking
-
-```csharp
-public class AnalyticsEvent
-{
-    public Guid Id { get; set; }
-    public DateTime Timestamp { get; set; }
-    public string EventName { get; set; } = string.Empty;
-    public string UserId { get; set; } = string.Empty;
-    public JsonElement Properties { get; set; }  // Flexible schema
-}
-
-// Track page view
-context.Events.Add(new AnalyticsEvent
-{
-    Id = Guid.NewGuid(),
-    Timestamp = DateTime.UtcNow,
-    EventName = "page_view",
-    UserId = "user-123",
-    Properties = JsonSerializer.SerializeToElement(new
-    {
-        page = "/products",
-        referrer = "https://google.com",
-        duration_ms = 1500
-    })
 });
-
-// Track purchase
-context.Events.Add(new AnalyticsEvent
-{
-    Id = Guid.NewGuid(),
-    Timestamp = DateTime.UtcNow,
-    EventName = "purchase",
-    UserId = "user-123",
-    Properties = JsonSerializer.SerializeToElement(new
-    {
-        order_id = "ORD-456",
-        amount = 99.99,
-        items = new[] { "SKU-001", "SKU-002" }
-    })
-});
-```
-
-### API Request Logging
-
-```csharp
-public class ApiRequestLog
-{
-    public DateTime Timestamp { get; set; }
-    public string Method { get; set; } = string.Empty;
-    public string Path { get; set; } = string.Empty;
-    public int StatusCode { get; set; }
-    public JsonElement RequestHeaders { get; set; }
-    public JsonElement? RequestBody { get; set; }
-    public JsonElement? ResponseBody { get; set; }
-}
-```
-
-### Configuration Storage
-
-```csharp
-public class TenantConfig
-{
-    public Guid TenantId { get; set; }
-    public DateTime UpdatedAt { get; set; }
-    public JsonElement Settings { get; set; }  // Flexible per-tenant settings
-}
+await context.SaveChangesAsync();
 ```
 
 ## Working with JsonElement
@@ -225,12 +313,9 @@ var element = JsonDocument.Parse("""{"key": "value"}""").RootElement;
 
 // Empty object
 var empty = JsonSerializer.SerializeToElement(new { });
-
-// Empty array
-var emptyArray = JsonSerializer.SerializeToElement(Array.Empty<object>());
 ```
 
-### Reading JsonElement
+### Reading JsonElement (Client-Side)
 
 ```csharp
 JsonElement payload = event.Payload;
@@ -244,27 +329,11 @@ if (payload.TryGetProperty("userId", out var userId))
 // Get nested property
 var nested = payload.GetProperty("details").GetProperty("host").GetString();
 
-// Get array
+// Iterate array
 foreach (var item in payload.GetProperty("items").EnumerateArray())
 {
     Console.WriteLine(item.GetString());
 }
-
-// Safe access with ValueKind check
-if (payload.ValueKind == JsonValueKind.Object)
-{
-    // Handle object
-}
-```
-
-### Deserializing
-
-```csharp
-// To typed object
-var details = payload.Deserialize<PurchaseDetails>();
-
-// To dictionary
-var dict = payload.Deserialize<Dictionary<string, JsonElement>>();
 ```
 
 ## JsonDocument vs JsonElement
@@ -284,65 +353,92 @@ public JsonElement Payload { get; set; }
 public JsonDocument Payload { get; set; }  // Memory leak risk
 ```
 
-## Limitations
+## Real-World Examples
 
-### No Server-Side JSON Path in LINQ
-
-JSON path expressions aren't translated to LINQ:
+### Event Tracking
 
 ```csharp
-// Won't work - no LINQ translation
-var filtered = await context.Events
-    .Where(e => e.Payload.GetProperty("status").GetString() == "active")
-    .ToListAsync();
-```
-
-Use raw SQL for server-side JSON filtering:
-
-```csharp
-// Works - raw SQL
-var filtered = await context.Database
-    .SqlQuery<Event>($"""
-        SELECT * FROM "Events"
-        WHERE JSONExtractString("Payload", 'status') = 'active'
-        """)
-    .ToListAsync();
-```
-
-### Schema Flexibility Trade-offs
-
-JSON columns offer schema flexibility but:
-- No compile-time type checking
-- Less efficient than typed columns for filtering
-- Consider typed columns for frequently queried fields
-
-```csharp
-// Better for frequent filtering
-public class Event
+public class AnalyticsEvent
 {
-    public string EventType { get; set; }  // Typed column - fast filtering
-    public string UserId { get; set; }      // Typed column - fast filtering
-    public JsonElement Properties { get; set; }  // JSON for flexible extras
+    public Guid Id { get; set; }
+    public DateTime Timestamp { get; set; }
+    public string EventName { get; set; } = string.Empty;
+    public string UserId { get; set; } = string.Empty;
+    public JsonElement Properties { get; set; }
+}
+
+// Query events with specific properties
+var purchases = await context.Events
+    .Where(e => e.EventName == "purchase")
+    .Where(e => e.Properties.GetPath<decimal>("amount") > 100)
+    .Select(e => new {
+        e.UserId,
+        Amount = e.Properties.GetPath<decimal>("amount"),
+        ProductId = e.Properties.GetPath<string>("product_id")
+    })
+    .ToListAsync();
+```
+
+### API Request Logging
+
+```csharp
+public class ApiRequestLog
+{
+    public DateTime Timestamp { get; set; }
+    public string Method { get; set; } = string.Empty;
+    public string Path { get; set; } = string.Empty;
+    public int StatusCode { get; set; }
+
+    [ClickHouseJson(MaxDynamicPaths = 256)]
+    public JsonElement RequestHeaders { get; set; }
+
+    public JsonElement? RequestBody { get; set; }
+}
+
+// Find requests with specific header
+var authRequests = await context.ApiLogs
+    .Where(l => l.RequestHeaders.HasPath("Authorization"))
+    .ToListAsync();
+```
+
+### Configuration Storage
+
+```csharp
+public class TenantConfig
+{
+    public Guid TenantId { get; set; }
+    public DateTime UpdatedAt { get; set; }
+
+    [ClickHouseJson(IsTyped = true)]
+    public TenantSettings Settings { get; set; } = new();
+}
+
+public class TenantSettings
+{
+    public string Theme { get; set; } = "default";
+    public int MaxUsers { get; set; } = 10;
+    public List<string> EnabledFeatures { get; set; } = [];
 }
 ```
 
 ## Best Practices
 
-### Extract Common Fields
+### Extract Frequently Filtered Fields
 
 ```csharp
-// Good: Common fields as typed columns
+// Good: Common fields as typed columns for fast filtering
 public class Event
 {
-    public string EventType { get; set; }  // Fast to filter/group
-    public decimal? Amount { get; set; }    // Fast to aggregate
-    public JsonElement Properties { get; set; }  // Flexible extras
+    public string EventType { get; set; }     // Fast to filter/group
+    public string UserId { get; set; }         // Fast to filter/group
+    public decimal? Amount { get; set; }       // Fast to aggregate
+    public JsonElement Properties { get; set; } // Flexible extras
 }
 
-// Avoid: Everything in JSON
+// Avoid: Everything in JSON (slow filtering)
 public class Event
 {
-    public JsonElement Data { get; set; }  // Hard to query efficiently
+    public JsonElement Data { get; set; }
 }
 ```
 
@@ -356,19 +452,33 @@ public class Event
 }
 ```
 
-### Validate Before Insert
+### Choose Appropriate Parameters
 
 ```csharp
-// Validate JSON structure before insert
-if (!ValidateEventPayload(payload))
-{
-    throw new ArgumentException("Invalid payload structure");
-}
+// High cardinality, many dynamic paths
+entity.Property(e => e.FlexibleData)
+    .HasColumnType("JSON")
+    .HasMaxDynamicPaths(4096);
 
-context.Events.Add(new Event { Payload = payload });
+// Low cardinality, known structure
+entity.Property(e => e.Config)
+    .HasColumnType("JSON")
+    .HasMaxDynamicPaths(64);
 ```
+
+## Known Limitations (ClickHouse 24.8)
+
+The JSON type in ClickHouse 24.8 is experimental and uses a "Dynamic" type system:
+
+1. **Experimental flag required**: Set `allow_experimental_json_type = 1` in server config
+2. **Aggregate functions** on JSON paths may require explicit type casting
+3. **Array index access** (`items[0]`) may need additional handling for Dynamic type
+4. **Numeric types**: JSON integers return as `Int64`, floats as `Float64` - use `long` and `double` in C#
+
+These limitations may be resolved in future ClickHouse versions as the JSON type matures.
 
 ## See Also
 
 - [Type Mappings Overview](overview.md)
 - [ClickHouse JSON Docs](https://clickhouse.com/docs/en/sql-reference/data-types/json)
+- [ClickHouse JSON Subcolumn Syntax](https://clickhouse.com/docs/en/sql-reference/data-types/newjson)

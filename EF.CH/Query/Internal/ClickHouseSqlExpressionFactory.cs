@@ -18,6 +18,11 @@ public class ClickHouseSqlExpressionFactory : SqlExpressionFactory
     }
 
     /// <summary>
+    /// Gets the type mapping source for ClickHouse types.
+    /// </summary>
+    public IRelationalTypeMappingSource TypeMappingSource => _typeMappingSource;
+
+    /// <summary>
     /// Creates a SQL function call expression for ClickHouse-specific functions.
     /// </summary>
     public SqlExpression ClickHouseFunction(

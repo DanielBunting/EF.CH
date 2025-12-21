@@ -60,9 +60,9 @@ public partial class ClickHouseTypeMappingSource : RelationalTypeMappingSource
         [typeof(TimeOnly)] = new ClickHouseTimeTypeMapping(),
         [typeof(TimeSpan)] = new ClickHouseTimeSpanTypeMapping(),
 
-        // JSON
-        [typeof(JsonElement)] = new ClickHouseTypeMapping("JSON", typeof(JsonElement)),
-        [typeof(JsonDocument)] = new ClickHouseTypeMapping("JSON", typeof(JsonDocument)),
+        // JSON (native JSON type, requires ClickHouse 24.8+)
+        [typeof(JsonElement)] = new ClickHouseJsonTypeMapping(typeof(JsonElement)),
+        [typeof(JsonDocument)] = new ClickHouseJsonTypeMapping(typeof(JsonDocument)),
 
         // IP Address types
         [typeof(ClickHouseIPv4)] = new ClickHouseIPv4TypeMapping(),
@@ -124,8 +124,8 @@ public partial class ClickHouseTypeMappingSource : RelationalTypeMappingSource
             ["Date32"] = new ClickHouseDate32TypeMapping(),
             ["Time"] = new ClickHouseTimeTypeMapping(),
 
-            // JSON
-            ["JSON"] = new ClickHouseTypeMapping("JSON", typeof(JsonElement)),
+            // JSON (native JSON type, requires ClickHouse 24.8+)
+            ["JSON"] = new ClickHouseJsonTypeMapping(typeof(JsonElement)),
 
             // IP Address types
             ["IPv4"] = new ClickHouseIPv4TypeMapping(),
@@ -327,6 +327,26 @@ public partial class ClickHouseTypeMappingSource : RelationalTypeMappingSource
             }
         }
 
+        // Handle JSON or JSON(max_dynamic_paths=X, max_dynamic_types=Y)
+        var jsonMatch = JsonRegex().Match(storeTypeName);
+        if (jsonMatch.Success)
+        {
+            int? maxDynamicPaths = null;
+            int? maxDynamicTypes = null;
+
+            // Parse parameters if present
+            if (jsonMatch.Groups[1].Success && !string.IsNullOrWhiteSpace(jsonMatch.Groups[1].Value))
+            {
+                var paramsString = jsonMatch.Groups[1].Value;
+                var (paths, types) = ParseJsonParameters(paramsString);
+                maxDynamicPaths = paths;
+                maxDynamicTypes = types;
+            }
+
+            var jsonClrType = clrType ?? typeof(JsonElement);
+            return new ClickHouseJsonTypeMapping(jsonClrType, maxDynamicPaths, maxDynamicTypes);
+        }
+
         // Handle Array(T)
         var arrayMatch = ArrayRegex().Match(storeTypeName);
         if (arrayMatch.Success)
@@ -455,6 +475,39 @@ public partial class ClickHouseTypeMappingSource : RelationalTypeMappingSource
         }
 
         return fields;
+    }
+
+    /// <summary>
+    /// Parses JSON type parameters from a comma-separated string.
+    /// Format: "max_dynamic_paths=1024, max_dynamic_types=32"
+    /// </summary>
+    private static (int? MaxDynamicPaths, int? MaxDynamicTypes) ParseJsonParameters(string paramsString)
+    {
+        int? maxDynamicPaths = null;
+        int? maxDynamicTypes = null;
+
+        var parts = paramsString.Split(',', StringSplitOptions.TrimEntries);
+        foreach (var part in parts)
+        {
+            var keyValue = part.Split('=', 2, StringSplitOptions.TrimEntries);
+            if (keyValue.Length != 2) continue;
+
+            var key = keyValue[0].ToLowerInvariant();
+            if (int.TryParse(keyValue[1], out var value))
+            {
+                switch (key)
+                {
+                    case "max_dynamic_paths":
+                        maxDynamicPaths = value;
+                        break;
+                    case "max_dynamic_types":
+                        maxDynamicTypes = value;
+                        break;
+                }
+            }
+        }
+
+        return (maxDynamicPaths, maxDynamicTypes);
     }
 
     /// <summary>
@@ -792,4 +845,8 @@ public partial class ClickHouseTypeMappingSource : RelationalTypeMappingSource
 
     [GeneratedRegex(@"^Nested\((.+)\)$", RegexOptions.IgnoreCase)]
     private static partial Regex NestedRegex();
+
+    // JSON type: JSON or JSON(max_dynamic_paths=X, max_dynamic_types=Y)
+    [GeneratedRegex(@"^JSON(?:\((.+)\))?$", RegexOptions.IgnoreCase)]
+    private static partial Regex JsonRegex();
 }

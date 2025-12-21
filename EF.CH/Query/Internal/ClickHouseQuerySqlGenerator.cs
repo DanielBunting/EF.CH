@@ -220,6 +220,7 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
             ClickHouseTableModifierExpression modifierExpression => VisitTableModifier(modifierExpression),
             ClickHouseFinalExpression finalExpression => VisitFinal(finalExpression),
             ClickHouseSampleExpression sampleExpression => VisitSample(sampleExpression),
+            ClickHouseJsonPathExpression jsonPathExpression => VisitJsonPath(jsonPathExpression),
             _ => base.VisitExtension(extensionExpression)
         };
     }
@@ -301,6 +302,34 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
         {
             Sql.Append(" OFFSET ");
             Sql.Append(expression.Offset.Value.ToString("G", CultureInfo.InvariantCulture));
+        }
+
+        return expression;
+    }
+
+    /// <summary>
+    /// Generates SQL for a JSON path expression using ClickHouse subcolumn syntax.
+    /// E.g., "column"."path"."subpath" or "column"."array"[1]
+    /// </summary>
+    private Expression VisitJsonPath(ClickHouseJsonPathExpression expression)
+    {
+        // Visit the column (generates: "column" or "t"."column")
+        Visit(expression.Column);
+
+        // Append each path segment with proper quoting
+        for (var i = 0; i < expression.PathSegments.Count; i++)
+        {
+            Sql.Append(".");
+            Sql.Append(_sqlGenerationHelper.DelimitIdentifier(expression.PathSegments[i]));
+
+            // Add array index if present (ClickHouse uses 1-based indexing)
+            if (expression.ArrayIndices[i].HasValue)
+            {
+                // Add 1 to convert from 0-based C# index to 1-based ClickHouse index
+                Sql.Append("[");
+                Sql.Append((expression.ArrayIndices[i]!.Value + 1).ToString(CultureInfo.InvariantCulture));
+                Sql.Append("]");
+            }
         }
 
         return expression;

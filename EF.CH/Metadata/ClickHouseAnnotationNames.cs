@@ -437,4 +437,26 @@ public static class ClickHouseAnnotationNames
     public const string DefaultExpression = Prefix + "DefaultExpression";
 
     #endregion
+
+    #region JSON Type
+
+    /// <summary>
+    /// Maximum number of dynamic paths for a JSON column.
+    /// Value type: int (default: 1024 in ClickHouse).
+    /// </summary>
+    public const string JsonMaxDynamicPaths = Prefix + "JsonMaxDynamicPaths";
+
+    /// <summary>
+    /// Maximum number of dynamic types per path for a JSON column.
+    /// Value type: int (default: 32 in ClickHouse).
+    /// </summary>
+    public const string JsonMaxDynamicTypes = Prefix + "JsonMaxDynamicTypes";
+
+    /// <summary>
+    /// Indicates this property is a typed JSON column with POCO mapping.
+    /// Value type: Type (the CLR type of the POCO).
+    /// </summary>
+    public const string JsonTypedMapping = Prefix + "JsonTypedMapping";
+
+    #endregion
 }
