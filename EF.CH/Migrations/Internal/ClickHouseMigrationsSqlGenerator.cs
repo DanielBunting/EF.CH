@@ -937,9 +937,11 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
 
         // Wrap nullable columns with Nullable() - unless using default-for-null
         // Also skip if type already contains Nullable() (e.g., LowCardinality(Nullable(String)))
+        // Skip JSON types - ClickHouse doesn't support Nullable(JSON), JSON handles nulls internally
         if (operation.IsNullable && defaultForNull == null &&
             !columnType.StartsWith("Nullable(", StringComparison.OrdinalIgnoreCase) &&
-            !columnType.Contains("Nullable(", StringComparison.OrdinalIgnoreCase))
+            !columnType.Contains("Nullable(", StringComparison.OrdinalIgnoreCase) &&
+            !columnType.StartsWith("JSON", StringComparison.OrdinalIgnoreCase))
         {
             builder.Append($"Nullable({columnType})");
         }
@@ -1304,9 +1306,11 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
 
         // Wrap nullable columns with Nullable() - unless using default-for-null
         // Also skip if type already contains Nullable() (e.g., LowCardinality(Nullable(String)))
+        // Skip JSON types - ClickHouse doesn't support Nullable(JSON), JSON handles nulls internally
         if (operation.IsNullable && defaultForNull == null &&
             !columnType.StartsWith("Nullable(", StringComparison.OrdinalIgnoreCase) &&
-            !columnType.Contains("Nullable(", StringComparison.OrdinalIgnoreCase))
+            !columnType.Contains("Nullable(", StringComparison.OrdinalIgnoreCase) &&
+            !columnType.StartsWith("JSON", StringComparison.OrdinalIgnoreCase))
         {
             columnType = $"Nullable({columnType})";
         }

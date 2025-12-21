@@ -18,7 +18,7 @@ public class FluentJsonEntity
 {
     public Guid Id { get; set; }
     public JsonElement Metadata { get; set; }
-    public JsonDocument? OptionalData { get; set; }
+    public JsonElement? OptionalData { get; set; }  // Nullable JsonElement (not JsonDocument - avoids EF snapshot issues)
 }
 
 /// <summary>
@@ -246,7 +246,8 @@ public class JsonTypeTests
         var script = context.Database.GenerateCreateScript();
 
         Assert.Contains("\"Metadata\" JSON", script);
-        Assert.Contains("\"OptionalData\" Nullable(JSON)", script);
+        // ClickHouse doesn't support Nullable(JSON) - JSON handles nulls internally
+        Assert.Contains("\"OptionalData\" JSON", script);
     }
 
     [Fact]
@@ -382,8 +383,22 @@ public class JsonTypeTests
 /// </summary>
 public class JsonTypeIntegrationTests : IAsyncLifetime
 {
+    // XML config to enable experimental JSON type
+    private const string UsersConfig = """
+        <clickhouse>
+            <profiles>
+                <default>
+                    <allow_experimental_json_type>1</allow_experimental_json_type>
+                </default>
+            </profiles>
+        </clickhouse>
+        """;
+
     private readonly ClickHouseContainer _container = new ClickHouseBuilder()
         .WithImage("clickhouse/clickhouse-server:24.8")
+        .WithResourceMapping(
+            System.Text.Encoding.UTF8.GetBytes(UsersConfig),
+            "/etc/clickhouse-server/users.d/json.xml")
         .Build();
 
     public async Task InitializeAsync()

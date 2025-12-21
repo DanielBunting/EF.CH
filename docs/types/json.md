@@ -88,10 +88,12 @@ CREATE TABLE "Events" (
     "Timestamp" DateTime64(3),
     "EventType" String,
     "Payload" JSON,
-    "Metadata" Nullable(JSON(max_dynamic_paths=2048, max_dynamic_types=64))
+    "Metadata" JSON(max_dynamic_paths=2048, max_dynamic_types=64)
 ) ENGINE = MergeTree()
 ORDER BY ("Timestamp", "Id")
 ```
+
+**Note:** ClickHouse doesn't support `Nullable(JSON)`. JSON columns handle null values internally, so nullable C# properties (`JsonElement?`) still generate `JSON` without the Nullable wrapper.
 
 ## Querying with Extension Methods
 
@@ -349,8 +351,11 @@ Prefer `JsonElement` for entity properties:
 // Good: JsonElement for entity property
 public JsonElement Payload { get; set; }
 
-// Avoid: JsonDocument requires disposal management
-public JsonDocument Payload { get; set; }  // Memory leak risk
+// Good: Nullable JsonElement for optional JSON
+public JsonElement? Metadata { get; set; }
+
+// Avoid: JsonDocument requires disposal management and causes EF change tracking issues
+public JsonDocument Payload { get; set; }  // Memory leak risk + EF snapshot issues
 ```
 
 ## Real-World Examples
