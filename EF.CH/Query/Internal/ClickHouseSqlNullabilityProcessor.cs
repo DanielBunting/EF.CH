@@ -101,6 +101,11 @@ public class ClickHouseSqlNullabilityProcessor : SqlNullabilityProcessor
             return VisitWindowFunction(windowExpression);
         }
 
+        if (node is ClickHouseJsonPathExpression jsonPathExpression)
+        {
+            return VisitJsonPath(jsonPathExpression);
+        }
+
         return base.VisitExtension(node);
     }
 
@@ -143,6 +148,42 @@ public class ClickHouseSqlNullabilityProcessor : SqlNullabilityProcessor
         return changed
             ? windowExpression.Update(arguments, partitionBy, orderBy, windowExpression.Frame)
             : windowExpression;
+    }
+
+    /// <summary>
+    /// Visits a JSON path expression, processing the column reference for nullability.
+    /// </summary>
+    private ClickHouseJsonPathExpression VisitJsonPath(ClickHouseJsonPathExpression jsonPathExpression)
+    {
+        // Visit the column expression
+        var visitedColumn = Visit(jsonPathExpression.Column, allowOptimizedExpansion: false, out _);
+
+        return visitedColumn != jsonPathExpression.Column
+            ? new ClickHouseJsonPathExpression(
+                visitedColumn,
+                jsonPathExpression.PathSegments,
+                jsonPathExpression.ArrayIndices,
+                jsonPathExpression.Type,
+                jsonPathExpression.TypeMapping)
+            : jsonPathExpression;
+    }
+
+    /// <summary>
+    /// Visits custom SQL expressions, handling ClickHouse-specific expressions like ClickHouseJsonPathExpression.
+    /// </summary>
+    protected override SqlExpression VisitCustomSqlExpression(
+        SqlExpression sqlExpression,
+        bool allowOptimizedExpansion,
+        out bool nullable)
+    {
+        if (sqlExpression is ClickHouseJsonPathExpression jsonPathExpression)
+        {
+            // JSON path expressions are nullable (the path may not exist)
+            nullable = true;
+            return VisitJsonPath(jsonPathExpression);
+        }
+
+        return base.VisitCustomSqlExpression(sqlExpression, allowOptimizedExpansion, out nullable);
     }
 
     /// <summary>

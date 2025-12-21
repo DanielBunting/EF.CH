@@ -42,11 +42,17 @@ public class ClickHouseConventionSetBuilder : RelationalConventionSetBuilder
         // Add convention that discovers [ClickHouseCodec] attributes on properties
         conventionSet.PropertyAddedConventions.Add(new ClickHouseCodecAttributeConvention());
 
+        // Add convention that discovers [ClickHouseJson] attributes on properties
+        conventionSet.PropertyAddedConventions.Add(new ClickHouseJsonAttributeConvention());
+
         // Add convention that discovers [MaterializedColumn], [AliasColumn], [DefaultExpression] attributes
         conventionSet.PropertyAddedConventions.Add(new ClickHouseComputedColumnConvention());
 
         // Add convention that discovers [SkipIndex] attributes on properties and creates indices
         conventionSet.ModelFinalizingConventions.Add(new ClickHouseSkipIndexAttributeConvention());
+
+        // Add convention that applies value converters to typed JSON properties
+        conventionSet.ModelFinalizingConventions.Add(new ClickHouseJsonValueConverterConvention());
 
         return conventionSet;
     }
