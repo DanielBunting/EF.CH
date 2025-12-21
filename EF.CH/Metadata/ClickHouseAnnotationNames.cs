@@ -400,6 +400,22 @@ public static class ClickHouseAnnotationNames
 
     #endregion
 
+    #region Aggregate Functions
+
+    /// <summary>
+    /// The aggregate function name for AggregateFunction column type.
+    /// Value is the function name (e.g., "sum", "avg", "uniq").
+    /// </summary>
+    public const string AggregateFunctionName = Prefix + "AggregateFunctionName";
+
+    /// <summary>
+    /// The underlying type for AggregateFunction column type.
+    /// Value is the ClickHouse type name (e.g., "UInt64", "Float64").
+    /// </summary>
+    public const string AggregateFunctionType = Prefix + "AggregateFunctionType";
+
+    #endregion
+
     #region Computed Columns
 
     /// <summary>

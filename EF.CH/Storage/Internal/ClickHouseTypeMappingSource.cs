@@ -386,6 +386,19 @@ public partial class ClickHouseTypeMappingSource : RelationalTypeMappingSource
             }
         }
 
+        // Handle AggregateFunction(func, T) - binary state columns
+        var aggMatch = AggregateFunctionRegex().Match(storeTypeName);
+        if (aggMatch.Success)
+        {
+            var functionName = aggMatch.Groups[1].Value;
+            var argumentType = aggMatch.Groups[2].Value.Trim();
+            var argumentMapping = ParseStoreType(argumentType, null);
+            if (argumentMapping is not null)
+            {
+                return new ClickHouseAggregateFunctionTypeMapping(functionName, argumentMapping);
+            }
+        }
+
         // Handle SimpleAggregateFunction(func, T)
         var simpleAggMatch = SimpleAggregateFunctionRegex().Match(storeTypeName);
         if (simpleAggMatch.Success)
@@ -773,6 +786,9 @@ public partial class ClickHouseTypeMappingSource : RelationalTypeMappingSource
 
     [GeneratedRegex(@"^SimpleAggregateFunction\((\w+),\s*(.+)\)$", RegexOptions.IgnoreCase)]
     private static partial Regex SimpleAggregateFunctionRegex();
+
+    [GeneratedRegex(@"^AggregateFunction\((\w+),\s*(.+)\)$", RegexOptions.IgnoreCase)]
+    private static partial Regex AggregateFunctionRegex();
 
     [GeneratedRegex(@"^Nested\((.+)\)$", RegexOptions.IgnoreCase)]
     private static partial Regex NestedRegex();
