@@ -458,6 +458,40 @@ public class ClickHouseAggregateMethodCallTranslator
             "GroupUniqArray" => TranslateSimpleAggregate("groupUniqArray", argument, returnType),
             "TopK" => TranslateTopK(arguments, returnType),
 
+            // State combinators - return byte[] for AggregatingMergeTree storage
+            "CountState" => TranslateNoArgAggregate("countState", typeof(byte[])),
+            "SumState" => TranslateSimpleAggregate("sumState", argument, typeof(byte[])),
+            "AvgState" => TranslateSimpleAggregate("avgState", argument, typeof(byte[])),
+            "MinState" => TranslateSimpleAggregate("minState", argument, typeof(byte[])),
+            "MaxState" => TranslateSimpleAggregate("maxState", argument, typeof(byte[])),
+            "UniqState" => TranslateSimpleAggregate("uniqState", argument, typeof(byte[])),
+            "UniqExactState" => TranslateSimpleAggregate("uniqExactState", argument, typeof(byte[])),
+            "QuantileState" => TranslateQuantileState(arguments),
+            "AnyState" => TranslateSimpleAggregate("anyState", argument, typeof(byte[])),
+            "AnyLastState" => TranslateSimpleAggregate("anyLastState", argument, typeof(byte[])),
+
+            // Merge combinators - read from AggregatingMergeTree state columns
+            "CountMerge" => TranslateSimpleAggregate("countMerge", argument, typeof(long)),
+            "SumMerge" => TranslateSimpleAggregate("sumMerge", argument, returnType),
+            "AvgMerge" => TranslateSimpleAggregate("avgMerge", argument, typeof(double)),
+            "MinMerge" => TranslateSimpleAggregate("minMerge", argument, returnType),
+            "MaxMerge" => TranslateSimpleAggregate("maxMerge", argument, returnType),
+            "UniqMerge" => TranslateSimpleAggregate("uniqMerge", argument, typeof(ulong)),
+            "UniqExactMerge" => TranslateSimpleAggregate("uniqExactMerge", argument, typeof(ulong)),
+            "QuantileMerge" => TranslateQuantileMerge(arguments),
+            "AnyMerge" => TranslateSimpleAggregate("anyMerge", argument, returnType),
+            "AnyLastMerge" => TranslateSimpleAggregate("anyLastMerge", argument, returnType),
+
+            // If combinators - conditional aggregation
+            "CountIf" => TranslateCountIfCombinator(argument),
+            "SumIf" => TranslateIfCombinator("sumIf", arguments, returnType),
+            "AvgIf" => TranslateIfCombinator("avgIf", arguments, typeof(double)),
+            "MinIf" => TranslateIfCombinator("minIf", arguments, returnType),
+            "MaxIf" => TranslateIfCombinator("maxIf", arguments, returnType),
+            "UniqIf" => TranslateIfCombinator("uniqIf", arguments, typeof(ulong)),
+            "UniqExactIf" => TranslateIfCombinator("uniqExactIf", arguments, typeof(ulong)),
+            "AnyIf" => TranslateIfCombinator("anyIf", arguments, returnType),
+
             _ => null
         };
     }
@@ -575,6 +609,120 @@ public class ClickHouseAggregateMethodCallTranslator
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Translates no-argument aggregate functions like countState().
+    /// </summary>
+    private SqlExpression? TranslateNoArgAggregate(string functionName, Type returnType)
+    {
+        return _sqlExpressionFactory.Function(
+            functionName,
+            Array.Empty<SqlExpression>(),
+            nullable: true,
+            argumentsPropagateNullability: Array.Empty<bool>(),
+            returnType);
+    }
+
+    /// <summary>
+    /// Translates quantileState(level)(column) - parametric aggregate state function.
+    /// </summary>
+    private SqlExpression? TranslateQuantileState(IReadOnlyList<SqlExpression> arguments)
+    {
+        // QuantileState(source, level, selector) - level is arguments[0], selector result is arguments[1]
+        if (arguments.Count < 2)
+        {
+            return null;
+        }
+
+        var levelArg = arguments[0];
+        var selectorArg = arguments[1];
+
+        // Extract the level constant
+        if (levelArg is not SqlConstantExpression levelConstant || levelConstant.Value is not double level)
+        {
+            return null;
+        }
+
+        // Create quantileState(level)(column) as a nested function call
+        return _sqlExpressionFactory.Function(
+            $"quantileState({level.ToString(System.Globalization.CultureInfo.InvariantCulture)})",
+            new[] { selectorArg },
+            nullable: true,
+            argumentsPropagateNullability: new[] { false },
+            typeof(byte[]));
+    }
+
+    /// <summary>
+    /// Translates quantileMerge(level)(stateColumn) - merges quantile states.
+    /// </summary>
+    private SqlExpression? TranslateQuantileMerge(IReadOnlyList<SqlExpression> arguments)
+    {
+        // QuantileMerge(source, level, stateSelector) - level is arguments[0], selector result is arguments[1]
+        if (arguments.Count < 2)
+        {
+            return null;
+        }
+
+        var levelArg = arguments[0];
+        var selectorArg = arguments[1];
+
+        // Extract the level constant
+        if (levelArg is not SqlConstantExpression levelConstant || levelConstant.Value is not double level)
+        {
+            return null;
+        }
+
+        // Create quantileMerge(level)(column) as a nested function call
+        return _sqlExpressionFactory.Function(
+            $"quantileMerge({level.ToString(System.Globalization.CultureInfo.InvariantCulture)})",
+            new[] { selectorArg },
+            nullable: true,
+            argumentsPropagateNullability: new[] { false },
+            typeof(double));
+    }
+
+    /// <summary>
+    /// Translates countIf(condition) - the CountIf combinator with just a predicate.
+    /// </summary>
+    private SqlExpression? TranslateCountIfCombinator(SqlExpression? predicate)
+    {
+        if (predicate == null)
+        {
+            return null;
+        }
+
+        return _sqlExpressionFactory.Function(
+            "countIf",
+            new[] { predicate },
+            nullable: false,
+            argumentsPropagateNullability: new[] { false },
+            typeof(long));
+    }
+
+    /// <summary>
+    /// Translates If combinators like sumIf(column, condition), avgIf(column, condition), etc.
+    /// </summary>
+    private SqlExpression? TranslateIfCombinator(
+        string functionName,
+        IReadOnlyList<SqlExpression> arguments,
+        Type returnType)
+    {
+        // Pattern: SumIf(source, selector, predicate) - selector is arguments[0], predicate is arguments[1]
+        if (arguments.Count < 2)
+        {
+            return null;
+        }
+
+        var selectorArg = arguments[0];
+        var predicateArg = arguments[1];
+
+        return _sqlExpressionFactory.Function(
+            functionName,
+            new[] { selectorArg, predicateArg },
+            nullable: true,
+            argumentsPropagateNullability: new[] { false, false },
+            returnType);
     }
 }
 

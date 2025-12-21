@@ -509,6 +509,40 @@ internal class ProjectionExpressionVisitor<TSource> : ExpressionVisitor
             "GroupUniqArray" => TranslateSimpleClickHouseAggregate("groupUniqArray", methodExpr),
             "TopK" => TranslateTopK(methodExpr),
 
+            // State combinators - for AggregatingMergeTree storage
+            "CountState" => "countState()",
+            "SumState" => TranslateSimpleClickHouseAggregate("sumState", methodExpr),
+            "AvgState" => TranslateSimpleClickHouseAggregate("avgState", methodExpr),
+            "MinState" => TranslateSimpleClickHouseAggregate("minState", methodExpr),
+            "MaxState" => TranslateSimpleClickHouseAggregate("maxState", methodExpr),
+            "UniqState" => TranslateSimpleClickHouseAggregate("uniqState", methodExpr),
+            "UniqExactState" => TranslateSimpleClickHouseAggregate("uniqExactState", methodExpr),
+            "QuantileState" => TranslateQuantileState(methodExpr),
+            "AnyState" => TranslateSimpleClickHouseAggregate("anyState", methodExpr),
+            "AnyLastState" => TranslateSimpleClickHouseAggregate("anyLastState", methodExpr),
+
+            // Merge combinators - for reading from AggregatingMergeTree
+            "CountMerge" => TranslateSimpleClickHouseAggregate("countMerge", methodExpr),
+            "SumMerge" => TranslateSimpleClickHouseAggregate("sumMerge", methodExpr),
+            "AvgMerge" => TranslateSimpleClickHouseAggregate("avgMerge", methodExpr),
+            "MinMerge" => TranslateSimpleClickHouseAggregate("minMerge", methodExpr),
+            "MaxMerge" => TranslateSimpleClickHouseAggregate("maxMerge", methodExpr),
+            "UniqMerge" => TranslateSimpleClickHouseAggregate("uniqMerge", methodExpr),
+            "UniqExactMerge" => TranslateSimpleClickHouseAggregate("uniqExactMerge", methodExpr),
+            "QuantileMerge" => TranslateQuantileMerge(methodExpr),
+            "AnyMerge" => TranslateSimpleClickHouseAggregate("anyMerge", methodExpr),
+            "AnyLastMerge" => TranslateSimpleClickHouseAggregate("anyLastMerge", methodExpr),
+
+            // If combinators - conditional aggregation
+            "CountIf" => TranslateCountIfAggregate(methodExpr),
+            "SumIf" => TranslateIfAggregate("sumIf", methodExpr),
+            "AvgIf" => TranslateIfAggregate("avgIf", methodExpr),
+            "MinIf" => TranslateIfAggregate("minIf", methodExpr),
+            "MaxIf" => TranslateIfAggregate("maxIf", methodExpr),
+            "UniqIf" => TranslateIfAggregate("uniqIf", methodExpr),
+            "UniqExactIf" => TranslateIfAggregate("uniqExactIf", methodExpr),
+            "AnyIf" => TranslateIfAggregate("anyIf", methodExpr),
+
             _ => throw new NotSupportedException($"ClickHouse aggregate {methodName} is not supported.")
         };
     }
@@ -565,6 +599,42 @@ internal class ProjectionExpressionVisitor<TSource> : ExpressionVisitor
         var selector = ExtractLambda(methodExpr.Arguments[2]);
         var innerSql = TranslateExpression(selector.Body);
         return $"topK({k})({innerSql})";
+    }
+
+    private string TranslateQuantileState(MethodCallExpression methodExpr)
+    {
+        // Pattern: QuantileState(source, level, selector)
+        var level = ExtractConstantValue<double>(methodExpr.Arguments[1]);
+        var selector = ExtractLambda(methodExpr.Arguments[2]);
+        var innerSql = TranslateExpression(selector.Body);
+        return $"quantileState({level.ToString(System.Globalization.CultureInfo.InvariantCulture)})({innerSql})";
+    }
+
+    private string TranslateQuantileMerge(MethodCallExpression methodExpr)
+    {
+        // Pattern: QuantileMerge(source, level, stateSelector)
+        var level = ExtractConstantValue<double>(methodExpr.Arguments[1]);
+        var selector = ExtractLambda(methodExpr.Arguments[2]);
+        var innerSql = TranslateExpression(selector.Body);
+        return $"quantileMerge({level.ToString(System.Globalization.CultureInfo.InvariantCulture)})({innerSql})";
+    }
+
+    private string TranslateCountIfAggregate(MethodCallExpression methodExpr)
+    {
+        // Pattern: CountIf(source, predicate)
+        var predicate = ExtractLambda(methodExpr.Arguments[1]);
+        var conditionSql = TranslateExpression(predicate.Body);
+        return $"countIf({conditionSql})";
+    }
+
+    private string TranslateIfAggregate(string function, MethodCallExpression methodExpr)
+    {
+        // Pattern: SumIf(source, selector, predicate) etc.
+        var selector = ExtractLambda(methodExpr.Arguments[1]);
+        var predicate = ExtractLambda(methodExpr.Arguments[2]);
+        var valueSql = TranslateExpression(selector.Body);
+        var conditionSql = TranslateExpression(predicate.Body);
+        return $"{function}({valueSql}, {conditionSql})";
     }
 
     private static LambdaExpression ExtractLambda(Expression arg)

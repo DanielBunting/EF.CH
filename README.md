@@ -20,6 +20,7 @@ An Entity Framework Core provider for [ClickHouse](https://clickhouse.com/), bui
 - **Time Series Gap Filling** - WITH FILL and INTERPOLATE for continuous time series data
 - **Query Modifiers** - FINAL, SAMPLE, PREWHERE, and SETTINGS for query-level hints
 - **Computed Columns** - MATERIALIZED, ALIAS, and DEFAULT expression columns
+- **Aggregate Combinators** - State, Merge, If, and Array combinators for AggregatingMergeTree
 
 ## Quick Start
 
@@ -467,6 +468,77 @@ entity.HasProjection("advanced_stats")
 
 See [docs/features/projections.md](docs/features/projections.md) for full documentation including all ClickHouse aggregate functions.
 
+## Aggregate Combinators
+
+ClickHouse aggregate combinators modify aggregate function behavior. Use these for AggregatingMergeTree workflows with full LINQ support:
+
+```csharp
+using EF.CH.Extensions;
+
+// Store aggregate states in byte[] columns
+public class HourlySummary
+{
+    public DateTime Hour { get; set; }
+    public byte[] CountState { get; set; } = [];
+    public byte[] SumAmountState { get; set; } = [];
+    public byte[] AvgTimeState { get; set; } = [];
+}
+
+// Configure AggregateFunction columns
+modelBuilder.Entity<HourlySummary>(entity =>
+{
+    entity.HasNoKey();
+    entity.UseAggregatingMergeTree(x => x.Hour);
+
+    entity.Property(e => e.CountState).HasAggregateFunction("count", typeof(ulong));
+    entity.Property(e => e.SumAmountState).HasAggregateFunction("sum", typeof(long));
+    entity.Property(e => e.AvgTimeState).HasAggregateFunction("avg", typeof(double));
+});
+
+// Materialize with State combinators
+.Select(g => new HourlySummary
+{
+    Hour = g.Key,
+    CountState = g.CountState(),              // countState()
+    SumAmountState = g.SumState(x => x.Amount), // sumState(Amount)
+    AvgTimeState = g.AvgState(x => x.ResponseTime)
+})
+
+// Query with Merge combinators to produce final values
+context.HourlySummary
+    .GroupBy(s => s.Hour.Date)
+    .Select(g => new
+    {
+        Date = g.Key,
+        TotalCount = g.CountMerge(s => s.CountState),     // countMerge()
+        TotalAmount = g.SumMerge<HourlySummary, long>(s => s.SumAmountState),
+        AvgTime = g.AvgMerge(s => s.AvgTimeState)
+    })
+
+// Conditional aggregation with If combinators
+.Select(g => new
+{
+    HighValueCount = g.CountIf(x => x.Amount > 1000),      // countIf()
+    HighValueSum = g.SumIf(x => x.Amount, x => x.Amount > 1000)
+})
+
+// Array element aggregation
+.Select(p => new
+{
+    TotalPrices = p.Prices.ArraySum(),   // arraySum()
+    AvgPrice = p.Prices.ArrayAvg()       // arrayAvg()
+})
+```
+
+| Combinator | Methods | Use Case |
+|------------|---------|----------|
+| `-State` | `CountState`, `SumState`, `AvgState`, `MinState`, `MaxState`, `UniqState`, `QuantileState` | Store aggregate state |
+| `-Merge` | `CountMerge`, `SumMerge`, `AvgMerge`, `MinMerge`, `MaxMerge`, `UniqMerge`, `QuantileMerge` | Combine states |
+| `-If` | `CountIf`, `SumIf`, `AvgIf`, `MinIf`, `MaxIf`, `UniqIf` | Conditional aggregation |
+| `Array*` | `ArraySum`, `ArrayAvg`, `ArrayMin`, `ArrayMax`, `ArrayCount` | Array element aggregation |
+
+See [docs/features/aggregate-combinators.md](docs/features/aggregate-combinators.md) for full documentation.
+
 ## Dictionaries
 
 ClickHouse dictionaries are in-memory key-value stores for fast lookups:
@@ -556,6 +628,7 @@ See [docs/features/external-entities.md](docs/features/external-entities.md) for
 | [Time Series Gap Filling](docs/features/interpolate.md) | WITH FILL and INTERPOLATE for continuous data |
 | [Query Modifiers](docs/features/query-modifiers.md) | FINAL, SAMPLE, PREWHERE, SETTINGS query hints |
 | [Computed Columns](docs/features/computed-columns.md) | MATERIALIZED, ALIAS, DEFAULT expression columns |
+| [Aggregate Combinators](docs/features/aggregate-combinators.md) | State, Merge, If, Array combinators for pre-aggregation |
 | [External Entities](docs/features/external-entities.md) | Query remote PostgreSQL, MySQL, Redis, ODBC |
 | [Migrations](docs/migrations.md) | EF Core migrations with ClickHouse |
 | [Scaffolding](docs/scaffolding.md) | Reverse engineering |

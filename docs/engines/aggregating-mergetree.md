@@ -27,33 +27,68 @@ Query with avgMerge(avgState) → 150
 
 ## Configuration
 
-### Basic Setup
+### Basic Setup with AggregateFunction Columns
+
+For full aggregate state storage (averages, distinct counts, percentiles), use `byte[]` properties with `HasAggregateFunction`:
+
+```csharp
+using EF.CH.Extensions;
+
+public class HourlySummary
+{
+    public DateTime Hour { get; set; }
+    public string Endpoint { get; set; } = string.Empty;
+
+    // Aggregate state columns (opaque binary)
+    public byte[] CountState { get; set; } = [];
+    public byte[] SumResponseTimeState { get; set; } = [];
+    public byte[] AvgResponseTimeState { get; set; } = [];
+    public byte[] UniqUsersState { get; set; } = [];
+}
+
+public class MyDbContext : DbContext
+{
+    public DbSet<HourlySummary> HourlySummary => Set<HourlySummary>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<HourlySummary>(entity =>
+        {
+            entity.HasNoKey();
+            entity.UseAggregatingMergeTree(x => new { x.Hour, x.Endpoint });
+
+            // Configure AggregateFunction column types
+            entity.Property(e => e.CountState)
+                .HasAggregateFunction("count", typeof(ulong));
+            entity.Property(e => e.SumResponseTimeState)
+                .HasAggregateFunction("sum", typeof(long));
+            entity.Property(e => e.AvgResponseTimeState)
+                .HasAggregateFunction("avg", typeof(double));
+            entity.Property(e => e.UniqUsersState)
+                .HasAggregateFunction("uniq", typeof(ulong));
+        });
+    }
+}
+```
+
+### Simple Setup with SimpleAggregateFunction
+
+For simpler aggregates (sum, max, min, any), use regular typed properties:
 
 ```csharp
 public class DailyStats
 {
     public DateOnly Date { get; set; }
     public string ProductId { get; set; } = string.Empty;
-
-    // These store aggregate states, not final values
-    public long TotalCount { get; set; }        // For count
-    public decimal TotalRevenue { get; set; }   // For sum
-    // Note: Averages require raw SQL or SimpleAggregateFunction
+    public long TotalCount { get; set; }
+    public decimal TotalRevenue { get; set; }
 }
 
-public class MyDbContext : DbContext
+modelBuilder.Entity<DailyStats>(entity =>
 {
-    public DbSet<DailyStats> DailyStats => Set<DailyStats>();
-
-    protected override void OnModelCreating(ModelBuilder modelBuilder)
-    {
-        modelBuilder.Entity<DailyStats>(entity =>
-        {
-            entity.HasNoKey();
-            entity.UseAggregatingMergeTree(x => new { x.Date, x.ProductId });
-        });
-    }
-}
+    entity.HasNoKey();
+    entity.UseAggregatingMergeTree(x => new { x.Date, x.ProductId });
+});
 ```
 
 ### Using SimpleAggregateFunction
@@ -143,7 +178,7 @@ modelBuilder.Entity<HourlyStats>(entity =>
 });
 ```
 
-Query with merge functions:
+Query with merge functions (raw SQL):
 
 ```csharp
 var stats = await context.Database.SqlQueryRaw<StatsResult>(@"
@@ -156,6 +191,63 @@ var stats = await context.Database.SqlQueryRaw<StatsResult>(@"
     FROM HourlyStats
     GROUP BY Hour, Endpoint
 ").ToListAsync();
+```
+
+### LINQ-Based Aggregate Combinators
+
+Use aggregate combinator extension methods for full LINQ support:
+
+**Populate with State combinators:**
+
+```csharp
+using EF.CH.Extensions;
+
+// In a materialized view or projection
+entity.AsMaterializedView<HourlySummary, ApiRequest>(
+    query: requests => requests
+        .GroupBy(r => new { Hour = r.Timestamp.ToStartOfHour(), r.Endpoint })
+        .Select(g => new HourlySummary
+        {
+            Hour = g.Key.Hour,
+            Endpoint = g.Key.Endpoint,
+            CountState = g.CountState(),                    // countState()
+            SumResponseTimeState = g.SumState(r => r.ResponseTimeMs),  // sumState()
+            AvgResponseTimeState = g.AvgState(r => (double)r.ResponseTimeMs), // avgState()
+            UniqUsersState = g.UniqState(r => r.UserId)     // uniqState()
+        }),
+    populate: false);
+```
+
+**Query with Merge combinators:**
+
+```csharp
+// Roll up hourly data to daily aggregates
+var dailyStats = await context.HourlySummary
+    .Where(s => s.Hour >= startOfDay && s.Hour < endOfDay)
+    .GroupBy(s => s.Endpoint)
+    .Select(g => new
+    {
+        Endpoint = g.Key,
+        RequestCount = g.CountMerge(s => s.CountState),       // countMerge()
+        TotalTime = g.SumMerge<HourlySummary, long>(s => s.SumResponseTimeState),
+        AvgTime = g.AvgMerge(s => s.AvgResponseTimeState),    // avgMerge()
+        UniqueUsers = g.UniqMerge(s => s.UniqUsersState)      // uniqMerge()
+    })
+    .ToListAsync();
+```
+
+**Conditional aggregation with If combinators:**
+
+```csharp
+var stats = context.ApiRequests
+    .GroupBy(r => r.Endpoint)
+    .Select(g => new
+    {
+        Endpoint = g.Key,
+        SlowRequests = g.CountIf(r => r.ResponseTimeMs > 1000),  // countIf()
+        SlowTotalTime = g.SumIf(r => r.ResponseTimeMs, r => r.ResponseTimeMs > 1000),
+        UniqueSlowUsers = g.UniqIf(r => r.UserId, r => r.ResponseTimeMs > 1000)
+    });
 ```
 
 ### Inserting Aggregate States
@@ -242,10 +334,9 @@ entity.UseAggregatingMergeTree(x => new { x.ProductId, x.Date });
 
 ## Limitations
 
-- **Complex Queries**: Full AggregateFunction requires `-Merge` syntax
-- **LINQ Limited**: Some aggregates only work via raw SQL
 - **State Storage**: Aggregate states take more space than final values
 - **Not for Simple Sums**: Use SummingMergeTree for pure summation
+- **State Columns are byte[]**: AggregateFunction columns use opaque binary storage
 
 ## When Not to Use
 
@@ -258,6 +349,7 @@ entity.UseAggregatingMergeTree(x => new { x.ProductId, x.Date });
 
 ## See Also
 
+- [Aggregate Combinators](../features/aggregate-combinators.md) - Full LINQ support for State, Merge, If combinators
 - [Engines Overview](overview.md)
 - [SummingMergeTree](summing-mergetree.md) - Simpler aggregation
 - [Materialized Views](../features/materialized-views.md)

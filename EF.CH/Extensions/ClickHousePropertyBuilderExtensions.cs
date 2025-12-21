@@ -134,6 +134,174 @@ public static class ClickHousePropertyBuilderExtensions
         return propertyBuilder;
     }
 
+    #region AggregateFunction
+
+    /// <summary>
+    /// CLR type to ClickHouse type mapping for AggregateFunction underlying types.
+    /// </summary>
+    private static readonly Dictionary<Type, string> AggregateFunctionTypeMappings = new()
+    {
+        [typeof(double)] = "Float64",
+        [typeof(float)] = "Float32",
+        [typeof(decimal)] = "Decimal(18, 4)",
+        [typeof(long)] = "Int64",
+        [typeof(int)] = "Int32",
+        [typeof(short)] = "Int16",
+        [typeof(sbyte)] = "Int8",
+        [typeof(ulong)] = "UInt64",
+        [typeof(uint)] = "UInt32",
+        [typeof(ushort)] = "UInt16",
+        [typeof(byte)] = "UInt8",
+        [typeof(DateTime)] = "DateTime64(3)",
+        [typeof(DateOnly)] = "Date",
+        [typeof(string)] = "String",
+        [typeof(Guid)] = "UUID",
+    };
+
+    /// <summary>
+    /// Configures the property to use ClickHouse AggregateFunction type.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// AggregateFunction stores opaque intermediate aggregation states as binary data.
+    /// This is used for complex aggregates that need the -State/-Merge combinator pattern.
+    /// </para>
+    /// <para>
+    /// The CLR type must be <c>byte[]</c> to store the opaque binary state.
+    /// </para>
+    /// <para>
+    /// Use with AggregatingMergeTree engine. Data is typically inserted via materialized views
+    /// using -State aggregate functions (e.g., sumState(), avgState(), uniqState()).
+    /// Query results using -Merge functions (e.g., sumMerge(), avgMerge(), uniqMerge()).
+    /// </para>
+    /// </remarks>
+    /// <param name="propertyBuilder">The property builder.</param>
+    /// <param name="functionName">The aggregate function name (e.g., "sum", "avg", "uniq", "quantile(0.95)").</param>
+    /// <param name="underlyingType">The underlying value type for the aggregate (e.g., typeof(long) for sumState of Int64).</param>
+    /// <returns>The property builder for chaining.</returns>
+    /// <exception cref="NotSupportedException">Thrown when the underlying type is not supported.</exception>
+    /// <example>
+    /// <code>
+    /// public class HourlyStats
+    /// {
+    ///     public DateTime Hour { get; set; }
+    ///     public byte[] CountState { get; set; } = [];
+    ///     public byte[] SumAmountState { get; set; } = [];
+    ///     public byte[] AvgResponseTimeState { get; set; } = [];
+    /// }
+    ///
+    /// modelBuilder.Entity&lt;HourlyStats&gt;(entity =>
+    /// {
+    ///     entity.UseAggregatingMergeTree(x => x.Hour);
+    ///
+    ///     entity.Property(e => e.CountState)
+    ///         .HasAggregateFunction("count", typeof(ulong));
+    ///
+    ///     entity.Property(e => e.SumAmountState)
+    ///         .HasAggregateFunction("sum", typeof(long));
+    ///
+    ///     entity.Property(e => e.AvgResponseTimeState)
+    ///         .HasAggregateFunction("avg", typeof(double));
+    /// });
+    /// </code>
+    /// </example>
+    public static PropertyBuilder<byte[]> HasAggregateFunction(
+        this PropertyBuilder<byte[]> propertyBuilder,
+        string functionName,
+        Type underlyingType)
+    {
+        ArgumentNullException.ThrowIfNull(propertyBuilder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(functionName);
+        ArgumentNullException.ThrowIfNull(underlyingType);
+
+        var actualType = Nullable.GetUnderlyingType(underlyingType) ?? underlyingType;
+
+        if (!AggregateFunctionTypeMappings.TryGetValue(actualType, out var storeType))
+        {
+            throw new NotSupportedException(
+                $"Type '{actualType.Name}' is not supported for AggregateFunction. " +
+                $"Supported types: {string.Join(", ", AggregateFunctionTypeMappings.Keys.Select(t => t.Name))}.");
+        }
+
+        propertyBuilder.HasColumnType($"AggregateFunction({functionName}, {storeType})");
+        propertyBuilder.HasAnnotation(ClickHouseAnnotationNames.AggregateFunctionName, functionName);
+        propertyBuilder.HasAnnotation(ClickHouseAnnotationNames.AggregateFunctionType, storeType);
+        return propertyBuilder;
+    }
+
+    /// <summary>
+    /// Configures the property to use ClickHouse AggregateFunction type.
+    /// </summary>
+    /// <param name="propertyBuilder">The property builder.</param>
+    /// <param name="functionName">The aggregate function name.</param>
+    /// <param name="underlyingType">The underlying value type.</param>
+    /// <returns>The property builder for chaining.</returns>
+    public static PropertyBuilder HasAggregateFunction(
+        this PropertyBuilder propertyBuilder,
+        string functionName,
+        Type underlyingType)
+    {
+        ArgumentNullException.ThrowIfNull(propertyBuilder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(functionName);
+        ArgumentNullException.ThrowIfNull(underlyingType);
+
+        var clrType = propertyBuilder.Metadata.ClrType;
+        if (clrType != typeof(byte[]))
+        {
+            throw new InvalidOperationException(
+                $"HasAggregateFunction can only be used on byte[] properties. " +
+                $"Property '{propertyBuilder.Metadata.Name}' is of type '{clrType.Name}'.");
+        }
+
+        var actualType = Nullable.GetUnderlyingType(underlyingType) ?? underlyingType;
+
+        if (!AggregateFunctionTypeMappings.TryGetValue(actualType, out var storeType))
+        {
+            throw new NotSupportedException(
+                $"Type '{actualType.Name}' is not supported for AggregateFunction. " +
+                $"Supported types: {string.Join(", ", AggregateFunctionTypeMappings.Keys.Select(t => t.Name))}.");
+        }
+
+        propertyBuilder.HasColumnType($"AggregateFunction({functionName}, {storeType})");
+        propertyBuilder.HasAnnotation(ClickHouseAnnotationNames.AggregateFunctionName, functionName);
+        propertyBuilder.HasAnnotation(ClickHouseAnnotationNames.AggregateFunctionType, storeType);
+        return propertyBuilder;
+    }
+
+    /// <summary>
+    /// Configures the property to use ClickHouse AggregateFunction type with a raw type string.
+    /// </summary>
+    /// <remarks>
+    /// Use this overload when you need to specify complex type expressions that aren't
+    /// directly mappable from CLR types (e.g., "Array(String)", "Tuple(String, Int64)").
+    /// </remarks>
+    /// <param name="propertyBuilder">The property builder.</param>
+    /// <param name="functionName">The aggregate function name (e.g., "groupArray", "uniq").</param>
+    /// <param name="underlyingClickHouseType">The ClickHouse type string (e.g., "String", "Array(Int64)").</param>
+    /// <returns>The property builder for chaining.</returns>
+    /// <example>
+    /// <code>
+    /// entity.Property(e => e.UniqueValuesState)
+    ///     .HasAggregateFunctionRaw("groupArrayState", "String");
+    /// </code>
+    /// </example>
+    public static PropertyBuilder<byte[]> HasAggregateFunctionRaw(
+        this PropertyBuilder<byte[]> propertyBuilder,
+        string functionName,
+        string underlyingClickHouseType)
+    {
+        ArgumentNullException.ThrowIfNull(propertyBuilder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(functionName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(underlyingClickHouseType);
+
+        propertyBuilder.HasColumnType($"AggregateFunction({functionName}, {underlyingClickHouseType})");
+        propertyBuilder.HasAnnotation(ClickHouseAnnotationNames.AggregateFunctionName, functionName);
+        propertyBuilder.HasAnnotation(ClickHouseAnnotationNames.AggregateFunctionType, underlyingClickHouseType);
+        return propertyBuilder;
+    }
+
+    #endregion
+
     #region LowCardinality
 
     /// <summary>

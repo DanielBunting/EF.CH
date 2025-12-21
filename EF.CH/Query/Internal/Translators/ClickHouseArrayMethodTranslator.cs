@@ -78,6 +78,12 @@ public class ClickHouseArrayMethodTranslator : IMethodCallTranslator
         IReadOnlyList<SqlExpression> arguments,
         IDiagnosticsLogger<DbLoggerCategory.Query> logger)
     {
+        // Handle ClickHouseAggregates array combinator methods (e.g., array.ArraySum())
+        if (instance is not null && method.DeclaringType?.FullName == "EF.CH.Extensions.ClickHouseAggregates")
+        {
+            return TranslateArrayCombinator(instance, method, arguments);
+        }
+
         // Handle instance methods on arrays/lists (e.g., list.Contains(x))
         if (instance is not null && IsArrayOrListType(method.DeclaringType))
         {
@@ -108,6 +114,61 @@ public class ClickHouseArrayMethodTranslator : IMethodCallTranslator
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Translates ClickHouseAggregates array combinator methods.
+    /// </summary>
+    private SqlExpression? TranslateArrayCombinator(
+        SqlExpression instance,
+        MethodInfo method,
+        IReadOnlyList<SqlExpression> arguments)
+    {
+        return method.Name switch
+        {
+            // ArraySum(array) → arraySum(array)
+            "ArraySum" => _sqlExpressionFactory.Function(
+                "arraySum",
+                new[] { instance },
+                nullable: true,
+                argumentsPropagateNullability: new[] { true },
+                method.ReturnType),
+
+            // ArrayAvg(array) → arrayAvg(array)
+            "ArrayAvg" => _sqlExpressionFactory.Function(
+                "arrayAvg",
+                new[] { instance },
+                nullable: true,
+                argumentsPropagateNullability: new[] { true },
+                typeof(double)),
+
+            // ArrayMin(array) → arrayMin(array)
+            "ArrayMin" => _sqlExpressionFactory.Function(
+                "arrayMin",
+                new[] { instance },
+                nullable: true,
+                argumentsPropagateNullability: new[] { true },
+                method.ReturnType),
+
+            // ArrayMax(array) → arrayMax(array)
+            "ArrayMax" => _sqlExpressionFactory.Function(
+                "arrayMax",
+                new[] { instance },
+                nullable: true,
+                argumentsPropagateNullability: new[] { true },
+                method.ReturnType),
+
+            // ArrayCount(array) → length(array)
+            // ArrayCount(array, predicate) → arrayCount(lambda, array) - predicate handling requires lambda support
+            "ArrayCount" when arguments.Count == 0 => _sqlExpressionFactory.Function(
+                "length",
+                new[] { instance },
+                nullable: true,
+                argumentsPropagateNullability: new[] { true },
+                typeof(int)),
+
+            _ => null
+        };
     }
 
     private SqlExpression? TranslateInstanceMethod(
