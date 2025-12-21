@@ -87,6 +87,12 @@ public class ClickHouseEvaluatableExpressionFilterPlugin : IEvaluatableExpressio
                 {
                     return false;
                 }
+
+                // Don't parameterize calls to Interpolate extension methods
+                if (InterpolateExtensions.AllMethodInfos.Contains(genericDef))
+                {
+                    return false;
+                }
             }
         }
 

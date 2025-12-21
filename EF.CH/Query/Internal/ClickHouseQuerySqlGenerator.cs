@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Linq.Expressions;
 using System.Threading;
 using EF.CH.Query.Internal.Expressions;
+using EF.CH.Query.Internal.WithFill;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Query.SqlExpressions;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -22,6 +23,10 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     [ThreadStatic]
     private static Dictionary<string, object>? _currentQuerySettings;
 
+    // Thread-local storage for WITH FILL / INTERPOLATE options
+    [ThreadStatic]
+    private static ClickHouseQueryCompilationContextOptions? _currentWithFillOptions;
+
     public ClickHouseQuerySqlGenerator(
         QuerySqlGeneratorDependencies dependencies,
         IRelationalTypeMappingSource typeMappingSource)
@@ -39,6 +44,14 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     internal static void SetQuerySettings(Dictionary<string, object> settings)
     {
         _currentQuerySettings = settings.Count > 0 ? new Dictionary<string, object>(settings) : null;
+    }
+
+    /// <summary>
+    /// Sets WITH FILL / INTERPOLATE options for SQL generation.
+    /// </summary>
+    internal static void SetWithFillOptions(ClickHouseQueryCompilationContextOptions options)
+    {
+        _currentWithFillOptions = (options.HasWithFill || options.HasInterpolate) ? options : null;
     }
 
     /// <summary>
@@ -96,11 +109,15 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     /// <summary>
     /// Generates LIMIT/OFFSET clauses using ClickHouse's syntax.
     /// ClickHouse uses: LIMIT [offset,] count
-    /// Also generates SETTINGS clause if query settings are present.
+    /// Also generates INTERPOLATE and SETTINGS clauses if present.
     /// </summary>
     protected override void GenerateLimitOffset(SelectExpression selectExpression)
     {
         ArgumentNullException.ThrowIfNull(selectExpression);
+
+        // Generate INTERPOLATE clause after ORDER BY but before LIMIT
+        // (INTERPOLATE is consumed and cleared here to prevent state leakage)
+        GenerateInterpolateClause();
 
         if (selectExpression.Limit is not null)
         {
@@ -373,6 +390,208 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     {
         // Handle ClickHouse-specific function naming
         return base.VisitSqlFunction(sqlFunctionExpression);
+    }
+
+    /// <summary>
+    /// Generates SQL for an ordering expression, including WITH FILL if configured.
+    /// </summary>
+    protected override Expression VisitOrdering(OrderingExpression orderingExpression)
+    {
+        // Generate the base ordering (column ASC/DESC)
+        var result = base.VisitOrdering(orderingExpression);
+
+        // Check if this column has a WITH FILL spec
+        var options = _currentWithFillOptions;
+        if (options?.HasWithFill == true)
+        {
+            var columnName = GetOrderingColumnName(orderingExpression);
+            if (columnName != null && options.WithFillSpecs.TryGetValue(columnName, out var fillSpec))
+            {
+                GenerateWithFillClause(fillSpec);
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Extracts the column name from an ordering expression for matching against WITH FILL specs.
+    /// </summary>
+    private static string? GetOrderingColumnName(OrderingExpression ordering)
+    {
+        var expression = ordering.Expression;
+
+        // Handle column expressions
+        if (expression is ColumnExpression column)
+        {
+            return column.Name;
+        }
+
+        // Handle projections/aliases
+        if (expression is SqlUnaryExpression unary)
+        {
+            expression = unary.Operand;
+            if (expression is ColumnExpression innerColumn)
+            {
+                return innerColumn.Name;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Generates the WITH FILL clause for an ORDER BY column.
+    /// </summary>
+    private void GenerateWithFillClause(WithFillColumnSpec spec)
+    {
+        Sql.Append(" WITH FILL");
+
+        if (spec.From != null)
+        {
+            Sql.Append(" FROM ");
+            GenerateFillValue(spec.From);
+        }
+
+        if (spec.To != null)
+        {
+            Sql.Append(" TO ");
+            GenerateFillValue(spec.To);
+        }
+
+        if (spec.Step != null)
+        {
+            Sql.Append(" STEP ");
+            GenerateStepValue(spec.Step);
+        }
+
+        if (spec.Staleness != null)
+        {
+            Sql.Append(" STALENESS ");
+            GenerateStepValue(spec.Staleness);
+        }
+    }
+
+    /// <summary>
+    /// Generates a FROM/TO value for WITH FILL.
+    /// </summary>
+    private void GenerateFillValue(object value)
+    {
+        switch (value)
+        {
+            case DateTime dt:
+                Sql.Append($"toDateTime64('{dt:yyyy-MM-dd HH:mm:ss.fff}', 3)");
+                break;
+            case DateOnly d:
+                Sql.Append($"toDate('{d:yyyy-MM-dd}')");
+                break;
+            case DateTimeOffset dto:
+                Sql.Append($"toDateTime64('{dto.UtcDateTime:yyyy-MM-dd HH:mm:ss.fff}', 3)");
+                break;
+            case int i:
+                Sql.Append(i.ToString(CultureInfo.InvariantCulture));
+                break;
+            case long l:
+                Sql.Append(l.ToString(CultureInfo.InvariantCulture));
+                break;
+            case double d:
+                Sql.Append(d.ToString(CultureInfo.InvariantCulture));
+                break;
+            case decimal dec:
+                Sql.Append(dec.ToString(CultureInfo.InvariantCulture));
+                break;
+            case float f:
+                Sql.Append(f.ToString(CultureInfo.InvariantCulture));
+                break;
+            default:
+                Sql.Append(value.ToString() ?? string.Empty);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Generates a STEP or STALENESS value for WITH FILL.
+    /// </summary>
+    private void GenerateStepValue(object step)
+    {
+        switch (step)
+        {
+            case TimeSpan ts:
+                // Convert TimeSpan to appropriate INTERVAL
+                if (ts.TotalDays >= 1 && ts.TotalDays % 1 == 0)
+                    Sql.Append($"INTERVAL {(int)ts.TotalDays} DAY");
+                else if (ts.TotalHours >= 1 && ts.TotalHours % 1 == 0)
+                    Sql.Append($"INTERVAL {(int)ts.TotalHours} HOUR");
+                else if (ts.TotalMinutes >= 1 && ts.TotalMinutes % 1 == 0)
+                    Sql.Append($"INTERVAL {(int)ts.TotalMinutes} MINUTE");
+                else if (ts.TotalSeconds >= 1 && ts.TotalSeconds % 1 == 0)
+                    Sql.Append($"INTERVAL {(int)ts.TotalSeconds} SECOND");
+                else
+                    Sql.Append($"INTERVAL {(long)ts.TotalMilliseconds} MILLISECOND");
+                break;
+
+            case ClickHouseInterval interval:
+                Sql.Append(interval.ToSql());
+                break;
+
+            case int i:
+                Sql.Append(i.ToString(CultureInfo.InvariantCulture));
+                break;
+
+            case long l:
+                Sql.Append(l.ToString(CultureInfo.InvariantCulture));
+                break;
+
+            case double d:
+                Sql.Append(d.ToString(CultureInfo.InvariantCulture));
+                break;
+
+            default:
+                Sql.Append(step.ToString() ?? string.Empty);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Generates the INTERPOLATE clause after ORDER BY.
+    /// </summary>
+    private void GenerateInterpolateClause()
+    {
+        var options = Interlocked.Exchange(ref _currentWithFillOptions, null);
+
+        if (options?.HasInterpolate != true)
+        {
+            return;
+        }
+
+        Sql.AppendLine();
+        Sql.Append("INTERPOLATE (");
+
+        var first = true;
+        foreach (var spec in options.InterpolateSpecs)
+        {
+            if (!first) Sql.Append(", ");
+            first = false;
+
+            var quotedName = _sqlGenerationHelper.DelimitIdentifier(spec.ColumnName);
+            Sql.Append(quotedName);
+
+            if (spec.Mode == InterpolateMode.Prev)
+            {
+                // Forward-fill: column AS column
+                Sql.Append(" AS ");
+                Sql.Append(quotedName);
+            }
+            else if (spec.IsConstant && spec.ConstantValue != null)
+            {
+                // Constant value
+                Sql.Append(" AS ");
+                GenerateFillValue(spec.ConstantValue);
+            }
+            // InterpolateMode.Default = no AS clause needed
+        }
+
+        Sql.Append(")");
     }
 
     /// <summary>

@@ -63,6 +63,12 @@ public class ClickHouseQueryTranslationPostprocessor : RelationalQueryTranslatio
             ClickHouseQuerySqlGenerator.SetQuerySettings(options.QuerySettings);
         }
 
+        // Pass WITH FILL / INTERPOLATE specs via thread-local to SQL generator
+        if (options.HasWithFill || options.HasInterpolate)
+        {
+            ClickHouseQuerySqlGenerator.SetWithFillOptions(options);
+        }
+
         return query;
     }
 }

@@ -1,6 +1,7 @@
 using System.Linq.Expressions;
 using System.Reflection;
 using EF.CH.Extensions;
+using EF.CH.Query.Internal.WithFill;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Query.SqlExpressions;
 
@@ -113,6 +114,12 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
             {
                 return TranslateWithSetting(methodCallExpression);
             }
+
+            // Handle unified Interpolate extension methods
+            if (InterpolateExtensions.AllMethodInfos.Contains(genericDef))
+            {
+                return TranslateInterpolate(methodCallExpression);
+            }
         }
 
         return base.VisitMethodCall(methodCallExpression);
@@ -214,6 +221,176 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
         _options.QuerySettings[name] = value;
 
         return source;
+    }
+
+    /// <summary>
+    /// Translates the unified Interpolate() extension method.
+    /// Extracts fill column, step, optional from/to, and column interpolations.
+    /// </summary>
+    private Expression TranslateInterpolate(MethodCallExpression methodCallExpression)
+    {
+        var source = Visit(methodCallExpression.Arguments[0]);
+
+        // Extract fill column selector (argument 1)
+        var fillArg = methodCallExpression.Arguments[1];
+        var fillSelector = UnwrapLambda(fillArg);
+        var fillColumnName = ExtractMemberName(fillSelector);
+
+        // Extract step (argument 2)
+        if (!TryGetConstantValue<object>(methodCallExpression.Arguments[2], out var step))
+        {
+            throw new InvalidOperationException("Interpolate step must be a constant value.");
+        }
+
+        object? from = null;
+        object? to = null;
+
+        var genericDef = methodCallExpression.Method.GetGenericMethodDefinition();
+        var paramCount = methodCallExpression.Arguments.Count;
+        var genericArgCount = methodCallExpression.Method.GetGenericArguments().Length;
+
+        // Determine which overload we're dealing with
+        // Basic: 3 args (source, fill, step)
+        // FromTo: 5 args with 2 generic args (source, fill, step, from, to)
+        // ColumnMode: 5 args with 3 generic args, last is InterpolateMode
+        // ColumnConstant: 5 args with 3 generic args, last is TValue
+        // Builder: 4 args with 2 generic args, last is Action<InterpolateBuilder<T>>
+
+        var isFromTo = paramCount == 5 && genericArgCount == 2;
+        var isColumnMode = paramCount == 5 && genericArgCount == 3 &&
+            methodCallExpression.Arguments[4] is ConstantExpression ce && ce.Type == typeof(InterpolateMode);
+        var isColumnConstant = paramCount == 5 && genericArgCount == 3 && !isColumnMode;
+        var isBuilder = paramCount == 4 && genericArgCount == 2;
+
+        if (isFromTo)
+        {
+            TryGetConstantValue<object>(methodCallExpression.Arguments[3], out from);
+            TryGetConstantValue<object>(methodCallExpression.Arguments[4], out to);
+        }
+
+        // Store the fill spec
+        _options.WithFillSpecs[fillColumnName] = new WithFillColumnSpec
+        {
+            ColumnName = fillColumnName,
+            Step = step,
+            From = from,
+            To = to
+        };
+
+        // Handle column interpolation if present
+        if (isColumnMode)
+        {
+            var columnArg = methodCallExpression.Arguments[3];
+            var columnSelector = UnwrapLambda(columnArg);
+            var columnName = ExtractMemberName(columnSelector);
+
+            if (!TryGetConstantValue<InterpolateMode>(methodCallExpression.Arguments[4], out var mode))
+            {
+                throw new InvalidOperationException("Interpolate mode must be a constant value.");
+            }
+
+            _options.InterpolateSpecs.Add(new InterpolateColumnSpec
+            {
+                ColumnName = columnName,
+                Mode = mode
+            });
+        }
+        else if (isColumnConstant)
+        {
+            var columnArg = methodCallExpression.Arguments[3];
+            var columnSelector = UnwrapLambda(columnArg);
+            var columnName = ExtractMemberName(columnSelector);
+
+            TryGetConstantValue<object>(methodCallExpression.Arguments[4], out var constantValue);
+
+            _options.InterpolateSpecs.Add(new InterpolateColumnSpec
+            {
+                ColumnName = columnName,
+                IsConstant = true,
+                ConstantValue = constantValue
+            });
+        }
+        else if (isBuilder)
+        {
+            // Extract the builder from the constant
+            if (!TryGetConstantValue<object>(methodCallExpression.Arguments[3], out var builderObj))
+            {
+                throw new InvalidOperationException("Interpolate builder must be a constant value.");
+            }
+
+            // Use reflection to get the Columns property from InterpolateBuilder<T>
+            var builderType = builderObj.GetType();
+            var columnsProperty = builderType.GetProperty("Columns",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+            if (columnsProperty?.GetValue(builderObj) is System.Collections.IEnumerable columns)
+            {
+                foreach (var col in columns)
+                {
+                    // col is InterpolateBuilder<T>.InterpolateColumn record
+                    var colType = col.GetType();
+                    var columnProp = colType.GetProperty("Column");
+                    var modeProp = colType.GetProperty("Mode");
+                    var constantProp = colType.GetProperty("Constant");
+                    var isConstantProp = colType.GetProperty("IsConstant");
+
+                    var columnExpr = columnProp?.GetValue(col) as LambdaExpression;
+                    var mode = modeProp?.GetValue(col);
+                    var constant = constantProp?.GetValue(col);
+                    var isConstant = (bool)(isConstantProp?.GetValue(col) ?? false);
+
+                    if (columnExpr != null)
+                    {
+                        var columnName = ExtractMemberName(columnExpr);
+                        _options.InterpolateSpecs.Add(new InterpolateColumnSpec
+                        {
+                            ColumnName = columnName,
+                            Mode = isConstant ? InterpolateMode.Default : (InterpolateMode)(mode ?? InterpolateMode.Default),
+                            IsConstant = isConstant,
+                            ConstantValue = constant
+                        });
+                    }
+                }
+            }
+        }
+
+        return source;
+    }
+
+    /// <summary>
+    /// Unwraps a lambda expression from Quote wrapping.
+    /// </summary>
+    private static LambdaExpression UnwrapLambda(Expression expression)
+    {
+        while (expression is UnaryExpression unary && unary.NodeType == ExpressionType.Quote)
+        {
+            expression = unary.Operand;
+        }
+
+        return expression as LambdaExpression
+            ?? throw new InvalidOperationException($"Expected lambda expression, got {expression.GetType().Name}");
+    }
+
+    /// <summary>
+    /// Extracts the member name from a lambda expression body.
+    /// </summary>
+    private static string ExtractMemberName(LambdaExpression lambda)
+    {
+        var body = lambda.Body;
+
+        // Handle Convert wrapper
+        if (body is UnaryExpression unary && unary.NodeType == ExpressionType.Convert)
+        {
+            body = unary.Operand;
+        }
+
+        if (body is MemberExpression member)
+        {
+            return member.Member.Name;
+        }
+
+        // For complex expressions, use the expression string as key
+        return body.ToString();
     }
 
     /// <summary>
@@ -370,6 +547,27 @@ public class ClickHouseQueryCompilationContextOptions
     /// ClickHouse query settings to append as SETTINGS clause.
     /// </summary>
     public Dictionary<string, object> QuerySettings { get; } = new();
+
+    /// <summary>
+    /// WITH FILL specifications for ORDER BY columns.
+    /// Key: column name
+    /// </summary>
+    internal Dictionary<string, WithFillColumnSpec> WithFillSpecs { get; } = new();
+
+    /// <summary>
+    /// INTERPOLATE specifications for non-ORDER BY columns.
+    /// </summary>
+    internal List<InterpolateColumnSpec> InterpolateSpecs { get; } = new();
+
+    /// <summary>
+    /// Whether any WITH FILL specifications have been added.
+    /// </summary>
+    public bool HasWithFill => WithFillSpecs.Count > 0;
+
+    /// <summary>
+    /// Whether any INTERPOLATE specifications have been added.
+    /// </summary>
+    public bool HasInterpolate => InterpolateSpecs.Count > 0;
 }
 
 /// <summary>
