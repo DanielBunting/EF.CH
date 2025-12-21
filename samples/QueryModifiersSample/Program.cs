@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 // Demonstrates ClickHouse-specific query modifiers:
 // - Final() for ReplacingMergeTree deduplication
 // - Sample() for probabilistic sampling
+// - PreWhere() for optimized pre-filtering
 // - WithSettings() for query-level settings
 // ============================================================
 
@@ -138,6 +139,25 @@ Console.WriteLine($"Sampled {sampledEvents.Count} events (expected ~100)");
 Console.WriteLine($"Purchase events in sample: {purchaseCount}");
 Console.WriteLine($"Extrapolated total purchases: ~{purchaseCount * 10}\n");
 
+// Demonstrate PreWhere() - optimized pre-filtering
+// PREWHERE reads only filter columns first, then remaining columns for matching rows
+Console.WriteLine("--- PreWhere() - optimized pre-filtering on ORDER BY key ---");
+var cutoffTime = DateTime.UtcNow.AddMinutes(-5000);
+var recentEvents = await context.Events
+    .PreWhere(e => e.Timestamp > cutoffTime)  // Reads Timestamp first (ORDER BY key)
+    .ToListAsync();
+
+Console.WriteLine($"Found {recentEvents.Count} events after cutoff using PREWHERE.");
+Console.WriteLine("PREWHERE reads only Timestamp column first, then full rows for matches.\n");
+
+// PreWhere with combined conditions
+Console.WriteLine("--- PreWhere() with combined conditions ---");
+var recentPurchases = await context.Events
+    .PreWhere(e => e.Timestamp > cutoffTime && e.EventType == "purchase")
+    .ToListAsync();
+
+Console.WriteLine($"Found {recentPurchases.Count} recent purchases using PREWHERE.\n");
+
 // Demonstrate WithSettings() - query-level settings
 Console.WriteLine("--- WithSettings() - controlling query execution ---");
 var eventsWithSettings = await context.Events
@@ -169,6 +189,15 @@ var activeUsers = await context.Users
     .ToListAsync();
 
 Console.WriteLine($"Found {activeUsers.Count} deduplicated active users.\n");
+
+// Combining Final() and PreWhere()
+Console.WriteLine("--- Combining Final() and PreWhere() ---");
+var recentActiveUsers = await context.Users
+    .Final()
+    .PreWhere(u => u.UpdatedAt > DateTime.UtcNow.AddHours(-2))
+    .ToListAsync();
+
+Console.WriteLine($"Found {recentActiveUsers.Count} recently updated users (deduplicated with PREWHERE).\n");
 
 Console.WriteLine("Done!");
 

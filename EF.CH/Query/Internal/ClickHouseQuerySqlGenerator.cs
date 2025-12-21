@@ -27,6 +27,10 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     [ThreadStatic]
     private static ClickHouseQueryCompilationContextOptions? _currentWithFillOptions;
 
+    // Thread-local storage for PREWHERE expression
+    [ThreadStatic]
+    private static SqlExpression? _currentPreWhereExpression;
+
     public ClickHouseQuerySqlGenerator(
         QuerySqlGeneratorDependencies dependencies,
         IRelationalTypeMappingSource typeMappingSource)
@@ -52,6 +56,14 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     internal static void SetWithFillOptions(ClickHouseQueryCompilationContextOptions options)
     {
         _currentWithFillOptions = (options.HasWithFill || options.HasInterpolate) ? options : null;
+    }
+
+    /// <summary>
+    /// Sets PREWHERE expression to be generated before WHERE clause.
+    /// </summary>
+    internal static void SetPreWhereExpression(SqlExpression expression)
+    {
+        _currentPreWhereExpression = expression;
     }
 
     /// <summary>
@@ -641,6 +653,92 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
         }
 
         return base.VisitColumn(columnExpression);
+    }
+
+    /// <summary>
+    /// Generates SELECT statement with optional PREWHERE clause.
+    /// PREWHERE is injected between FROM and WHERE.
+    /// </summary>
+    protected override Expression VisitSelect(SelectExpression selectExpression)
+    {
+        // Capture and clear PREWHERE expression atomically
+        var preWhereExpr = Interlocked.Exchange(ref _currentPreWhereExpression, null);
+
+        if (preWhereExpr == null)
+        {
+            // No PREWHERE - use base implementation
+            return base.VisitSelect(selectExpression);
+        }
+
+        // Generate SELECT with PREWHERE injection
+        IDisposable? subQueryIndent = null;
+
+        if (selectExpression.Alias != null)
+        {
+            Sql.AppendLine("(");
+            subQueryIndent = Sql.Indent();
+        }
+
+        Sql.Append("SELECT ");
+
+        if (selectExpression.IsDistinct)
+        {
+            Sql.Append("DISTINCT ");
+        }
+
+        GenerateTop(selectExpression);
+
+        // Generate projection using base helper
+        GenerateProjection(selectExpression);
+
+        // Generate FROM clause using base helper
+        GenerateFrom(selectExpression);
+
+        // Generate PREWHERE (before WHERE)
+        Sql.AppendLine().Append("PREWHERE ");
+        Visit(preWhereExpr);
+
+        // Generate WHERE
+        if (selectExpression.Predicate != null)
+        {
+            Sql.AppendLine().Append("WHERE ");
+            Visit(selectExpression.Predicate);
+        }
+
+        // Generate GROUP BY
+        if (selectExpression.GroupBy.Count > 0)
+        {
+            Sql.AppendLine().Append("GROUP BY ");
+            for (var i = 0; i < selectExpression.GroupBy.Count; i++)
+            {
+                if (i > 0) Sql.Append(", ");
+                Visit(selectExpression.GroupBy[i]);
+            }
+        }
+
+        // Generate HAVING
+        if (selectExpression.Having != null)
+        {
+            Sql.AppendLine().Append("HAVING ");
+            Visit(selectExpression.Having);
+        }
+
+        // Generate ORDER BY (base method handles WITH FILL via VisitOrdering override)
+        GenerateOrderings(selectExpression);
+
+        // Generate LIMIT/OFFSET (includes INTERPOLATE and SETTINGS)
+        GenerateLimitOffset(selectExpression);
+
+        subQueryIndent?.Dispose();
+
+        if (selectExpression.Alias != null)
+        {
+            Sql.AppendLine().Append(")");
+            Sql.Append(AliasSeparator);
+            Sql.Append(_sqlGenerationHelper.DelimitIdentifier(selectExpression.Alias));
+        }
+
+        return selectExpression;
     }
 }
 

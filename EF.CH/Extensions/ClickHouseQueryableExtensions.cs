@@ -187,4 +187,41 @@ public static class ClickHouseQueryableExtensions
     internal static readonly MethodInfo WithSettingMethodInfo =
         typeof(ClickHouseQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
             .First(m => m.Name == nameof(WithSetting));
+
+    /// <summary>
+    /// Applies PREWHERE clause for optimized filtering before column reads.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// PREWHERE is a ClickHouse-specific optimization that filters rows before reading
+    /// all columns. It reads only the filter columns first, then reads remaining columns
+    /// for matching rows, reducing I/O for large tables with selective filters.
+    /// </para>
+    /// <para>
+    /// Best suited for filtering on indexed/sorted columns (ORDER BY key columns)
+    /// with highly selective predicates that eliminate most rows.
+    /// </para>
+    /// </remarks>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <param name="source">The source queryable.</param>
+    /// <param name="predicate">The filter predicate to apply as PREWHERE.</param>
+    /// <returns>A queryable with PREWHERE applied.</returns>
+    public static IQueryable<TEntity> PreWhere<TEntity>(
+        this IQueryable<TEntity> source,
+        Expression<Func<TEntity, bool>> predicate)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(predicate);
+
+        return source.Provider.CreateQuery<TEntity>(
+            Expression.Call(
+                null,
+                PreWhereMethodInfo.MakeGenericMethod(typeof(TEntity)),
+                source.Expression,
+                Expression.Quote(predicate)));
+    }
+
+    internal static readonly MethodInfo PreWhereMethodInfo =
+        typeof(ClickHouseQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .First(m => m.Name == nameof(PreWhere) && m.GetParameters().Length == 2);
 }
