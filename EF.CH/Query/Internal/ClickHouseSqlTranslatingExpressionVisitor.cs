@@ -457,19 +457,10 @@ public class ClickHouseSqlTranslatingExpressionVisitor : RelationalSqlTranslatin
     }
 
     /// <summary>
-    /// Visits member expressions, handling WindowBuilder.Value property access.
+    /// Visits member expressions.
     /// </summary>
     protected override Expression VisitMember(MemberExpression memberExpression)
     {
-        // Handle WindowBuilder<T>.Value property access
-        // This is the preferred way to get the result type in anonymous types
-        if (memberExpression.Member.Name == "Value" &&
-            memberExpression.Expression != null &&
-            IsWindowBuilderType(memberExpression.Expression.Type))
-        {
-            return TranslateWindowFunctionFromBuilder(memberExpression.Expression);
-        }
-
         return base.VisitMember(memberExpression);
     }
 
@@ -490,12 +481,17 @@ public class ClickHouseSqlTranslatingExpressionVisitor : RelationalSqlTranslatin
         }
 
         // Check if this is a WindowBuilder<T> method - indicates window function usage
-        // The expression tree is: Window.RowNumber().PartitionBy().OrderBy()...
+        // The expression tree is: Window.RowNumber().PartitionBy().OrderBy().Build()
         // When we see a WindowBuilder<T> method, we translate the entire chain
         if (declaringType != null &&
             declaringType.IsGenericType &&
             declaringType.GetGenericTypeDefinition() == typeof(WindowBuilder<>))
         {
+            // Handle Build() method call - this terminates the builder chain
+            if (method.Name == nameof(WindowBuilder<int>.Build))
+            {
+                return TranslateWindowFunctionFromBuilder(methodCallExpression.Object!);
+            }
             return TranslateWindowFunctionFromBuilder(methodCallExpression);
         }
 

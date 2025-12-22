@@ -1,10 +1,10 @@
-using EF.CH.Metadata;
+using EF.CH.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 
-namespace EF.CH.Infrastructure;
+namespace EF.CH.Metadata.Internal;
 
 /// <summary>
 /// Validates models for ClickHouse-specific requirements.

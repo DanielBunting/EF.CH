@@ -122,13 +122,13 @@ public static class ClickHousePropertyBuilderJsonExtensions
     ///
     /// entity.Property(x => x.Metadata)
     ///     .HasColumnType("JSON")
-    ///     .IsTypedJson();
+    ///     .HasTypedJson();
     ///
     /// // Enables: context.Orders.Select(o => o.Metadata.CustomerName)
     /// // Translates to: SELECT "Metadata"."CustomerName" FROM ...
     /// </code>
     /// </example>
-    public static PropertyBuilder<TProperty> IsTypedJson<TProperty>(
+    public static PropertyBuilder<TProperty> HasTypedJson<TProperty>(
         this PropertyBuilder<TProperty> propertyBuilder)
         where TProperty : class
     {

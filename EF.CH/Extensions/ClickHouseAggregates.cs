@@ -150,6 +150,14 @@ public static class ClickHouseAggregates
         Func<TSource, TValue> selector) => Throw<TValue[]>();
 
     /// <summary>
+    /// Collects up to maxSize unique values into an array. Translates to groupUniqArray(maxSize)(column).
+    /// </summary>
+    public static TValue[] GroupUniqArray<TSource, TValue>(
+        this IEnumerable<TSource> source,
+        int maxSize,
+        Func<TSource, TValue> selector) => Throw<TValue[]>();
+
+    /// <summary>
     /// Returns the top K most frequent values. Translates to topK(k)(column).
     /// </summary>
     public static TValue[] TopK<TSource, TValue>(
@@ -409,6 +417,19 @@ public static class ClickHouseAggregates
     public static int ArrayCount<T>(this T[] array, Func<T, bool> predicate)
         => Throw<int>();
 
+    /// <summary>
+    /// Returns the count of array elements. Translates to length(column).
+    /// </summary>
+    public static int ArrayCount<T>(this IEnumerable<T> array)
+        => Throw<int>();
+
+    /// <summary>
+    /// Returns the count of array elements matching the predicate.
+    /// Translates to arrayCount(x -> predicate, column).
+    /// </summary>
+    public static int ArrayCount<T>(this IEnumerable<T> array, Func<T, bool> predicate)
+        => Throw<int>();
+
     #endregion
 
     #region If Combinators
@@ -479,6 +500,28 @@ public static class ClickHouseAggregates
         this IEnumerable<TSource> source,
         Func<TSource, TValue> selector,
         Func<TSource, bool> predicate) => Throw<TValue>();
+
+    /// <summary>
+    /// Returns the last value where predicate is true. Translates to anyLastIf(column, condition).
+    /// </summary>
+    public static TValue AnyLastIf<TSource, TValue>(
+        this IEnumerable<TSource> source,
+        Func<TSource, TValue> selector,
+        Func<TSource, bool> predicate) => Throw<TValue>();
+
+    /// <summary>
+    /// Computes an approximate quantile where predicate is true.
+    /// Translates to quantileIf(level)(column, condition).
+    /// </summary>
+    /// <param name="source">The source enumerable (group).</param>
+    /// <param name="level">Quantile level from 0 to 1 (e.g., 0.95 for 95th percentile).</param>
+    /// <param name="selector">The value selector.</param>
+    /// <param name="predicate">The filter predicate.</param>
+    public static double QuantileIf<TSource>(
+        this IEnumerable<TSource> source,
+        double level,
+        Func<TSource, double> selector,
+        Func<TSource, bool> predicate) => Throw<double>();
 
     #endregion
 

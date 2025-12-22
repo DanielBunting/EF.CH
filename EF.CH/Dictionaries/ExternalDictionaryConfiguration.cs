@@ -202,19 +202,21 @@ public sealed class ExternalDictionaryConfiguration<TDictionary>
     /// <summary>
     /// Configures the dictionary to use CACHE layout.
     /// </summary>
-    /// <param name="configure">Configuration for cache options (size is required).</param>
+    /// <param name="configure">Optional configuration for cache options. If not provided, uses default size.</param>
     /// <returns>The configuration builder for chaining.</returns>
     public ExternalDictionaryConfiguration<TDictionary> UseCacheLayout(
-        Action<CacheLayoutOptions> configure)
+        Action<CacheLayoutOptions>? configure = null)
     {
-        ArgumentNullException.ThrowIfNull(configure);
         _layout = DictionaryLayout.Cache;
-        var options = new CacheLayoutOptions();
-        configure(options);
-        _layoutOptions = new Dictionary<string, object>
+        if (configure != null)
         {
-            ["size_in_cells"] = options.SizeInCells
-        };
+            var options = new CacheLayoutOptions();
+            configure(options);
+            _layoutOptions = new Dictionary<string, object>
+            {
+                ["size_in_cells"] = options.SizeInCells
+            };
+        }
         return this;
     }
 

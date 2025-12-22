@@ -697,6 +697,31 @@ public static class ClickHouseEntityTypeBuilderExtensions
         return builder.HasPartitionBy($"toYear(\"{columnName}\")");
     }
 
+    /// <summary>
+    /// Configures PARTITION BY using an expression-based column selector.
+    /// </summary>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <typeparam name="TProperty">The property type.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="partitionExpression">Expression selecting the column to partition by.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    /// <example>
+    /// <code>
+    /// entity.HasPartitionBy(x => x.Region);
+    /// // Generates: PARTITION BY "Region"
+    /// </code>
+    /// </example>
+    public static EntityTypeBuilder<TEntity> HasPartitionBy<TEntity, TProperty>(
+        this EntityTypeBuilder<TEntity> builder,
+        Expression<Func<TEntity, TProperty>> partitionExpression)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(partitionExpression);
+        var columnName = ExpressionExtensions.GetPropertyName(partitionExpression);
+        return builder.HasPartitionBy($"\"{columnName}\"");
+    }
+
     #endregion
 
     /// <summary>
@@ -730,6 +755,31 @@ public static class ClickHouseEntityTypeBuilderExtensions
     {
         ((EntityTypeBuilder)builder).HasSampleBy(sampleExpression);
         return builder;
+    }
+
+    /// <summary>
+    /// Configures the SAMPLE BY expression using an expression-based column selector.
+    /// </summary>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <typeparam name="TProperty">The property type.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="sampleExpression">Expression selecting the column for SAMPLE BY.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    /// <example>
+    /// <code>
+    /// entity.HasSampleBy(x => x.UserId);
+    /// // Generates: SAMPLE BY "UserId"
+    /// </code>
+    /// </example>
+    public static EntityTypeBuilder<TEntity> HasSampleBy<TEntity, TProperty>(
+        this EntityTypeBuilder<TEntity> builder,
+        Expression<Func<TEntity, TProperty>> sampleExpression)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(sampleExpression);
+        var columnName = ExpressionExtensions.GetPropertyName(sampleExpression);
+        return builder.HasSampleBy($"\"{columnName}\"");
     }
 
     /// <summary>

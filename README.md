@@ -218,8 +218,8 @@ public class Order
 // Or via fluent API
 modelBuilder.Entity<Order>(entity =>
 {
-    entity.Property(e => e.TotalWithTax).IsMaterialized("Amount * 1.1");
-    entity.Property(e => e.FullName).IsAlias("concat(FirstName, ' ', LastName)");
+    entity.Property(e => e.TotalWithTax).HasMaterializedExpression("Amount * 1.1");
+    entity.Property(e => e.FullName).HasAliasExpression("concat(FirstName, ' ', LastName)");
     entity.Property(e => e.CreatedAt).HasDefaultExpression("now()");
 });
 ```

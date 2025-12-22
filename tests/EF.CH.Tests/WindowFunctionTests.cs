@@ -24,7 +24,7 @@ public class WindowFunctionTests
             RowNum = Window.RowNumber()
                 .PartitionBy(o.Region)
                 .OrderBy(o.OrderDate)
-                .Value
+                .Build()
         });
 
         var sql = query.ToQueryString();
@@ -46,7 +46,7 @@ public class WindowFunctionTests
             Ranking = Window.Rank()
                 .PartitionBy(o.Region)
                 .OrderBy(o.Amount)
-                .Value
+                .Build()
         });
 
         var sql = query.ToQueryString();
@@ -65,7 +65,7 @@ public class WindowFunctionTests
             o.Id,
             DenseRanking = Window.DenseRank()
                 .OrderBy(o.Amount)
-                .Value
+                .Build()
         });
 
         var sql = query.ToQueryString();
@@ -84,7 +84,7 @@ public class WindowFunctionTests
             o.Id,
             Bucket = Window.NTile(4)
                 .OrderBy(o.Amount)
-                .Value
+                .Build()
         });
 
         var sql = query.ToQueryString();
@@ -107,7 +107,7 @@ public class WindowFunctionTests
             o.Id,
             PrevAmount = Window.Lag(o.Amount, 1)
                 .OrderBy(o.OrderDate)
-                .Value
+                .Build()
         });
 
         var sql = query.ToQueryString();
@@ -127,7 +127,7 @@ public class WindowFunctionTests
             o.Id,
             NextAmount = Window.Lead(o.Amount, 1)
                 .OrderBy(o.OrderDate)
-                .Value
+                .Build()
         });
 
         var sql = query.ToQueryString();
@@ -147,7 +147,7 @@ public class WindowFunctionTests
             o.Id,
             PrevAmount = Window.Lag(o.Amount, 1, 0m)
                 .OrderBy(o.OrderDate)
-                .Value
+                .Build()
         });
 
         var sql = query.ToQueryString();
@@ -168,7 +168,7 @@ public class WindowFunctionTests
             PrevAmount = Window.Lag(o.Amount, 1)
                 .OrderBy(o.OrderDate)
                 .Rows().Preceding(5).CurrentRow()
-                .Value
+                .Build()
         });
 
         var sql = query.ToQueryString();
@@ -194,7 +194,7 @@ public class WindowFunctionTests
             FirstAmount = Window.FirstValue(o.Amount)
                 .PartitionBy(o.Region)
                 .OrderBy(o.OrderDate)
-                .Value
+                .Build()
         });
 
         var sql = query.ToQueryString();
@@ -214,7 +214,7 @@ public class WindowFunctionTests
             LastAmount = Window.LastValue(o.Amount)
                 .PartitionBy(o.Region)
                 .OrderBy(o.OrderDate)
-                .Value
+                .Build()
         });
 
         var sql = query.ToQueryString();
@@ -239,7 +239,7 @@ public class WindowFunctionTests
                 .PartitionBy(o.Region)
                 .OrderBy(o.OrderDate)
                 .Rows().UnboundedPreceding().CurrentRow()
-                .Value
+                .Build()
         });
 
         var sql = query.ToQueryString();
@@ -262,7 +262,7 @@ public class WindowFunctionTests
             MovingAvg = Window.Avg(o.Amount)
                 .OrderBy(o.OrderDate)
                 .Rows().Preceding(3).CurrentRow()
-                .Value
+                .Build()
         });
 
         var sql = query.ToQueryString();
@@ -283,7 +283,7 @@ public class WindowFunctionTests
             RunningCount = Window.Count(o.Id)
                 .OrderBy(o.OrderDate)
                 .Rows().UnboundedPreceding().CurrentRow()
-                .Value
+                .Build()
         });
 
         var sql = query.ToQueryString();
@@ -302,7 +302,7 @@ public class WindowFunctionTests
             o.Id,
             MinAmount = Window.Min(o.Amount)
                 .PartitionBy(o.Region)
-                .Value
+                .Build()
         });
 
         var sql = query.ToQueryString();
@@ -321,7 +321,7 @@ public class WindowFunctionTests
             o.Id,
             MaxAmount = Window.Max(o.Amount)
                 .PartitionBy(o.Region)
-                .Value
+                .Build()
         });
 
         var sql = query.ToQueryString();
@@ -345,12 +345,12 @@ public class WindowFunctionTests
             RowNum = Window.RowNumber()
                 .PartitionBy(o.Region)
                 .OrderBy(o.OrderDate)
-                .Value,
+                .Build(),
             RunningTotal = Window.Sum(o.Amount)
                 .PartitionBy(o.Region)
                 .OrderBy(o.OrderDate)
                 .Rows().UnboundedPreceding().CurrentRow()
-                .Value
+                .Build()
         });
 
         var sql = query.ToQueryString();
@@ -373,7 +373,7 @@ public class WindowFunctionTests
                 .PartitionBy(o.Region)
                 .PartitionBy(o.CustomerId)
                 .OrderBy(o.OrderDate)
-                .Value
+                .Build()
         });
 
         var sql = query.ToQueryString();
@@ -395,7 +395,7 @@ public class WindowFunctionTests
             o.Id,
             RowNum = Window.RowNumber()
                 .OrderByDescending(o.Amount)
-                .Value
+                .Build()
         });
 
         var sql = query.ToQueryString();
@@ -416,7 +416,7 @@ public class WindowFunctionTests
             RangeSum = Window.Sum(o.Amount)
                 .OrderBy(o.OrderDate)
                 .Range().UnboundedPreceding().CurrentRow()
-                .Value
+                .Build()
         });
 
         var sql = query.ToQueryString();
@@ -677,7 +677,7 @@ public class WindowFunctionTests
                 .PartitionBy(o.Region)
                 .OrderBy(o.OrderDate)
                 .Rows().UnboundedPreceding().CurrentRow()
-                .Value
+                .Build()
         });
 
         var sql = query.ToQueryString();

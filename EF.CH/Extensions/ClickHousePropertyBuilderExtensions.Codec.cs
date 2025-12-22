@@ -1,5 +1,4 @@
 using EF.CH.Metadata;
-using EF.CH.Storage;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
 namespace EF.CH.Extensions;
@@ -39,7 +38,7 @@ public static class ClickHousePropertyBuilderCodecExtensions
     /// </summary>
     /// <typeparam name="TProperty">The property type.</typeparam>
     /// <param name="propertyBuilder">The property builder.</param>
-    /// <param name="configure">A function that configures the codec chain.</param>
+    /// <param name="configure">An action that configures the codec chain.</param>
     /// <returns>The property builder for chaining.</returns>
     /// <exception cref="ArgumentNullException">If configure is null.</exception>
     /// <example>
@@ -53,14 +52,14 @@ public static class ClickHousePropertyBuilderCodecExtensions
     /// </example>
     public static PropertyBuilder<TProperty> HasCodec<TProperty>(
         this PropertyBuilder<TProperty> propertyBuilder,
-        Func<CodecChainBuilder, CodecChainBuilder> configure)
+        Action<CodecChainBuilder> configure)
     {
         ArgumentNullException.ThrowIfNull(propertyBuilder);
         ArgumentNullException.ThrowIfNull(configure);
 
         var builder = new CodecChainBuilder();
-        var result = configure(builder);
-        var codecSpec = result.Build();
+        configure(builder);
+        var codecSpec = builder.Build();
 
         propertyBuilder.HasAnnotation(ClickHouseAnnotationNames.CompressionCodec, codecSpec);
         return propertyBuilder;
@@ -148,4 +147,82 @@ public static class ClickHousePropertyBuilderCodecExtensions
     public static PropertyBuilder<TProperty> HasNoCompression<TProperty>(
         this PropertyBuilder<TProperty> propertyBuilder)
         => propertyBuilder.HasCodec(c => c.None());
+
+    #region Non-Generic Overloads
+
+    /// <summary>
+    /// Configures the compression codec for this column using a raw codec string.
+    /// </summary>
+    /// <param name="propertyBuilder">The property builder.</param>
+    /// <param name="codecSpec">Codec specification (e.g., "DoubleDelta, LZ4" or "ZSTD(9)").</param>
+    /// <returns>The property builder for chaining.</returns>
+    public static PropertyBuilder HasCodec(
+        this PropertyBuilder propertyBuilder,
+        string codecSpec)
+    {
+        ArgumentNullException.ThrowIfNull(propertyBuilder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(codecSpec);
+
+        propertyBuilder.HasAnnotation(ClickHouseAnnotationNames.CompressionCodec, codecSpec);
+        return propertyBuilder;
+    }
+
+    /// <summary>
+    /// Configures the compression codec for this column using a fluent builder.
+    /// </summary>
+    /// <param name="propertyBuilder">The property builder.</param>
+    /// <param name="configure">An action that configures the codec chain.</param>
+    /// <returns>The property builder for chaining.</returns>
+    public static PropertyBuilder HasCodec(
+        this PropertyBuilder propertyBuilder,
+        Action<CodecChainBuilder> configure)
+    {
+        ArgumentNullException.ThrowIfNull(propertyBuilder);
+        ArgumentNullException.ThrowIfNull(configure);
+
+        var builder = new CodecChainBuilder();
+        configure(builder);
+        var codecSpec = builder.Build();
+
+        propertyBuilder.HasAnnotation(ClickHouseAnnotationNames.CompressionCodec, codecSpec);
+        return propertyBuilder;
+    }
+
+    /// <summary>
+    /// Configures optimal codec for timestamp columns (DoubleDelta + LZ4).
+    /// </summary>
+    public static PropertyBuilder HasTimestampCodec(this PropertyBuilder propertyBuilder)
+        => propertyBuilder.HasCodec(c => c.DoubleDelta().LZ4());
+
+    /// <summary>
+    /// Configures optimal codec for sequential/monotonic columns (Delta + ZSTD).
+    /// </summary>
+    public static PropertyBuilder HasSequentialCodec(this PropertyBuilder propertyBuilder)
+        => propertyBuilder.HasCodec(c => c.Delta().ZSTD());
+
+    /// <summary>
+    /// Configures optimal codec for floating-point sensor data (Gorilla + ZSTD).
+    /// </summary>
+    public static PropertyBuilder HasFloatCodec(this PropertyBuilder propertyBuilder)
+        => propertyBuilder.HasCodec(c => c.Gorilla().ZSTD(1));
+
+    /// <summary>
+    /// Configures high compression for large text/binary data (ZSTD level 9).
+    /// </summary>
+    public static PropertyBuilder HasHighCompressionCodec(this PropertyBuilder propertyBuilder)
+        => propertyBuilder.HasCodec(c => c.ZSTD(9));
+
+    /// <summary>
+    /// Configures optimal codec for integers with sparse values (T64 + LZ4).
+    /// </summary>
+    public static PropertyBuilder HasIntegerCodec(this PropertyBuilder propertyBuilder)
+        => propertyBuilder.HasCodec(c => c.T64().LZ4());
+
+    /// <summary>
+    /// Disables compression for this column.
+    /// </summary>
+    public static PropertyBuilder HasNoCompression(this PropertyBuilder propertyBuilder)
+        => propertyBuilder.HasCodec(c => c.None());
+
+    #endregion
 }

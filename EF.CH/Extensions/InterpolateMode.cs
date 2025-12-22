@@ -1,4 +1,4 @@
-namespace EF.CH;
+namespace EF.CH.Extensions;
 
 /// <summary>
 /// Specifies how non-ORDER BY columns are filled when using WITH FILL.
