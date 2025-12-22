@@ -28,8 +28,8 @@ public class ClickHouseSqlNullabilityProcessor : SqlNullabilityProcessor
 
     public ClickHouseSqlNullabilityProcessor(
         RelationalParameterBasedSqlProcessorDependencies dependencies,
-        RelationalParameterBasedSqlProcessorParameters parameters)
-        : base(dependencies, parameters)
+        bool useRelationalNulls)
+        : base(dependencies, useRelationalNulls)
     {
         _sqlExpressionFactory = dependencies.SqlExpressionFactory;
         _typeMappingSource = dependencies.TypeMappingSource;
@@ -75,39 +75,6 @@ public class ClickHouseSqlNullabilityProcessor : SqlNullabilityProcessor
         DefaultForNullMappings.Value = null;
     }
 
-    /// <summary>
-    /// Visits extension expressions, handling ClickHouse-specific expressions like ClickHouseTableModifierExpression
-    /// and ClickHouseWindowFunctionExpression.
-    /// </summary>
-    protected override Expression VisitExtension(Expression node)
-    {
-        if (node is ClickHouseTableModifierExpression modifierExpression)
-        {
-            // Visit the wrapped table expression
-            var visitedTable = Visit(modifierExpression.Table);
-
-            // Return a new modifier expression with the visited table
-            return visitedTable != modifierExpression.Table
-                ? new ClickHouseTableModifierExpression(
-                    (TableExpressionBase)visitedTable,
-                    modifierExpression.UseFinal,
-                    modifierExpression.SampleFraction,
-                    modifierExpression.SampleOffset)
-                : modifierExpression;
-        }
-
-        if (node is ClickHouseWindowFunctionExpression windowExpression)
-        {
-            return VisitWindowFunction(windowExpression);
-        }
-
-        if (node is ClickHouseJsonPathExpression jsonPathExpression)
-        {
-            return VisitJsonPath(jsonPathExpression);
-        }
-
-        return base.VisitExtension(node);
-    }
 
     /// <summary>
     /// Visits a window function expression, processing its child expressions for nullability.

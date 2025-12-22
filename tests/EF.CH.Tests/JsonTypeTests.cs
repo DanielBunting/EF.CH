@@ -326,7 +326,7 @@ public class JsonTypeTests
     public void JsonPathExpression_ParsesSimplePath()
     {
         var column = new Microsoft.EntityFrameworkCore.Query.SqlExpressions.SqlConstantExpression(
-            "test", null);
+            System.Linq.Expressions.Expression.Constant("test"), null);
         var expr = EF.CH.Query.Internal.Expressions.ClickHouseJsonPathExpression.Create(
             column, "user.email", typeof(string), null);
 
@@ -340,7 +340,7 @@ public class JsonTypeTests
     public void JsonPathExpression_ParsesArrayIndex()
     {
         var column = new Microsoft.EntityFrameworkCore.Query.SqlExpressions.SqlConstantExpression(
-            "test", null);
+            System.Linq.Expressions.Expression.Constant("test"), null);
         var expr = EF.CH.Query.Internal.Expressions.ClickHouseJsonPathExpression.Create(
             column, "tags[0]", typeof(string), null);
 
@@ -353,7 +353,7 @@ public class JsonTypeTests
     public void JsonPathExpression_ParsesNestedPathWithArray()
     {
         var column = new Microsoft.EntityFrameworkCore.Query.SqlExpressions.SqlConstantExpression(
-            "test", null);
+            System.Linq.Expressions.Expression.Constant("test"), null);
         var expr = EF.CH.Query.Internal.Expressions.ClickHouseJsonPathExpression.Create(
             column, "order.items[2].name", typeof(string), null);
 

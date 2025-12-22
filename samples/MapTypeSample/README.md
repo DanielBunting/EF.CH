@@ -20,7 +20,7 @@ Demonstrates using Map (Dictionary) columns in ClickHouse with EF.CH.
 
 ## Prerequisites
 
-- .NET 10.0+
+- .NET 8.0+
 - ClickHouse server running on localhost:8123
 
 ## Running

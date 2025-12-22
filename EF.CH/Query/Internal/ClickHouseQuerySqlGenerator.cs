@@ -717,11 +717,22 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
 
         GenerateTop(selectExpression);
 
-        // Generate projection using base helper
-        GenerateProjection(selectExpression);
+        // Generate projection
+        if (selectExpression.Projection.Count > 0)
+        {
+            GenerateList(selectExpression.Projection, e => Visit(e));
+        }
+        else
+        {
+            Sql.Append("1");
+        }
 
-        // Generate FROM clause using base helper
-        GenerateFrom(selectExpression);
+        // Generate FROM clause
+        if (selectExpression.Tables.Count > 0)
+        {
+            Sql.AppendLine().Append("FROM ");
+            GenerateList(selectExpression.Tables, e => Visit(e), sql => sql.AppendLine());
+        }
 
         // Generate PREWHERE (before WHERE)
         Sql.AppendLine().Append("PREWHERE ");
@@ -768,6 +779,23 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
         }
 
         return selectExpression;
+    }
+
+    /// <summary>
+    /// Helper to generate comma-separated list of items.
+    /// </summary>
+    private void GenerateList<T>(
+        IReadOnlyList<T> items,
+        Action<T> generatorAction,
+        Action<IRelationalCommandBuilder>? joinAction = null)
+    {
+        joinAction ??= (isb => isb.Append(", "));
+
+        for (var i = 0; i < items.Count; i++)
+        {
+            if (i > 0) joinAction(Sql);
+            generatorAction(items[i]);
+        }
     }
 }
 
