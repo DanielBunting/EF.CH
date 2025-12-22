@@ -633,17 +633,10 @@ public static class QueryCompilationContextExtensions
     public static ClickHouseQueryCompilationContextOptions QueryCompilationContextOptions(
         this RelationalQueryCompilationContext context)
     {
-        // Store options in the context's data dictionary if available
-        // Otherwise use a static dictionary keyed by context
-        if (!OptionsStore.TryGetValue(context, out var options))
-        {
-            options = new ClickHouseQueryCompilationContextOptions();
-            OptionsStore[context] = options;
-        }
-        return options;
+        return OptionsStore.GetOrAdd(context, _ => new ClickHouseQueryCompilationContextOptions());
     }
 
-    // Simple store - in production would want WeakReference or proper lifecycle management
-    private static readonly Dictionary<RelationalQueryCompilationContext, ClickHouseQueryCompilationContextOptions>
+    // Thread-safe store for concurrent query compilation
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<RelationalQueryCompilationContext, ClickHouseQueryCompilationContextOptions>
         OptionsStore = new();
 }
