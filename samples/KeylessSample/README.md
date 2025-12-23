@@ -20,7 +20,7 @@ With `UseKeylessEntitiesByDefault()`, all entities are keyless unless you explic
 
 ## Prerequisites
 
-- .NET 10.0+
+- .NET 8.0+
 - ClickHouse server running on localhost:8123
 - EF Core tools: `dotnet tool install --global dotnet-ef`
 

@@ -40,7 +40,7 @@ public class ClickHouseCSharpModelGenerator : CSharpModelGenerator
             var enumCode = _enumGenerator.GenerateEnumCode(enumTypeName, enumDefinition, targetNamespace);
             if (!string.IsNullOrEmpty(enumCode))
             {
-                scaffoldedModel.AdditionalFiles.Add(new ScaffoldedFile($"{enumTypeName}.cs", enumCode));
+                scaffoldedModel.AdditionalFiles.Add(new ScaffoldedFile { Path = $"{enumTypeName}.cs", Code = enumCode });
             }
         }
 

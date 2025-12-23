@@ -205,28 +205,6 @@ public sealed class ClickHouseJsonPathExpression : SqlExpression
     }
 
     /// <inheritdoc />
-    public override Expression Quote()
-    {
-        var quotedColumn = Column.Quote();
-
-        var segmentsArray = NewArrayInit(
-            typeof(string),
-            PathSegments.Select(s => Constant(s)));
-
-        var indicesArray = NewArrayInit(
-            typeof(int?),
-            ArrayIndices.Select(i => Constant(i, typeof(int?))));
-
-        return New(
-            typeof(ClickHouseJsonPathExpression).GetConstructors().First(),
-            quotedColumn,
-            segmentsArray,
-            indicesArray,
-            Constant(Type, typeof(Type)),
-            Constant(TypeMapping, typeof(RelationalTypeMapping)));
-    }
-
-    /// <inheritdoc />
     public override bool Equals(object? obj)
         => obj is ClickHouseJsonPathExpression other && Equals(other);
 

@@ -112,7 +112,7 @@ public class ClickHouseTableModifierExpression : TableExpressionBase
         bool useFinal,
         double? sampleFraction = null,
         double? sampleOffset = null)
-        : base(table.Alias)
+        : base(table.Alias ?? "t")
     {
         Table = table ?? throw new ArgumentNullException(nameof(table));
         UseFinal = useFinal;
@@ -125,9 +125,9 @@ public class ClickHouseTableModifierExpression : TableExpressionBase
         bool useFinal,
         double? sampleFraction,
         double? sampleOffset,
-        string? alias,
-        IReadOnlyDictionary<string, IAnnotation>? annotations)
-        : base(alias, annotations)
+        string alias,
+        IEnumerable<IAnnotation>? annotations)
+        : base(alias, annotations ?? Enumerable.Empty<IAnnotation>())
     {
         Table = table ?? throw new ArgumentNullException(nameof(table));
         UseFinal = useFinal;
@@ -143,26 +143,8 @@ public class ClickHouseTableModifierExpression : TableExpressionBase
             : this;
     }
 
-    public override TableExpressionBase Clone(string? alias, ExpressionVisitor cloningExpressionVisitor)
-    {
-        var newTable = (TableExpressionBase)cloningExpressionVisitor.Visit(Table);
-        return new ClickHouseTableModifierExpression(newTable, UseFinal, SampleFraction, SampleOffset, alias, null);
-    }
-
-    public override ClickHouseTableModifierExpression WithAlias(string newAlias)
-        => new(Table, UseFinal, SampleFraction, SampleOffset, newAlias, Annotations);
-
-    protected override TableExpressionBase WithAnnotations(IReadOnlyDictionary<string, IAnnotation> annotations)
-        => new ClickHouseTableModifierExpression(Table, UseFinal, SampleFraction, SampleOffset, Alias, annotations);
-
-    public override Expression Quote()
-        => New(
-            typeof(ClickHouseTableModifierExpression).GetConstructors()
-                .First(c => c.GetParameters().Length == 4),
-            Table.Quote(),
-            Constant(UseFinal),
-            Constant(SampleFraction, typeof(double?)),
-            Constant(SampleOffset, typeof(double?)));
+    protected override TableExpressionBase CreateWithAnnotations(IEnumerable<IAnnotation> annotations)
+        => new ClickHouseTableModifierExpression(Table, UseFinal, SampleFraction, SampleOffset, Alias ?? "t", annotations);
 
     protected override void Print(ExpressionPrinter expressionPrinter)
     {
@@ -226,9 +208,9 @@ public class ClickHouseExternalTableFunctionExpression : TableExpressionBase
         string functionName,
         string functionCall,
         Type entityClrType,
-        string? alias,
-        IReadOnlyDictionary<string, IAnnotation>? annotations)
-        : base(alias, annotations)
+        string alias,
+        IEnumerable<IAnnotation>? annotations)
+        : base(alias, annotations ?? Enumerable.Empty<IAnnotation>())
     {
         FunctionName = functionName;
         FunctionCall = functionCall;
@@ -238,23 +220,8 @@ public class ClickHouseExternalTableFunctionExpression : TableExpressionBase
     protected override Expression VisitChildren(ExpressionVisitor visitor)
         => this; // No children to visit - this is a leaf node
 
-    public override TableExpressionBase Clone(string? alias, ExpressionVisitor cloningExpressionVisitor)
-        => new ClickHouseExternalTableFunctionExpression(FunctionName, FunctionCall, EntityClrType, alias, null);
-
-    public override ClickHouseExternalTableFunctionExpression WithAlias(string newAlias)
-        => new(FunctionName, FunctionCall, EntityClrType, newAlias, Annotations);
-
-    protected override TableExpressionBase WithAnnotations(IReadOnlyDictionary<string, IAnnotation> annotations)
-        => new ClickHouseExternalTableFunctionExpression(FunctionName, FunctionCall, EntityClrType, Alias, annotations);
-
-    public override Expression Quote()
-        => New(
-            typeof(ClickHouseExternalTableFunctionExpression).GetConstructors()
-                .First(c => c.GetParameters().Length == 4),
-            Constant(Alias),
-            Constant(FunctionName),
-            Constant(FunctionCall),
-            Constant(EntityClrType, typeof(Type)));
+    protected override TableExpressionBase CreateWithAnnotations(IEnumerable<IAnnotation> annotations)
+        => new ClickHouseExternalTableFunctionExpression(FunctionName, FunctionCall, EntityClrType, Alias ?? "t", annotations);
 
     protected override void Print(ExpressionPrinter expressionPrinter)
     {
@@ -312,9 +279,9 @@ public class ClickHouseDictionaryTableExpression : TableExpressionBase
     private ClickHouseDictionaryTableExpression(
         string dictionaryName,
         Type entityClrType,
-        string? alias,
-        IReadOnlyDictionary<string, IAnnotation>? annotations)
-        : base(alias, annotations)
+        string alias,
+        IEnumerable<IAnnotation>? annotations)
+        : base(alias, annotations ?? Enumerable.Empty<IAnnotation>())
     {
         DictionaryName = dictionaryName;
         EntityClrType = entityClrType;
@@ -324,22 +291,8 @@ public class ClickHouseDictionaryTableExpression : TableExpressionBase
     protected override Expression VisitChildren(ExpressionVisitor visitor)
         => this; // No children to visit - this is a leaf node
 
-    public override TableExpressionBase Clone(string? alias, ExpressionVisitor cloningExpressionVisitor)
-        => new ClickHouseDictionaryTableExpression(DictionaryName, EntityClrType, alias, null);
-
-    public override ClickHouseDictionaryTableExpression WithAlias(string newAlias)
-        => new(DictionaryName, EntityClrType, newAlias, Annotations);
-
-    protected override TableExpressionBase WithAnnotations(IReadOnlyDictionary<string, IAnnotation> annotations)
-        => new ClickHouseDictionaryTableExpression(DictionaryName, EntityClrType, Alias, annotations);
-
-    public override Expression Quote()
-        => New(
-            typeof(ClickHouseDictionaryTableExpression).GetConstructors()
-                .First(c => c.GetParameters().Length == 3),
-            Constant(Alias),
-            Constant(DictionaryName),
-            Constant(EntityClrType, typeof(Type)));
+    protected override TableExpressionBase CreateWithAnnotations(IEnumerable<IAnnotation> annotations)
+        => new ClickHouseDictionaryTableExpression(DictionaryName, EntityClrType, Alias ?? "t", annotations);
 
     protected override void Print(ExpressionPrinter expressionPrinter)
     {

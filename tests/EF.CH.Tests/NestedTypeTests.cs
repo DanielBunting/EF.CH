@@ -293,10 +293,10 @@ public class NestedTypeTests
         var query = context.GameEvents.Where(e => e.Goals.Count > 0);
         var sql = query.ToQueryString();
 
-        // EF Core optimizes .Count > 0 to .Any(), which translates to notEmpty()
-        // This is semantically equivalent and more efficient than length() > 0
-        Assert.Contains("notEmpty", sql);
+        // .Count translates to length() - EF Core 8 does not optimize .Count > 0 to .Any()
+        Assert.Contains("length", sql);
         Assert.Contains("Goals.ID", sql); // Uses first field pattern
+        Assert.Contains("> 0", sql);
     }
 
     #endregion
