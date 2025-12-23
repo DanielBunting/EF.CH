@@ -76,12 +76,11 @@ public class ClickHouseSqlNullabilityProcessor : SqlNullabilityProcessor
     }
 
     /// <summary>
-    /// Visits extension expressions, handling ClickHouse-specific expressions like ClickHouseTableModifierExpression
-    /// and ClickHouseWindowFunctionExpression.
+    /// Visits table expressions, handling ClickHouse-specific table expressions.
     /// </summary>
-    protected override Expression VisitExtension(Expression node)
+    protected override TableExpressionBase Visit(TableExpressionBase tableExpressionBase)
     {
-        if (node is ClickHouseTableModifierExpression modifierExpression)
+        if (tableExpressionBase is ClickHouseTableModifierExpression modifierExpression)
         {
             // Visit the wrapped table expression
             var visitedTable = Visit(modifierExpression.Table);
@@ -89,24 +88,26 @@ public class ClickHouseSqlNullabilityProcessor : SqlNullabilityProcessor
             // Return a new modifier expression with the visited table
             return visitedTable != modifierExpression.Table
                 ? new ClickHouseTableModifierExpression(
-                    (TableExpressionBase)visitedTable,
+                    visitedTable,
                     modifierExpression.UseFinal,
                     modifierExpression.SampleFraction,
                     modifierExpression.SampleOffset)
                 : modifierExpression;
         }
 
-        if (node is ClickHouseWindowFunctionExpression windowExpression)
+        // External table function expressions don't need internal processing
+        if (tableExpressionBase is ClickHouseExternalTableFunctionExpression)
         {
-            return VisitWindowFunction(windowExpression);
+            return tableExpressionBase;
         }
 
-        if (node is ClickHouseJsonPathExpression jsonPathExpression)
+        // Dictionary table expressions don't need internal processing
+        if (tableExpressionBase is ClickHouseDictionaryTableExpression)
         {
-            return VisitJsonPath(jsonPathExpression);
+            return tableExpressionBase;
         }
 
-        return base.VisitExtension(node);
+        return base.Visit(tableExpressionBase);
     }
 
     /// <summary>
@@ -169,7 +170,8 @@ public class ClickHouseSqlNullabilityProcessor : SqlNullabilityProcessor
     }
 
     /// <summary>
-    /// Visits custom SQL expressions, handling ClickHouse-specific expressions like ClickHouseJsonPathExpression.
+    /// Visits custom SQL expressions, handling ClickHouse-specific expressions like ClickHouseJsonPathExpression
+    /// and ClickHouseWindowFunctionExpression.
     /// </summary>
     protected override SqlExpression VisitCustomSqlExpression(
         SqlExpression sqlExpression,
@@ -181,6 +183,13 @@ public class ClickHouseSqlNullabilityProcessor : SqlNullabilityProcessor
             // JSON path expressions are nullable (the path may not exist)
             nullable = true;
             return VisitJsonPath(jsonPathExpression);
+        }
+
+        if (sqlExpression is ClickHouseWindowFunctionExpression windowExpression)
+        {
+            // Window function results are nullable
+            nullable = true;
+            return VisitWindowFunction(windowExpression);
         }
 
         return base.VisitCustomSqlExpression(sqlExpression, allowOptimizedExpansion, out nullable);

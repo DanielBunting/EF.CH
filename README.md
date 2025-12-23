@@ -82,9 +82,9 @@ dotnet add package EF.CH
 ```
 
 **Requirements:**
-- .NET 10.0+
+- .NET 9.0+
 - ClickHouse 22.0+
-- EF Core 10.0
+- EF Core 9.0
 
 ## ClickHouse Concepts for EF Core Developers
 
