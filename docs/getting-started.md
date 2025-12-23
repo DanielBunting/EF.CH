@@ -4,7 +4,7 @@ This guide will help you set up EF.CH and create your first ClickHouse-backed ap
 
 ## Prerequisites
 
-- **.NET 10.0 SDK** or later
+- **.NET 9.0 SDK** or later
 - **ClickHouse** server (local, Docker, or cloud)
 - Basic familiarity with Entity Framework Core
 
