@@ -23,7 +23,7 @@ public static class ClickHouseIndexBuilderExtensions
     ///     .HasGranularity(4);
     /// </code>
     /// </example>
-    public static IndexBuilder HasGranularity(this IndexBuilder indexBuilder, int granularity)
+    public static IndexBuilder HasGranularity(this IndexBuilder indexBuilder, int granularity = 3)
     {
         ArgumentNullException.ThrowIfNull(indexBuilder);
 
@@ -44,7 +44,7 @@ public static class ClickHouseIndexBuilderExtensions
     /// </summary>
     public static IndexBuilder<TEntity> HasGranularity<TEntity>(
         this IndexBuilder<TEntity> indexBuilder,
-        int granularity)
+        int granularity = 3)
     {
         ((IndexBuilder)indexBuilder).HasGranularity(granularity);
         return indexBuilder;

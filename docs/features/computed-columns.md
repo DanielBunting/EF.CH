@@ -101,11 +101,11 @@ modelBuilder.Entity<Order>(entity =>
 
     // MATERIALIZED
     entity.Property(e => e.TotalWithTax)
-        .IsMaterialized("Amount * 1.1");
+        .HasMaterializedExpression("Amount * 1.1");
 
     // ALIAS
     entity.Property(e => e.FullName)
-        .IsAlias("concat(FirstName, ' ', LastName)");
+        .HasAliasExpression("concat(FirstName, ' ', LastName)");
 
     // DEFAULT expression
     entity.Property(e => e.CreatedAt)
@@ -249,7 +249,7 @@ public class Example
 modelBuilder.Entity<Example>(entity =>
 {
     // Fluent API wins - will be ALIAS, not MATERIALIZED
-    entity.Property(e => e.Computed).IsAlias("Amount * 1.2");
+    entity.Property(e => e.Computed).HasAliasExpression("Amount * 1.2");
 });
 ```
 
@@ -265,7 +265,7 @@ public DateTime HourBucket { get; set; }
 
 // Fluent API
 entity.Property(e => e.HourBucket)
-    .IsMaterialized("toStartOfHour(Timestamp)")
+    .HasMaterializedExpression("toStartOfHour(Timestamp)")
     .HasCodec(c => c.DoubleDelta().LZ4());
 ```
 

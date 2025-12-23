@@ -221,7 +221,7 @@ public class Order
 // Or via fluent API
 entity.Property(e => e.Metadata)
     .HasColumnType("JSON")
-    .IsTypedJson();
+    .HasTypedJson();
 ```
 
 ### Serialization

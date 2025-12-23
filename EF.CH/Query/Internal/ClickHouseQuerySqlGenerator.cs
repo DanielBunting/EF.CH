@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Linq.Expressions;
 using System.Threading;
+using EF.CH.Extensions;
 using EF.CH.Query.Internal.Expressions;
 using EF.CH.Query.Internal.WithFill;
 using Microsoft.EntityFrameworkCore.Query;

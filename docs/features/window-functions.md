@@ -34,7 +34,7 @@ var result = context.Orders.Select(o => new
 ```
 
 **Advantages:**
-- No `.Value` required at end
+- No `.Build()` required at end
 - Cleaner syntax in anonymous types
 - Clear separation of function and OVER clause
 
@@ -47,16 +47,16 @@ var result = context.Orders.Select(o => new
     RowNum = Window.RowNumber()
         .PartitionBy(o.Region)
         .OrderBy(o.OrderDate)
-        .Value,  // Required for correct type inference
+        .Build(),  // Required for correct type inference
     RunningTotal = Window.Sum(o.Amount)
         .PartitionBy(o.Region)
         .OrderBy(o.OrderDate)
         .Rows().UnboundedPreceding().CurrentRow()
-        .Value
+        .Build()
 });
 ```
 
-**Note:** The fluent style requires `.Value` at the end of the chain to ensure correct type inference in anonymous types.
+**Note:** The fluent style requires `.Build()` at the end of the chain to ensure correct type inference in anonymous types.
 
 ## Available Functions
 
@@ -113,7 +113,7 @@ Window.RowNumber(w => w
 Window.RowNumber()
     .PartitionBy(o.Region)
     .OrderBy(o.OrderDate)
-    .Value
+    .Build()
 ```
 
 ### Frame Specification

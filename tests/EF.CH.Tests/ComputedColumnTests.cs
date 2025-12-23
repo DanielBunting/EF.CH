@@ -96,11 +96,11 @@ public class FluentComputedContext : DbContext
 
             // MATERIALIZED column
             entity.Property(e => e.TotalWithTax)
-                .IsMaterialized("\"Amount\" * 1.1");
+                .HasMaterializedExpression("\"Amount\" * 1.1");
 
             // ALIAS column
             entity.Property(e => e.FullName)
-                .IsAlias("concat(\"FirstName\", ' ', \"LastName\")");
+                .HasAliasExpression("concat(\"FirstName\", ' ', \"LastName\")");
 
             // DEFAULT expression
             entity.Property(e => e.CreatedAt)
@@ -144,7 +144,7 @@ public class OverrideComputedContext : DbContext
 
             // Fluent API should override the attribute
             entity.Property(e => e.TotalWithTax)
-                .IsMaterialized("\"Amount\" * 1.2"); // Different expression
+                .HasMaterializedExpression("\"Amount\" * 1.2"); // Different expression
         });
     }
 }
@@ -166,7 +166,7 @@ public class ComputedWithCodecContext : DbContext
 
             // MATERIALIZED with CODEC
             entity.Property(e => e.EventYear)
-                .IsMaterialized("toYear(\"EventDate\")")
+                .HasMaterializedExpression("toYear(\"EventDate\")")
                 .HasCodec("Delta, ZSTD");
         });
     }
@@ -179,7 +179,7 @@ public class ComputedColumnTests
     #region Fluent API Annotation Tests
 
     [Fact]
-    public void IsMaterialized_SetsAnnotation()
+    public void HasMaterializedExpression_SetsAnnotation()
     {
         using var context = CreateContext<FluentComputedContext>();
 
@@ -192,7 +192,7 @@ public class ComputedColumnTests
     }
 
     [Fact]
-    public void IsMaterialized_SetsValueGeneratedOnAdd()
+    public void HasMaterializedExpression_SetsValueGeneratedOnAdd()
     {
         using var context = CreateContext<FluentComputedContext>();
 
@@ -203,7 +203,7 @@ public class ComputedColumnTests
     }
 
     [Fact]
-    public void IsAlias_SetsAnnotation()
+    public void HasAliasExpression_SetsAnnotation()
     {
         using var context = CreateContext<FluentComputedContext>();
 
@@ -216,7 +216,7 @@ public class ComputedColumnTests
     }
 
     [Fact]
-    public void IsAlias_SetsValueGeneratedOnAddOrUpdate()
+    public void HasAliasExpression_SetsValueGeneratedOnAddOrUpdate()
     {
         using var context = CreateContext<FluentComputedContext>();
 
@@ -396,7 +396,7 @@ public class ComputedColumnTests
     #region Validation Tests
 
     [Fact]
-    public void IsMaterialized_NullExpression_ThrowsException()
+    public void HasMaterializedExpression_NullExpression_ThrowsException()
     {
         // ArgumentException.ThrowIfNullOrWhiteSpace throws ArgumentNullException for null
         Assert.ThrowsAny<ArgumentException>(() =>
@@ -409,12 +409,12 @@ public class ComputedColumnTests
             var builder = new ModelBuilder();
             builder.Entity<FluentComputedEntity>()
                 .Property(e => e.TotalWithTax)
-                .IsMaterialized(null!);
+                .HasMaterializedExpression(null!);
         });
     }
 
     [Fact]
-    public void IsMaterialized_EmptyExpression_ThrowsException()
+    public void HasMaterializedExpression_EmptyExpression_ThrowsException()
     {
         Assert.ThrowsAny<ArgumentException>(() =>
         {
@@ -426,12 +426,12 @@ public class ComputedColumnTests
             var builder = new ModelBuilder();
             builder.Entity<FluentComputedEntity>()
                 .Property(e => e.TotalWithTax)
-                .IsMaterialized("");
+                .HasMaterializedExpression("");
         });
     }
 
     [Fact]
-    public void IsAlias_NullExpression_ThrowsException()
+    public void HasAliasExpression_NullExpression_ThrowsException()
     {
         // ArgumentException.ThrowIfNullOrWhiteSpace throws ArgumentNullException for null
         Assert.ThrowsAny<ArgumentException>(() =>
@@ -444,7 +444,7 @@ public class ComputedColumnTests
             var builder = new ModelBuilder();
             builder.Entity<FluentComputedEntity>()
                 .Property(e => e.FullName)
-                .IsAlias(null!);
+                .HasAliasExpression(null!);
         });
     }
 

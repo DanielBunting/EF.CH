@@ -394,6 +394,46 @@ public static class ClickHousePropertyBuilderExtensions
         return propertyBuilder;
     }
 
+    /// <summary>
+    /// Configures the property to use ClickHouse LowCardinality storage optimization (non-generic version).
+    /// </summary>
+    /// <param name="propertyBuilder">The property builder.</param>
+    /// <returns>The property builder for chaining.</returns>
+    public static PropertyBuilder HasLowCardinality(this PropertyBuilder propertyBuilder)
+    {
+        ArgumentNullException.ThrowIfNull(propertyBuilder);
+
+        var isNullable = propertyBuilder.Metadata.IsNullable;
+        var columnType = isNullable
+            ? "LowCardinality(Nullable(String))"
+            : "LowCardinality(String)";
+
+        propertyBuilder.HasColumnType(columnType);
+        return propertyBuilder;
+    }
+
+    /// <summary>
+    /// Configures the property to use ClickHouse LowCardinality with FixedString storage (non-generic version).
+    /// </summary>
+    /// <param name="propertyBuilder">The property builder.</param>
+    /// <param name="length">The fixed string length in bytes.</param>
+    /// <returns>The property builder for chaining.</returns>
+    public static PropertyBuilder HasLowCardinalityFixedString(
+        this PropertyBuilder propertyBuilder,
+        int length)
+    {
+        ArgumentNullException.ThrowIfNull(propertyBuilder);
+        ArgumentOutOfRangeException.ThrowIfLessThan(length, 1);
+
+        var isNullable = propertyBuilder.Metadata.IsNullable;
+        var columnType = isNullable
+            ? $"LowCardinality(Nullable(FixedString({length})))"
+            : $"LowCardinality(FixedString({length}))";
+
+        propertyBuilder.HasColumnType(columnType);
+        return propertyBuilder;
+    }
+
     #endregion
 
     #region Default For Null
@@ -545,14 +585,14 @@ public static class ClickHousePropertyBuilderExtensions
     /// modelBuilder.Entity&lt;Order&gt;(entity =>
     /// {
     ///     entity.Property(e => e.TotalWithTax)
-    ///         .IsMaterialized("Amount * 1.1");
+    ///         .HasMaterializedExpression("Amount * 1.1");
     ///
     ///     entity.Property(e => e.OrderYear)
-    ///         .IsMaterialized("toYear(OrderDate)");
+    ///         .HasMaterializedExpression("toYear(OrderDate)");
     /// });
     /// </code>
     /// </example>
-    public static PropertyBuilder<TProperty> IsMaterialized<TProperty>(
+    public static PropertyBuilder<TProperty> HasMaterializedExpression<TProperty>(
         this PropertyBuilder<TProperty> propertyBuilder,
         string expression)
     {
@@ -570,7 +610,7 @@ public static class ClickHousePropertyBuilderExtensions
     /// <param name="propertyBuilder">The property builder.</param>
     /// <param name="expression">ClickHouse SQL expression.</param>
     /// <returns>The property builder for chaining.</returns>
-    public static PropertyBuilder IsMaterialized(
+    public static PropertyBuilder HasMaterializedExpression(
         this PropertyBuilder propertyBuilder,
         string expression)
     {
@@ -606,14 +646,14 @@ public static class ClickHousePropertyBuilderExtensions
     /// modelBuilder.Entity&lt;Person&gt;(entity =>
     /// {
     ///     entity.Property(e => e.FullName)
-    ///         .IsAlias("concat(FirstName, ' ', LastName)");
+    ///         .HasAliasExpression("concat(FirstName, ' ', LastName)");
     ///
     ///     entity.Property(e => e.DoubleValue)
-    ///         .IsAlias("Value * 2");
+    ///         .HasAliasExpression("Value * 2");
     /// });
     /// </code>
     /// </example>
-    public static PropertyBuilder<TProperty> IsAlias<TProperty>(
+    public static PropertyBuilder<TProperty> HasAliasExpression<TProperty>(
         this PropertyBuilder<TProperty> propertyBuilder,
         string expression)
     {
@@ -631,7 +671,7 @@ public static class ClickHousePropertyBuilderExtensions
     /// <param name="propertyBuilder">The property builder.</param>
     /// <param name="expression">ClickHouse SQL expression.</param>
     /// <returns>The property builder for chaining.</returns>
-    public static PropertyBuilder IsAlias(
+    public static PropertyBuilder HasAliasExpression(
         this PropertyBuilder propertyBuilder,
         string expression)
     {

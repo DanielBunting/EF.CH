@@ -126,8 +126,8 @@ public sealed class WindowBuilder<T>
     public WindowBuilder<T> Following(int n) => this;
 
     /// <summary>
-    /// Gets the window function result value.
-    /// Use this property at the end of the window function chain in LINQ projections
+    /// Builds and returns the window function result value.
+    /// Use this method at the end of the window function chain in LINQ projections
     /// to ensure the correct result type is used.
     /// </summary>
     /// <example>
@@ -137,13 +137,13 @@ public sealed class WindowBuilder<T>
     ///     RowNum = Window.RowNumber()
     ///         .PartitionBy(o.Region)
     ///         .OrderBy(o.OrderDate)
-    ///         .Value
+    ///         .Build()
     /// });
     /// </code>
     /// </example>
     /// <remarks>
-    /// This property returns default(T?) - the actual value is computed by the database.
-    /// The property exists to ensure the correct type is captured in the expression tree.
+    /// This method returns default(T?) - the actual value is computed by the database.
+    /// The method exists to ensure the correct type is captured in the expression tree.
     /// </remarks>
-    public T? Value => default;
+    public T? Build() => default;
 }
