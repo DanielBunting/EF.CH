@@ -11,7 +11,7 @@ Demonstrates EF Core migrations with ClickHouse, including keyless entities and 
 
 ## Prerequisites
 
-- .NET 10.0+
+- .NET 8.0+
 - ClickHouse server running on localhost:8123
 - EF Core tools: `dotnet tool install --global dotnet-ef`
 

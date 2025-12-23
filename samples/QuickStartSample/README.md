@@ -12,7 +12,7 @@ The simplest possible EF.CH application - insert and query events in ClickHouse.
 
 ## Prerequisites
 
-- .NET 10.0+
+- .NET 8.0+
 - ClickHouse server running on localhost:8123
 
 ## Running

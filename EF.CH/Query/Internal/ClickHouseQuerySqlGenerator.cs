@@ -718,11 +718,37 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
 
         GenerateTop(selectExpression);
 
-        // Generate projection using base helper
-        GenerateProjection(selectExpression);
+        // Generate projection (inline since GenerateProjection doesn't exist in EF Core 8)
+        if (selectExpression.Projection.Count > 0)
+        {
+            for (var i = 0; i < selectExpression.Projection.Count; i++)
+            {
+                if (i > 0)
+                {
+                    Sql.Append(", ");
+                }
+                Visit(selectExpression.Projection[i]);
+            }
+        }
+        else
+        {
+            Sql.Append("1");
+        }
 
-        // Generate FROM clause using base helper
-        GenerateFrom(selectExpression);
+        // Generate FROM clause (inline since GenerateFrom doesn't exist in EF Core 8)
+        if (selectExpression.Tables.Count > 0)
+        {
+            Sql.AppendLine().Append("FROM ");
+
+            for (var i = 0; i < selectExpression.Tables.Count; i++)
+            {
+                if (i > 0)
+                {
+                    Sql.AppendLine();
+                }
+                Visit(selectExpression.Tables[i]);
+            }
+        }
 
         // Generate PREWHERE (before WHERE)
         Sql.AppendLine().Append("PREWHERE ");
