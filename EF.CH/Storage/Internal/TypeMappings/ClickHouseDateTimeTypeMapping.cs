@@ -1,5 +1,6 @@
 using System.Globalization;
 using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 namespace EF.CH.Storage.Internal.TypeMappings;
 
@@ -149,17 +150,29 @@ public class ClickHouseDate32TypeMapping : RelationalTypeMapping
 
 /// <summary>
 /// Type mapping for DateTimeOffset, stored as DateTime64 with UTC timezone.
+/// Converts DateTimeOffset to UTC DateTime on write, and assumes UTC on read.
 /// </summary>
 public class ClickHouseDateTimeOffsetTypeMapping : RelationalTypeMapping
 {
+    /// <summary>
+    /// Value converter that normalizes DateTimeOffset to UTC DateTime.
+    /// This ensures parameterized queries use the correct UTC instant.
+    /// </summary>
+    private static readonly ValueConverter<DateTimeOffset, DateTime> DateTimeOffsetConverter =
+        new(
+            dto => dto.UtcDateTime,
+            dt => new DateTimeOffset(DateTime.SpecifyKind(dt, DateTimeKind.Utc), TimeSpan.Zero));
+
     public new int Precision { get; }
 
     public ClickHouseDateTimeOffsetTypeMapping(int precision = 3)
         : base(new RelationalTypeMappingParameters(
-            new CoreTypeMappingParameters(typeof(DateTimeOffset)),
+            new CoreTypeMappingParameters(
+                typeof(DateTimeOffset),
+                DateTimeOffsetConverter),
             $"DateTime64({precision}, 'UTC')",
             StoreTypePostfix.None,
-            System.Data.DbType.DateTimeOffset,
+            System.Data.DbType.DateTime2,
             unicode: false,
             size: null,
             fixedLength: false,
