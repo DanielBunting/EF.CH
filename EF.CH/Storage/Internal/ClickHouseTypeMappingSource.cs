@@ -167,7 +167,7 @@ public partial class ClickHouseTypeMappingSource : RelationalTypeMappingSource
             // Handle nullable types by unwrapping
             var underlyingType = Nullable.GetUnderlyingType(clrType) ?? clrType;
 
-            if (ClrTypeMappings.TryGetValue(underlyingType, out var mapping))
+            if (ClrTypeMappings.TryGetValue(underlyingType, out var clrMapping))
             {
                 // For nullable types, wrap in Nullable() in ClickHouse
                 // Note: Properties with sentinel defaults will have a value converter that
@@ -175,9 +175,9 @@ public partial class ClickHouseTypeMappingSource : RelationalTypeMappingSource
                 // EF Core uses the provider type (non-nullable) for the store type.
                 if (Nullable.GetUnderlyingType(clrType) is not null)
                 {
-                    return mapping.WithStoreTypeAndSize($"Nullable({mapping.StoreType})", null);
+                    return clrMapping.WithStoreTypeAndSize($"Nullable({clrMapping.StoreType})", null);
                 }
-                return mapping;
+                return clrMapping;
             }
 
             // Handle enums - map to ClickHouse Enum8/Enum16
@@ -271,6 +271,12 @@ public partial class ClickHouseTypeMappingSource : RelationalTypeMappingSource
             var timezone = dateTime64Match.Groups.Count > 2 && dateTime64Match.Groups[2].Success
                 ? dateTime64Match.Groups[2].Value.Trim('\'', '"')
                 : null;
+
+            // Return appropriate mapping based on CLR type
+            if (clrType == typeof(DateTimeOffset) || clrType == typeof(DateTimeOffset?))
+            {
+                return new ClickHouseDateTimeOffsetTypeMapping(precision, timezone);
+            }
 
             return new ClickHouseDateTimeTypeMapping(precision, timezone);
         }
