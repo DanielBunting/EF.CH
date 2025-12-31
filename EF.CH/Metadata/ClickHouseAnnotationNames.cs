@@ -459,4 +459,14 @@ public static class ClickHouseAnnotationNames
     public const string JsonTypedMapping = Prefix + "JsonTypedMapping";
 
     #endregion
+
+    #region DateTime
+
+    /// <summary>
+    /// Timezone for DateTimeOffset columns (IANA timezone name).
+    /// Value is the timezone string (e.g., "America/New_York", "Europe/London").
+    /// </summary>
+    public const string TimeZone = Prefix + "TimeZone";
+
+    #endregion
 }
