@@ -273,8 +273,21 @@ public class ClickHouseDateTimeOffsetTypeMapping : RelationalTypeMapping
 
     protected override string GenerateNonNullSqlLiteral(object value)
     {
-        var dto = (DateTimeOffset)value;
-        var utc = dto.UtcDateTime;
+        // When a value converter is used, EF Core may pass the converted DateTime
+        // instead of the original DateTimeOffset
+        DateTime utc;
+        if (value is DateTimeOffset dto)
+        {
+            utc = dto.UtcDateTime;
+        }
+        else if (value is DateTime dt)
+        {
+            utc = dt.Kind == DateTimeKind.Utc ? dt : DateTime.SpecifyKind(dt, DateTimeKind.Utc);
+        }
+        else
+        {
+            throw new InvalidOperationException($"Unexpected value type: {value.GetType()}");
+        }
 
         var format = Precision switch
         {
