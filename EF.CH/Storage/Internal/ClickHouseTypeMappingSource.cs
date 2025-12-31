@@ -272,6 +272,12 @@ public partial class ClickHouseTypeMappingSource : RelationalTypeMappingSource
                 ? dateTime64Match.Groups[2].Value.Trim('\'', '"')
                 : null;
 
+            // Return appropriate mapping based on CLR type
+            if (clrType == typeof(DateTimeOffset) || clrType == typeof(DateTimeOffset?))
+            {
+                return new ClickHouseDateTimeOffsetTypeMapping(precision, timezone);
+            }
+
             return new ClickHouseDateTimeTypeMapping(precision, timezone);
         }
 

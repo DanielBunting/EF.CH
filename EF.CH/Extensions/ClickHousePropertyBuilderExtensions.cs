@@ -743,4 +743,96 @@ public static class ClickHousePropertyBuilderExtensions
     }
 
     #endregion
+
+    #region DateTimeOffset Timezone
+
+    /// <summary>
+    /// Configures the timezone for a DateTimeOffset property.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// When reading DateTimeOffset values from ClickHouse, the timezone is used to calculate
+    /// the appropriate offset, accounting for DST transitions. Values are always stored as UTC
+    /// in ClickHouse; the timezone determines how the offset is calculated when reading.
+    /// </para>
+    /// <para>
+    /// Use IANA timezone names (e.g., "America/New_York", "Europe/London", "Asia/Tokyo").
+    /// These are supported on all platforms with .NET 6+.
+    /// </para>
+    /// <para>
+    /// If no timezone is specified, UTC is used and all offsets will be zero.
+    /// </para>
+    /// </remarks>
+    /// <param name="propertyBuilder">The property builder.</param>
+    /// <param name="timeZone">The IANA timezone name (e.g., "America/New_York", "Europe/London").</param>
+    /// <returns>The property builder for chaining.</returns>
+    /// <exception cref="ArgumentException">Thrown when <paramref name="timeZone"/> is null or whitespace.</exception>
+    /// <example>
+    /// <code>
+    /// modelBuilder.Entity&lt;Event&gt;(entity =>
+    /// {
+    ///     entity.Property(e => e.CreatedAt)
+    ///         .HasTimeZone("America/New_York");
+    ///
+    ///     entity.Property(e => e.ScheduledAt)
+    ///         .HasTimeZone("Europe/London");
+    /// });
+    /// </code>
+    /// </example>
+    public static PropertyBuilder<DateTimeOffset> HasTimeZone(
+        this PropertyBuilder<DateTimeOffset> propertyBuilder,
+        string timeZone)
+    {
+        ArgumentNullException.ThrowIfNull(propertyBuilder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(timeZone);
+
+        propertyBuilder.HasAnnotation(ClickHouseAnnotationNames.TimeZone, timeZone);
+        return propertyBuilder;
+    }
+
+    /// <summary>
+    /// Configures the timezone for a nullable DateTimeOffset property.
+    /// </summary>
+    /// <param name="propertyBuilder">The property builder.</param>
+    /// <param name="timeZone">The IANA timezone name.</param>
+    /// <returns>The property builder for chaining.</returns>
+    public static PropertyBuilder<DateTimeOffset?> HasTimeZone(
+        this PropertyBuilder<DateTimeOffset?> propertyBuilder,
+        string timeZone)
+    {
+        ArgumentNullException.ThrowIfNull(propertyBuilder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(timeZone);
+
+        propertyBuilder.HasAnnotation(ClickHouseAnnotationNames.TimeZone, timeZone);
+        return propertyBuilder;
+    }
+
+    /// <summary>
+    /// Configures the timezone for a DateTimeOffset property (non-generic version).
+    /// </summary>
+    /// <param name="propertyBuilder">The property builder.</param>
+    /// <param name="timeZone">The IANA timezone name.</param>
+    /// <returns>The property builder for chaining.</returns>
+    public static PropertyBuilder HasTimeZone(
+        this PropertyBuilder propertyBuilder,
+        string timeZone)
+    {
+        ArgumentNullException.ThrowIfNull(propertyBuilder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(timeZone);
+
+        var clrType = propertyBuilder.Metadata.ClrType;
+        var underlyingType = Nullable.GetUnderlyingType(clrType) ?? clrType;
+
+        if (underlyingType != typeof(DateTimeOffset))
+        {
+            throw new InvalidOperationException(
+                $"HasTimeZone can only be used on DateTimeOffset properties. " +
+                $"Property '{propertyBuilder.Metadata.Name}' is of type '{clrType.Name}'.");
+        }
+
+        propertyBuilder.HasAnnotation(ClickHouseAnnotationNames.TimeZone, timeZone);
+        return propertyBuilder;
+    }
+
+    #endregion
 }

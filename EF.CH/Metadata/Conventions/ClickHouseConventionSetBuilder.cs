@@ -54,6 +54,12 @@ public class ClickHouseConventionSetBuilder : RelationalConventionSetBuilder
         // Add convention that applies value converters to typed JSON properties
         conventionSet.ModelFinalizingConventions.Add(new ClickHouseJsonValueConverterConvention());
 
+        // Add convention that discovers [ClickHouseTimeZone] attributes on DateTimeOffset properties
+        conventionSet.PropertyAddedConventions.Add(new ClickHouseTimeZoneAttributeConvention());
+
+        // Add convention that sets column types for DateTimeOffset properties with timezone annotations
+        conventionSet.ModelFinalizingConventions.Add(new ClickHouseTimeZoneColumnTypeConvention());
+
         return conventionSet;
     }
 }
