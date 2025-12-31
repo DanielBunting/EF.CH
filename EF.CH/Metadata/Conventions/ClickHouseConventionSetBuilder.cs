@@ -48,6 +48,12 @@ public class ClickHouseConventionSetBuilder : RelationalConventionSetBuilder
         // Add convention that discovers [MaterializedColumn], [AliasColumn], [DefaultExpression] attributes
         conventionSet.PropertyAddedConventions.Add(new ClickHouseComputedColumnConvention());
 
+        // Add convention that discovers [ClickHouseTimeZone] attributes on DateTimeOffset properties
+        conventionSet.PropertyAddedConventions.Add(new ClickHouseTimeZoneAttributeConvention());
+
+        // Add convention that applies timezone annotations to column types during finalization
+        conventionSet.ModelFinalizingConventions.Add(new ClickHouseTimeZoneColumnTypeConvention());
+
         // Add convention that discovers [SkipIndex] attributes on properties and creates indices
         conventionSet.ModelFinalizingConventions.Add(new ClickHouseSkipIndexAttributeConvention());
 
