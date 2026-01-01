@@ -118,4 +118,4 @@ jobs:
           name: v${{ steps.version.outputs.new_version }}
           body_path: changelog.md
           files: ./artifacts/*.nupkg
-          prerelease: true
+          prerelease: false
