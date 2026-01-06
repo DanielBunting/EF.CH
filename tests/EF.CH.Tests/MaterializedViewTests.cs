@@ -252,6 +252,111 @@ public class MaterializedViewTests : IAsyncLifetime
 
     #endregion
 
+    #region LINQ Translation Tests
+
+    [Fact]
+    public void AsMaterializedView_AllAggregates_TranslatesWithColumnReferences()
+    {
+        // Tests Fix 1: Sum, Max, Min, Avg should include column references
+        using var context = CreateContext<AllAggregatesContext>();
+        var entityType = context.Model.FindEntityType(typeof(MvAllAggregatesSummary));
+
+        Assert.NotNull(entityType);
+        var query = entityType.FindAnnotation("ClickHouse:MaterializedViewQuery")?.Value as string;
+        Assert.NotNull(query);
+
+        // All aggregates should have column references, not empty parentheses
+        Assert.Contains("sum(\"Amount\")", query);
+        Assert.Contains("max(\"Amount\")", query);
+        Assert.Contains("min(\"Amount\")", query);
+        Assert.Contains("avg(\"Amount\")", query);
+        Assert.Contains("count()", query);
+
+        // Should NOT have empty aggregate calls (except count())
+        Assert.DoesNotContain("sum()", query);
+        Assert.DoesNotContain("max()", query);
+        Assert.DoesNotContain("min()", query);
+        Assert.DoesNotContain("avg()", query);
+    }
+
+    [Fact]
+    public void AsMaterializedView_SingleKey_TranslatesDirectKeyAccess()
+    {
+        // Tests Fix 3: Single-value group key should translate g.Key directly
+        using var context = CreateContext<SingleKeyGroupByContext>();
+        var entityType = context.Model.FindEntityType(typeof(MvDailyStats));
+
+        Assert.NotNull(entityType);
+        var query = entityType.FindAnnotation("ClickHouse:MaterializedViewQuery")?.Value as string;
+        Assert.NotNull(query);
+
+        // Should have toDate("EventTime") for the Date column, not just "Key"
+        Assert.Contains("toDate(\"EventTime\")", query);
+        Assert.DoesNotContain("\"Key\"", query);
+
+        // Should have GROUP BY with the date expression
+        Assert.Contains("GROUP BY", query);
+    }
+
+    [Fact]
+    public void AsMaterializedView_CountIf_TranslatesConditionalCount()
+    {
+        // Tests Fix 2: Count with predicate should become countIf
+        using var context = CreateContext<CountIfContext>();
+        var entityType = context.Model.FindEntityType(typeof(MvCountIfSummary));
+
+        Assert.NotNull(entityType);
+        var query = entityType.FindAnnotation("ClickHouse:MaterializedViewQuery")?.Value as string;
+        Assert.NotNull(query);
+
+        // Should have countIf with the condition
+        Assert.Contains("countIf", query);
+        Assert.Contains("\"Amount\"", query);
+        Assert.Contains("1000", query);
+
+        // Regular count should still work
+        Assert.Contains("count()", query);
+    }
+
+    [Fact]
+    public void AsMaterializedView_ClickHouseAggregates_TranslatesCorrectly()
+    {
+        // Tests ClickHouse-specific aggregates: Uniq, AnyValue
+        using var context = CreateContext<ClickHouseAggregatesContext>();
+        var entityType = context.Model.FindEntityType(typeof(MvClickHouseAggSummary));
+
+        Assert.NotNull(entityType);
+        var query = entityType.FindAnnotation("ClickHouse:MaterializedViewQuery")?.Value as string;
+        Assert.NotNull(query);
+
+        // Should have uniq and any functions
+        Assert.Contains("uniq(\"UserId\")", query);
+        Assert.Contains("any(\"EventName\")", query);
+    }
+
+    [Fact]
+    public void AsMaterializedView_ToStartOfHour_TranslatesDateTimeFunction()
+    {
+        // Tests Fix 4: Method call group key (ToStartOfHour) should be captured
+        using var context = CreateContext<DateTimeFunctionsContext>();
+        var entityType = context.Model.FindEntityType(typeof(MvHourlyEventStats));
+
+        Assert.NotNull(entityType);
+        var query = entityType.FindAnnotation("ClickHouse:MaterializedViewQuery")?.Value as string;
+        Assert.NotNull(query);
+
+        // Should have toStartOfHour function
+        Assert.Contains("toStartOfHour(\"EventTime\")", query);
+
+        // Should NOT have "Key" as a literal
+        Assert.DoesNotContain("\"Key\"", query);
+
+        // Should have GROUP BY with the function
+        Assert.Contains("GROUP BY", query);
+    }
+
+    #endregion
+
     #region Integration Tests
 
     [Fact]
@@ -557,5 +662,222 @@ public class SimpleProjectionMaterializedViewContext : DbContext
         });
     }
 }
+
+#region Test Contexts for LINQ Translation Tests
+
+// Entity for all aggregates test
+public class MvAllAggregatesSource
+{
+    public DateTime EventTime { get; set; }
+    public string Category { get; set; } = string.Empty;
+    public decimal Amount { get; set; }
+}
+
+public class MvAllAggregatesSummary
+{
+    public DateTime Date { get; set; }
+    public string Category { get; set; } = string.Empty;
+    public decimal TotalAmount { get; set; }
+    public decimal MaxAmount { get; set; }
+    public decimal MinAmount { get; set; }
+    public decimal AvgAmount { get; set; }
+    public int EventCount { get; set; }
+}
+
+public class AllAggregatesContext : DbContext
+{
+    public AllAggregatesContext(DbContextOptions<AllAggregatesContext> options) : base(options) { }
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<MvAllAggregatesSource>(entity =>
+        {
+            entity.ToTable("events");
+            entity.HasNoKey();
+            entity.UseMergeTree(x => x.EventTime);
+        });
+
+        modelBuilder.Entity<MvAllAggregatesSummary>(entity =>
+        {
+            entity.ToTable("all_aggregates_mv");
+            entity.UseSummingMergeTree(x => new { x.Date, x.Category });
+            entity.AsMaterializedView<MvAllAggregatesSummary, MvAllAggregatesSource>(
+                query: events => events
+                    .GroupBy(e => new { Date = e.EventTime.Date, e.Category })
+                    .Select(g => new MvAllAggregatesSummary
+                    {
+                        Date = g.Key.Date,
+                        Category = g.Key.Category,
+                        TotalAmount = g.Sum(e => e.Amount),
+                        MaxAmount = g.Max(e => e.Amount),
+                        MinAmount = g.Min(e => e.Amount),
+                        AvgAmount = (decimal)g.Average(e => e.Amount),
+                        EventCount = g.Count()
+                    }),
+                populate: false);
+        });
+    }
+}
+
+// Entity for single key test
+public class MvDailyStats
+{
+    public DateTime Date { get; set; }
+    public int TotalEvents { get; set; }
+}
+
+public class SingleKeyGroupByContext : DbContext
+{
+    public SingleKeyGroupByContext(DbContextOptions<SingleKeyGroupByContext> options) : base(options) { }
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<MvAllAggregatesSource>(entity =>
+        {
+            entity.ToTable("events");
+            entity.HasNoKey();
+            entity.UseMergeTree(x => x.EventTime);
+        });
+
+        modelBuilder.Entity<MvDailyStats>(entity =>
+        {
+            entity.ToTable("daily_stats_mv");
+            entity.UseSummingMergeTree(x => x.Date);
+            entity.AsMaterializedView<MvDailyStats, MvAllAggregatesSource>(
+                query: events => events
+                    .GroupBy(e => e.EventTime.Date)  // Single-value key
+                    .Select(g => new MvDailyStats
+                    {
+                        Date = g.Key,  // Direct g.Key access
+                        TotalEvents = g.Count()
+                    }),
+                populate: false);
+        });
+    }
+}
+
+// Entity for CountIf test
+public class MvCountIfSummary
+{
+    public DateTime Date { get; set; }
+    public int TotalCount { get; set; }
+    public int HighValueCount { get; set; }
+}
+
+public class CountIfContext : DbContext
+{
+    public CountIfContext(DbContextOptions<CountIfContext> options) : base(options) { }
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<MvAllAggregatesSource>(entity =>
+        {
+            entity.ToTable("events");
+            entity.HasNoKey();
+            entity.UseMergeTree(x => x.EventTime);
+        });
+
+        modelBuilder.Entity<MvCountIfSummary>(entity =>
+        {
+            entity.ToTable("countif_summary_mv");
+            entity.UseSummingMergeTree(x => x.Date);
+            entity.AsMaterializedView<MvCountIfSummary, MvAllAggregatesSource>(
+                query: events => events
+                    .GroupBy(e => e.EventTime.Date)
+                    .Select(g => new MvCountIfSummary
+                    {
+                        Date = g.Key,
+                        TotalCount = g.Count(),
+                        HighValueCount = g.Count(e => e.Amount > 1000)  // CountIf
+                    }),
+                populate: false);
+        });
+    }
+}
+
+// Entity for ClickHouse aggregates test
+public class MvClickHouseAggSource
+{
+    public DateTime EventTime { get; set; }
+    public string EventName { get; set; } = string.Empty;
+    public string UserId { get; set; } = string.Empty;
+}
+
+public class MvClickHouseAggSummary
+{
+    public DateTime Date { get; set; }
+    public ulong UniqueUsers { get; set; }
+    public string SampleEventName { get; set; } = string.Empty;
+}
+
+public class ClickHouseAggregatesContext : DbContext
+{
+    public ClickHouseAggregatesContext(DbContextOptions<ClickHouseAggregatesContext> options) : base(options) { }
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<MvClickHouseAggSource>(entity =>
+        {
+            entity.ToTable("events");
+            entity.HasNoKey();
+            entity.UseMergeTree(x => x.EventTime);
+        });
+
+        modelBuilder.Entity<MvClickHouseAggSummary>(entity =>
+        {
+            entity.ToTable("ch_agg_summary_mv");
+            entity.UseSummingMergeTree(x => x.Date);
+            entity.AsMaterializedView<MvClickHouseAggSummary, MvClickHouseAggSource>(
+                query: events => events
+                    .GroupBy(e => e.EventTime.Date)
+                    .Select(g => new MvClickHouseAggSummary
+                    {
+                        Date = g.Key,
+                        UniqueUsers = ClickHouseAggregates.Uniq(g, e => e.UserId),
+                        SampleEventName = ClickHouseAggregates.AnyValue(g, e => e.EventName)
+                    }),
+                populate: false);
+        });
+    }
+}
+
+// Entity for ToStartOfHour test
+public class MvHourlyEventStats
+{
+    public DateTime Hour { get; set; }
+    public int EventCount { get; set; }
+}
+
+public class DateTimeFunctionsContext : DbContext
+{
+    public DateTimeFunctionsContext(DbContextOptions<DateTimeFunctionsContext> options) : base(options) { }
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<MvAllAggregatesSource>(entity =>
+        {
+            entity.ToTable("events");
+            entity.HasNoKey();
+            entity.UseMergeTree(x => x.EventTime);
+        });
+
+        modelBuilder.Entity<MvHourlyEventStats>(entity =>
+        {
+            entity.ToTable("hourly_stats_mv");
+            entity.UseSummingMergeTree(x => x.Hour);
+            entity.AsMaterializedView<MvHourlyEventStats, MvAllAggregatesSource>(
+                query: events => events
+                    .GroupBy(e => e.EventTime.ToStartOfHour())  // Method call group key
+                    .Select(g => new MvHourlyEventStats
+                    {
+                        Hour = g.Key,  // Direct g.Key access to method call result
+                        EventCount = g.Count()
+                    }),
+                populate: false);
+        });
+    }
+}
+
+#endregion
 
 #endregion

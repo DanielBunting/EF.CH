@@ -167,6 +167,12 @@ internal class MaterializedViewExpressionVisitor<TSource> : ExpressionVisitor
                 }
             }
         }
+        // Handle method call: x.OrderDate.ToStartOfHour()
+        else if (body is MethodCallExpression methodExpr)
+        {
+            var columnSql = TranslateExpression(methodExpr);
+            _groupByColumns.Add(columnSql);
+        }
     }
 
     private Expression VisitSelect(MethodCallExpression node)
@@ -274,6 +280,18 @@ internal class MaterializedViewExpressionVisitor<TSource> : ExpressionVisitor
             }
         }
 
+        // Check if this is accessing g.Key directly (single-value key, not anonymous type)
+        if (memberExpr.Member.Name == "Key" &&
+            memberExpr.Expression is ParameterExpression keyParam &&
+            keyParam.Name == _groupByParameter)
+        {
+            // For single-value group keys, return the first (and only) group column
+            if (_groupByColumns.Count == 1)
+            {
+                return _groupByColumns[0];
+            }
+        }
+
         // Check if this is accessing the source entity
         if (memberExpr.Expression is ParameterExpression sourceParam)
         {
@@ -350,11 +368,23 @@ internal class MaterializedViewExpressionVisitor<TSource> : ExpressionVisitor
     private string TranslateAggregate(string function, MethodCallExpression methodExpr)
     {
         // Sum(x => x.Value) has 2 arguments: source and selector
-        if (methodExpr.Arguments.Count >= 2 &&
-            methodExpr.Arguments[1] is UnaryExpression { Operand: LambdaExpression selector })
+        if (methodExpr.Arguments.Count >= 2)
         {
-            var innerSql = TranslateExpression(selector.Body);
-            return $"{function}({innerSql})";
+            var selectorArg = methodExpr.Arguments[1];
+
+            // Handle both UnaryExpression (Quote) and direct LambdaExpression
+            LambdaExpression? selector = selectorArg switch
+            {
+                UnaryExpression { Operand: LambdaExpression lambda } => lambda,
+                LambdaExpression lambda => lambda,
+                _ => null
+            };
+
+            if (selector != null)
+            {
+                var innerSql = TranslateExpression(selector.Body);
+                return $"{function}({innerSql})";
+            }
         }
 
         // Sum() with no selector - sum all values (rarely used)
@@ -364,11 +394,23 @@ internal class MaterializedViewExpressionVisitor<TSource> : ExpressionVisitor
     private string TranslateCount(MethodCallExpression methodExpr)
     {
         // Count() with predicate
-        if (methodExpr.Arguments.Count >= 2 &&
-            methodExpr.Arguments[1] is UnaryExpression { Operand: LambdaExpression predicate })
+        if (methodExpr.Arguments.Count >= 2)
         {
-            var condition = TranslateExpression(predicate.Body);
-            return $"countIf({condition})";
+            var predicateArg = methodExpr.Arguments[1];
+
+            // Handle both UnaryExpression (Quote) and direct LambdaExpression
+            LambdaExpression? predicate = predicateArg switch
+            {
+                UnaryExpression { Operand: LambdaExpression lambda } => lambda,
+                LambdaExpression lambda => lambda,
+                _ => null
+            };
+
+            if (predicate != null)
+            {
+                var condition = TranslateExpression(predicate.Body);
+                return $"countIf({condition})";
+            }
         }
 
         // Simple Count()
