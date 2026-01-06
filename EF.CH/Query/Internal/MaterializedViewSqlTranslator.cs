@@ -167,6 +167,14 @@ internal class MaterializedViewExpressionVisitor<TSource> : ExpressionVisitor
                 }
             }
         }
+        // Handle method call: x.OrderDate.ToStartOfHour()
+        else if (body is MethodCallExpression methodExpr)
+        {
+            var columnSql = TranslateExpression(methodExpr);
+            _groupByColumns.Add(columnSql);
+            // For method calls, we don't have a member name, but the SQL is stored
+            // and will be used when g.Key is accessed directly
+        }
     }
 
     private Expression VisitSelect(MethodCallExpression node)
@@ -259,7 +267,7 @@ internal class MaterializedViewExpressionVisitor<TSource> : ExpressionVisitor
             };
         }
 
-        // Check if this is accessing the grouping key (g.Key.X)
+        // Check if this is accessing the grouping key (g.Key.X) for anonymous type keys
         if (memberExpr.Expression is MemberExpression parentMember)
         {
             // g.Key.PropertyName
@@ -272,6 +280,20 @@ internal class MaterializedViewExpressionVisitor<TSource> : ExpressionVisitor
                     return keySql;
                 }
             }
+        }
+
+        // Check if this is accessing g.Key directly (single-value key, not anonymous type)
+        if (memberExpr.Member.Name == "Key" &&
+            memberExpr.Expression is ParameterExpression keyParam &&
+            keyParam.Name == _groupByParameter)
+        {
+            // Single-value key - return the first (and only) group by expression
+            if (_groupByColumns.Count == 1)
+            {
+                return _groupByColumns[0];
+            }
+            // Multiple columns but accessing Key directly - shouldn't happen with proper LINQ
+            // Fall through to default handling
         }
 
         // Check if this is accessing the source entity
@@ -350,11 +372,22 @@ internal class MaterializedViewExpressionVisitor<TSource> : ExpressionVisitor
     private string TranslateAggregate(string function, MethodCallExpression methodExpr)
     {
         // Sum(x => x.Value) has 2 arguments: source and selector
-        if (methodExpr.Arguments.Count >= 2 &&
-            methodExpr.Arguments[1] is UnaryExpression { Operand: LambdaExpression selector })
+        if (methodExpr.Arguments.Count >= 2)
         {
-            var innerSql = TranslateExpression(selector.Body);
-            return $"{function}({innerSql})";
+            // Extract lambda - may be wrapped in UnaryExpression (Quote) or direct
+            var selectorArg = methodExpr.Arguments[1];
+            LambdaExpression? selector = selectorArg switch
+            {
+                UnaryExpression { Operand: LambdaExpression lambda } => lambda,
+                LambdaExpression lambda => lambda,
+                _ => null
+            };
+
+            if (selector != null)
+            {
+                var innerSql = TranslateExpression(selector.Body);
+                return $"{function}({innerSql})";
+            }
         }
 
         // Sum() with no selector - sum all values (rarely used)
@@ -364,11 +397,22 @@ internal class MaterializedViewExpressionVisitor<TSource> : ExpressionVisitor
     private string TranslateCount(MethodCallExpression methodExpr)
     {
         // Count() with predicate
-        if (methodExpr.Arguments.Count >= 2 &&
-            methodExpr.Arguments[1] is UnaryExpression { Operand: LambdaExpression predicate })
+        if (methodExpr.Arguments.Count >= 2)
         {
-            var condition = TranslateExpression(predicate.Body);
-            return $"countIf({condition})";
+            // Extract lambda - may be wrapped in UnaryExpression (Quote) or direct
+            var predicateArg = methodExpr.Arguments[1];
+            LambdaExpression? predicate = predicateArg switch
+            {
+                UnaryExpression { Operand: LambdaExpression lambda } => lambda,
+                LambdaExpression lambda => lambda,
+                _ => null
+            };
+
+            if (predicate != null)
+            {
+                var condition = TranslateExpression(predicate.Body);
+                return $"countIf({condition})";
+            }
         }
 
         // Simple Count()

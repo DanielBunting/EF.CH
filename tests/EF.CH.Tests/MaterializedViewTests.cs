@@ -250,6 +250,105 @@ public class MaterializedViewTests : IAsyncLifetime
         Assert.DoesNotContain("GROUP BY", query);
     }
 
+    [Fact]
+    public void AsMaterializedView_AllAggregates_TranslatesWithColumnReferences()
+    {
+        using var context = CreateContext<AllAggregatesContext>();
+        var entityType = context.Model.FindEntityType(typeof(MvAllAggregatesSummary));
+
+        Assert.NotNull(entityType);
+        var query = entityType.FindAnnotation("ClickHouse:MaterializedViewQuery")?.Value as string;
+        Assert.NotNull(query);
+
+        // Verify all aggregates include column references
+        Assert.Contains("sum(\"Quantity\")", query);
+        Assert.Contains("avg(\"Revenue\")", query);
+        Assert.Contains("min(\"Revenue\")", query);
+        Assert.Contains("max(\"Revenue\")", query);
+        Assert.Contains("count()", query);
+
+        // Verify GROUP BY
+        Assert.Contains("GROUP BY", query);
+        Assert.Contains("\"ProductId\"", query);
+    }
+
+    [Fact]
+    public void AsMaterializedView_SingleKey_TranslatesDirectKeyAccess()
+    {
+        using var context = CreateContext<SingleKeyGroupByContext>();
+        var entityType = context.Model.FindEntityType(typeof(MvDailyStats));
+
+        Assert.NotNull(entityType);
+        var query = entityType.FindAnnotation("ClickHouse:MaterializedViewQuery")?.Value as string;
+        Assert.NotNull(query);
+
+        // Verify g.Key is translated to the GROUP BY expression
+        Assert.Contains("toDate(\"OrderDate\") AS \"Date\"", query);
+
+        // Verify GROUP BY contains the expression
+        Assert.Contains("GROUP BY toDate(\"OrderDate\")", query);
+
+        // Verify aggregates
+        Assert.Contains("count()", query);
+        Assert.Contains("sum(\"Revenue\")", query);
+    }
+
+    [Fact]
+    public void AsMaterializedView_CountIf_TranslatesConditionalCount()
+    {
+        using var context = CreateContext<CountIfContext>();
+        var entityType = context.Model.FindEntityType(typeof(MvCountIfSummary));
+
+        Assert.NotNull(entityType);
+        var query = entityType.FindAnnotation("ClickHouse:MaterializedViewQuery")?.Value as string;
+        Assert.NotNull(query);
+
+        // Verify simple count
+        Assert.Contains("count()", query);
+
+        // Verify countIf with condition
+        Assert.Contains("countIf", query);
+        Assert.Contains("\"Revenue\"", query);
+        Assert.Contains("100", query);
+    }
+
+    [Fact]
+    public void AsMaterializedView_ClickHouseAggregates_TranslatesCorrectly()
+    {
+        using var context = CreateContext<ClickHouseAggregatesContext>();
+        var entityType = context.Model.FindEntityType(typeof(MvClickHouseAggregatesSummary));
+
+        Assert.NotNull(entityType);
+        var query = entityType.FindAnnotation("ClickHouse:MaterializedViewQuery")?.Value as string;
+        Assert.NotNull(query);
+
+        // Verify uniq aggregate
+        Assert.Contains("uniq(\"UserId\")", query);
+
+        // Verify any aggregate
+        Assert.Contains("any(\"UserId\")", query);
+
+        // Verify GROUP BY with single string key
+        Assert.Contains("GROUP BY", query);
+    }
+
+    [Fact]
+    public void AsMaterializedView_ToStartOfHour_TranslatesDateTimeFunction()
+    {
+        using var context = CreateContext<DateTimeFunctionsContext>();
+        var entityType = context.Model.FindEntityType(typeof(MvHourlyByStartOfHour));
+
+        Assert.NotNull(entityType);
+        var query = entityType.FindAnnotation("ClickHouse:MaterializedViewQuery")?.Value as string;
+        Assert.NotNull(query);
+
+        // Verify toStartOfHour is used
+        Assert.Contains("toStartOfHour(\"OrderDate\")", query);
+
+        // Verify GROUP BY uses the same expression
+        Assert.Contains("GROUP BY toStartOfHour(\"OrderDate\")", query);
+    }
+
     #endregion
 
     #region Integration Tests
@@ -556,6 +655,254 @@ public class SimpleProjectionMaterializedViewContext : DbContext
                 populate: false);
         });
     }
+}
+
+/// <summary>
+/// Context for testing all standard LINQ aggregates with selectors.
+/// Verifies Sum, Average, Min, Max translate with column references.
+/// </summary>
+public class AllAggregatesContext : DbContext
+{
+    public AllAggregatesContext(DbContextOptions<AllAggregatesContext> options)
+        : base(options) { }
+
+    public DbSet<MvOrder> Orders => Set<MvOrder>();
+    public DbSet<MvAllAggregatesSummary> AllAggregatesSummaries => Set<MvAllAggregatesSummary>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<MvOrder>(entity =>
+        {
+            entity.HasKey(e => e.OrderId);
+            entity.ToTable("Orders");
+            entity.UseMergeTree(x => new { x.OrderDate, x.OrderId });
+        });
+
+        modelBuilder.Entity<MvAllAggregatesSummary>(entity =>
+        {
+            entity.ToTable("AllAggregates_MV");
+            entity.UseSummingMergeTree(x => x.ProductId);
+            entity.AsMaterializedView<MvAllAggregatesSummary, MvOrder>(
+                query: orders => orders
+                    .GroupBy(o => o.ProductId)
+                    .Select(g => new MvAllAggregatesSummary
+                    {
+                        ProductId = g.Key,
+                        TotalQuantity = g.Sum(o => o.Quantity),
+                        AverageRevenue = g.Average(o => o.Revenue),
+                        MinRevenue = g.Min(o => o.Revenue),
+                        MaxRevenue = g.Max(o => o.Revenue),
+                        OrderCount = g.Count()
+                    }),
+                populate: false);
+        });
+    }
+}
+
+/// <summary>
+/// Result entity for all aggregates test.
+/// </summary>
+public class MvAllAggregatesSummary
+{
+    public int ProductId { get; set; }
+    public decimal TotalQuantity { get; set; }
+    public decimal AverageRevenue { get; set; }
+    public decimal MinRevenue { get; set; }
+    public decimal MaxRevenue { get; set; }
+    public int OrderCount { get; set; }
+}
+
+/// <summary>
+/// Context for testing single-value group key (g.Key direct access).
+/// </summary>
+public class SingleKeyGroupByContext : DbContext
+{
+    public SingleKeyGroupByContext(DbContextOptions<SingleKeyGroupByContext> options)
+        : base(options) { }
+
+    public DbSet<MvOrder> Orders => Set<MvOrder>();
+    public DbSet<MvDailyStats> DailyStats => Set<MvDailyStats>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<MvOrder>(entity =>
+        {
+            entity.HasKey(e => e.OrderId);
+            entity.ToTable("Orders");
+            entity.UseMergeTree(x => new { x.OrderDate, x.OrderId });
+        });
+
+        modelBuilder.Entity<MvDailyStats>(entity =>
+        {
+            entity.ToTable("DailyStats_MV");
+            entity.UseSummingMergeTree(x => x.Date);
+            // Single-value key: g.Key is directly the DateTime
+            entity.AsMaterializedView<MvDailyStats, MvOrder>(
+                query: orders => orders
+                    .GroupBy(o => o.OrderDate.Date)
+                    .Select(g => new MvDailyStats
+                    {
+                        Date = g.Key,  // Direct g.Key access
+                        TotalOrders = g.Count(),
+                        TotalRevenue = g.Sum(o => o.Revenue)
+                    }),
+                populate: false);
+        });
+    }
+}
+
+/// <summary>
+/// Result entity for single-key group by test.
+/// </summary>
+public class MvDailyStats
+{
+    public DateTime Date { get; set; }
+    public int TotalOrders { get; set; }
+    public decimal TotalRevenue { get; set; }
+}
+
+/// <summary>
+/// Context for testing Count with predicate (countIf).
+/// </summary>
+public class CountIfContext : DbContext
+{
+    public CountIfContext(DbContextOptions<CountIfContext> options)
+        : base(options) { }
+
+    public DbSet<MvOrder> Orders => Set<MvOrder>();
+    public DbSet<MvCountIfSummary> CountIfSummaries => Set<MvCountIfSummary>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<MvOrder>(entity =>
+        {
+            entity.HasKey(e => e.OrderId);
+            entity.ToTable("Orders");
+            entity.UseMergeTree(x => new { x.OrderDate, x.OrderId });
+        });
+
+        modelBuilder.Entity<MvCountIfSummary>(entity =>
+        {
+            entity.ToTable("CountIf_MV");
+            entity.UseSummingMergeTree(x => x.ProductId);
+            entity.AsMaterializedView<MvCountIfSummary, MvOrder>(
+                query: orders => orders
+                    .GroupBy(o => o.ProductId)
+                    .Select(g => new MvCountIfSummary
+                    {
+                        ProductId = g.Key,
+                        TotalOrders = g.Count(),
+                        HighValueOrders = g.Count(o => o.Revenue > 100)
+                    }),
+                populate: false);
+        });
+    }
+}
+
+/// <summary>
+/// Result entity for countIf test.
+/// </summary>
+public class MvCountIfSummary
+{
+    public int ProductId { get; set; }
+    public int TotalOrders { get; set; }
+    public int HighValueOrders { get; set; }
+}
+
+/// <summary>
+/// Context for testing ClickHouse-specific aggregates.
+/// </summary>
+public class ClickHouseAggregatesContext : DbContext
+{
+    public ClickHouseAggregatesContext(DbContextOptions<ClickHouseAggregatesContext> options)
+        : base(options) { }
+
+    public DbSet<MvRawEvent> RawEvents => Set<MvRawEvent>();
+    public DbSet<MvClickHouseAggregatesSummary> AggregatesSummaries => Set<MvClickHouseAggregatesSummary>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<MvRawEvent>(entity =>
+        {
+            entity.ToTable("RawEvents");
+            entity.HasNoKey();
+            entity.UseMergeTree(x => new { x.EventName, x.EventTime });
+        });
+
+        modelBuilder.Entity<MvClickHouseAggregatesSummary>(entity =>
+        {
+            entity.ToTable("ClickHouseAggregates_MV");
+            entity.UseSummingMergeTree(x => x.EventName);
+            entity.AsMaterializedView<MvClickHouseAggregatesSummary, MvRawEvent>(
+                query: events => events
+                    .GroupBy(e => e.EventName)
+                    .Select(g => new MvClickHouseAggregatesSummary
+                    {
+                        EventName = g.Key,
+                        UniqueUsers = ClickHouseAggregates.Uniq(g, e => e.UserId),
+                        AnyUserId = ClickHouseAggregates.AnyValue(g, e => e.UserId)
+                    }),
+                populate: false);
+        });
+    }
+}
+
+/// <summary>
+/// Result entity for ClickHouse aggregates test.
+/// </summary>
+public class MvClickHouseAggregatesSummary
+{
+    public string EventName { get; set; } = string.Empty;
+    public ulong UniqueUsers { get; set; }
+    public string AnyUserId { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Context for testing DateTime function translations.
+/// </summary>
+public class DateTimeFunctionsContext : DbContext
+{
+    public DateTimeFunctionsContext(DbContextOptions<DateTimeFunctionsContext> options)
+        : base(options) { }
+
+    public DbSet<MvOrder> Orders => Set<MvOrder>();
+    public DbSet<MvHourlyByStartOfHour> HourlySummaries => Set<MvHourlyByStartOfHour>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<MvOrder>(entity =>
+        {
+            entity.HasKey(e => e.OrderId);
+            entity.ToTable("Orders");
+            entity.UseMergeTree(x => new { x.OrderDate, x.OrderId });
+        });
+
+        modelBuilder.Entity<MvHourlyByStartOfHour>(entity =>
+        {
+            entity.ToTable("HourlyByStartOfHour_MV");
+            entity.UseSummingMergeTree(x => x.Hour);
+            entity.AsMaterializedView<MvHourlyByStartOfHour, MvOrder>(
+                query: orders => orders
+                    .GroupBy(o => o.OrderDate.ToStartOfHour())
+                    .Select(g => new MvHourlyByStartOfHour
+                    {
+                        Hour = g.Key,
+                        TotalOrders = g.Count(),
+                        TotalRevenue = g.Sum(o => o.Revenue)
+                    }),
+                populate: false);
+        });
+    }
+}
+
+/// <summary>
+/// Result entity for ToStartOfHour test.
+/// </summary>
+public class MvHourlyByStartOfHour
+{
+    public DateTime Hour { get; set; }
+    public int TotalOrders { get; set; }
+    public decimal TotalRevenue { get; set; }
 }
 
 #endregion
