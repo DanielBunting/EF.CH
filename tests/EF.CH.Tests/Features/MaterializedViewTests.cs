@@ -1,0 +1,1247 @@
+using EF.CH.Extensions;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.EntityFrameworkCore.Migrations.Operations;
+using Testcontainers.ClickHouse;
+using Xunit;
+
+namespace EF.CH.Tests.Features;
+
+public class MaterializedViewTests : IAsyncLifetime
+{
+    private readonly ClickHouseContainer _container = new ClickHouseBuilder()
+        .WithImage("clickhouse/clickhouse-server:latest")
+        .Build();
+
+    public async Task InitializeAsync()
+    {
+        await _container.StartAsync();
+    }
+
+    public async Task DisposeAsync()
+    {
+        await _container.DisposeAsync();
+    }
+
+    private string GetConnectionString() => _container.GetConnectionString();
+
+    #region DDL Generation Tests
+
+    [Fact]
+    public void MigrationsSqlGenerator_GeneratesCreateMaterializedView_RawSql()
+    {
+        using var context = CreateContext<RawSqlMaterializedViewContext>();
+        var generator = context.GetService<IMigrationsSqlGenerator>();
+        var model = context.Model;
+
+        var entityType = model.FindEntityType(typeof(MvDailySummary));
+        Assert.NotNull(entityType);
+
+        // Create a CreateTableOperation that represents the materialized view
+        var createTableOp = new CreateTableOperation
+        {
+            Name = "DailySummary_MV",
+            Columns =
+            {
+                new AddColumnOperation { Name = "Date", ClrType = typeof(DateTime), ColumnType = "Date" },
+                new AddColumnOperation { Name = "ProductId", ClrType = typeof(int), ColumnType = "Int32" },
+                new AddColumnOperation { Name = "TotalQuantity", ClrType = typeof(decimal), ColumnType = "Decimal(18,4)" },
+                new AddColumnOperation { Name = "TotalRevenue", ClrType = typeof(decimal), ColumnType = "Decimal(18,4)" }
+            }
+        };
+
+        // Add materialized view annotations
+        createTableOp.AddAnnotation("ClickHouse:MaterializedView", true);
+        createTableOp.AddAnnotation("ClickHouse:MaterializedViewSource", "Orders");
+        createTableOp.AddAnnotation("ClickHouse:MaterializedViewQuery", @"
+            SELECT
+                toDate(OrderDate) AS Date,
+                ProductId,
+                sum(Quantity) AS TotalQuantity,
+                sum(Revenue) AS TotalRevenue
+            FROM Orders
+            GROUP BY Date, ProductId");
+        createTableOp.AddAnnotation("ClickHouse:MaterializedViewPopulate", false);
+        createTableOp.AddAnnotation("ClickHouse:Engine", "SummingMergeTree");
+        createTableOp.AddAnnotation("ClickHouse:OrderBy", new[] { "Date", "ProductId" });
+
+        var commands = generator.Generate(new[] { createTableOp }, model);
+        var sql = commands.First().CommandText;
+
+        // Verify CREATE MATERIALIZED VIEW syntax
+        Assert.Contains("CREATE MATERIALIZED VIEW", sql);
+        Assert.Contains("\"DailySummary_MV\"", sql);
+        Assert.Contains("ENGINE = SummingMergeTree()", sql);
+        Assert.Contains("ORDER BY", sql);
+        Assert.Contains("AS", sql);
+        Assert.Contains("SELECT", sql);
+        Assert.Contains("toDate(OrderDate)", sql);
+        Assert.Contains("sum(Quantity)", sql);
+        Assert.DoesNotContain("POPULATE", sql);
+    }
+
+    [Fact]
+    public void MigrationsSqlGenerator_GeneratesCreateMaterializedView_WithPopulate()
+    {
+        using var context = CreateContext<RawSqlMaterializedViewContext>();
+        var generator = context.GetService<IMigrationsSqlGenerator>();
+        var model = context.Model;
+
+        var createTableOp = new CreateTableOperation
+        {
+            Name = "DailySummary_MV",
+            Columns =
+            {
+                new AddColumnOperation { Name = "Date", ClrType = typeof(DateTime), ColumnType = "Date" },
+                new AddColumnOperation { Name = "ProductId", ClrType = typeof(int), ColumnType = "Int32" },
+                new AddColumnOperation { Name = "TotalQuantity", ClrType = typeof(decimal), ColumnType = "Decimal(18,4)" }
+            }
+        };
+
+        createTableOp.AddAnnotation("ClickHouse:MaterializedView", true);
+        createTableOp.AddAnnotation("ClickHouse:MaterializedViewSource", "Orders");
+        createTableOp.AddAnnotation("ClickHouse:MaterializedViewQuery", "SELECT toDate(OrderDate) AS Date, ProductId, sum(Quantity) AS TotalQuantity FROM Orders GROUP BY Date, ProductId");
+        createTableOp.AddAnnotation("ClickHouse:MaterializedViewPopulate", true);
+        createTableOp.AddAnnotation("ClickHouse:Engine", "SummingMergeTree");
+        createTableOp.AddAnnotation("ClickHouse:OrderBy", new[] { "Date", "ProductId" });
+
+        var commands = generator.Generate(new[] { createTableOp }, model);
+        var sql = commands.First().CommandText;
+
+        Assert.Contains("POPULATE", sql);
+    }
+
+    [Fact]
+    public void MigrationsSqlGenerator_ThrowsWhenNoQueryDefined()
+    {
+        using var context = CreateContext<RawSqlMaterializedViewContext>();
+        var generator = context.GetService<IMigrationsSqlGenerator>();
+        var model = context.Model;
+
+        var createTableOp = new CreateTableOperation
+        {
+            Name = "BadView",
+            Columns =
+            {
+                new AddColumnOperation { Name = "Id", ClrType = typeof(int), ColumnType = "Int32" }
+            }
+        };
+
+        createTableOp.AddAnnotation("ClickHouse:MaterializedView", true);
+        createTableOp.AddAnnotation("ClickHouse:MaterializedViewSource", "SomeTable");
+        // No query annotation
+
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => generator.Generate(new[] { createTableOp }, model));
+
+        Assert.Contains("must have a view query defined", ex.Message);
+    }
+
+    [Fact]
+    public void MigrationsSqlGenerator_GeneratesSimpleProjectionMV()
+    {
+        using var context = CreateContext<SimpleProjectionMaterializedViewContext>();
+        var generator = context.GetService<IMigrationsSqlGenerator>();
+        var model = context.Model;
+
+        var entityType = model.FindEntityType(typeof(MvProcessedEvent));
+        Assert.NotNull(entityType);
+
+        var query = entityType.FindAnnotation("ClickHouse:MaterializedViewQuery")?.Value as string;
+
+        var createTableOp = new CreateTableOperation
+        {
+            Name = "ProcessedEvents_MV",
+            Columns =
+            {
+                new AddColumnOperation { Name = "EventNameId", ClrType = typeof(ulong), ColumnType = "UInt64" },
+                new AddColumnOperation { Name = "EventTime", ClrType = typeof(DateTime), ColumnType = "DateTime64(3)" },
+                new AddColumnOperation { Name = "Version", ClrType = typeof(long), ColumnType = "Int64" },
+                new AddColumnOperation { Name = "Value", ClrType = typeof(decimal), ColumnType = "Decimal(18,4)" },
+                new AddColumnOperation { Name = "IsActive", ClrType = typeof(byte), ColumnType = "UInt8" }
+            }
+        };
+
+        createTableOp.AddAnnotation("ClickHouse:MaterializedView", true);
+        createTableOp.AddAnnotation("ClickHouse:MaterializedViewSource", "RawEvents");
+        createTableOp.AddAnnotation("ClickHouse:MaterializedViewQuery", query);
+        createTableOp.AddAnnotation("ClickHouse:MaterializedViewPopulate", false);
+        createTableOp.AddAnnotation("ClickHouse:Engine", "ReplacingMergeTree");
+        createTableOp.AddAnnotation("ClickHouse:OrderBy", new[] { "EventNameId", "EventTime" });
+        createTableOp.AddAnnotation("ClickHouse:VersionColumn", "Version");
+
+        var commands = generator.Generate(new[] { createTableOp }, model);
+        var sql = commands.First().CommandText;
+
+        // Verify CREATE MATERIALIZED VIEW syntax
+        Assert.Contains("CREATE MATERIALIZED VIEW", sql);
+        Assert.Contains("\"ProcessedEvents_MV\"", sql);
+        Assert.Contains("ENGINE = ReplacingMergeTree(\"Version\")", sql);
+        Assert.Contains("ORDER BY", sql);
+        Assert.Contains("AS", sql);
+
+        // Verify ClickHouse functions are in the query
+        Assert.Contains("cityHash64", sql);
+        Assert.Contains("toUnixTimestamp64Milli", sql);
+
+        // Verify no GROUP BY (simple projection)
+        Assert.DoesNotContain("GROUP BY", sql);
+        Assert.DoesNotContain("POPULATE", sql);
+    }
+
+    #endregion
+
+    #region Fluent API Tests
+
+    [Fact]
+    public void AsMaterializedViewRaw_SetsCorrectAnnotations()
+    {
+        using var context = CreateContext<RawSqlMaterializedViewContext>();
+        var entityType = context.Model.FindEntityType(typeof(MvDailySummary));
+
+        Assert.NotNull(entityType);
+        Assert.True((bool?)entityType.FindAnnotation("ClickHouse:MaterializedView")?.Value);
+        Assert.Equal("Orders", entityType.FindAnnotation("ClickHouse:MaterializedViewSource")?.Value);
+        Assert.NotNull(entityType.FindAnnotation("ClickHouse:MaterializedViewQuery")?.Value);
+        Assert.False((bool?)entityType.FindAnnotation("ClickHouse:MaterializedViewPopulate")?.Value);
+    }
+
+    [Fact]
+    public void AsMaterializedView_Linq_SetsCorrectAnnotations()
+    {
+        using var context = CreateContext<LinqMaterializedViewContext>();
+        var entityType = context.Model.FindEntityType(typeof(MvHourlySummary));
+
+        Assert.NotNull(entityType);
+        Assert.True((bool?)entityType.FindAnnotation("ClickHouse:MaterializedView")?.Value);
+        Assert.NotNull(entityType.FindAnnotation("ClickHouse:MaterializedViewSource")?.Value);
+        Assert.False((bool?)entityType.FindAnnotation("ClickHouse:MaterializedViewPopulate")?.Value);
+
+        // LINQ expression is translated to SQL at configuration time
+        var queryAnnotation = entityType.FindAnnotation("ClickHouse:MaterializedViewQuery");
+        Assert.NotNull(queryAnnotation?.Value);
+
+        var query = queryAnnotation.Value as string;
+        Assert.NotNull(query);
+        Assert.Contains("GROUP BY", query);  // Confirms LINQ GroupBy was translated
+    }
+
+    [Fact]
+    public void AsMaterializedView_SimpleProjection_SetsCorrectAnnotations()
+    {
+        using var context = CreateContext<SimpleProjectionMaterializedViewContext>();
+        var entityType = context.Model.FindEntityType(typeof(MvProcessedEvent));
+
+        Assert.NotNull(entityType);
+        Assert.True((bool?)entityType.FindAnnotation("ClickHouse:MaterializedView")?.Value);
+        Assert.Equal("RawEvents", entityType.FindAnnotation("ClickHouse:MaterializedViewSource")?.Value);
+        Assert.False((bool?)entityType.FindAnnotation("ClickHouse:MaterializedViewPopulate")?.Value);
+
+        // Verify the SQL query was generated (not stored as expression)
+        var query = entityType.FindAnnotation("ClickHouse:MaterializedViewQuery")?.Value as string;
+        Assert.NotNull(query);
+
+        // Simple projection should contain CityHash64 and toUnixTimestamp64Milli
+        Assert.Contains("cityHash64", query);
+        Assert.Contains("toUnixTimestamp64Milli", query);
+
+        // Simple projection should NOT contain GROUP BY
+        Assert.DoesNotContain("GROUP BY", query);
+    }
+
+    [Fact]
+    public void AsMaterializedView_AllAggregates_TranslatesWithColumnReferences()
+    {
+        using var context = CreateContext<AllAggregatesContext>();
+        var entityType = context.Model.FindEntityType(typeof(MvAllAggregatesSummary));
+
+        Assert.NotNull(entityType);
+        var query = entityType.FindAnnotation("ClickHouse:MaterializedViewQuery")?.Value as string;
+        Assert.NotNull(query);
+
+        // Verify all aggregates include column references
+        Assert.Contains("sum(\"Quantity\")", query);
+        Assert.Contains("avg(\"Revenue\")", query);
+        Assert.Contains("min(\"Revenue\")", query);
+        Assert.Contains("max(\"Revenue\")", query);
+        Assert.Contains("count()", query);
+
+        // Verify GROUP BY
+        Assert.Contains("GROUP BY", query);
+        Assert.Contains("\"ProductId\"", query);
+    }
+
+    [Fact]
+    public void AsMaterializedView_SingleKey_TranslatesDirectKeyAccess()
+    {
+        using var context = CreateContext<SingleKeyGroupByContext>();
+        var entityType = context.Model.FindEntityType(typeof(MvDailyStats));
+
+        Assert.NotNull(entityType);
+        var query = entityType.FindAnnotation("ClickHouse:MaterializedViewQuery")?.Value as string;
+        Assert.NotNull(query);
+
+        // Verify g.Key is translated to the GROUP BY expression
+        Assert.Contains("toDate(\"OrderDate\") AS \"Date\"", query);
+
+        // Verify GROUP BY contains the expression
+        Assert.Contains("GROUP BY toDate(\"OrderDate\")", query);
+
+        // Verify aggregates
+        Assert.Contains("count()", query);
+        Assert.Contains("sum(\"Revenue\")", query);
+    }
+
+    [Fact]
+    public void AsMaterializedView_CountIf_TranslatesConditionalCount()
+    {
+        using var context = CreateContext<CountIfContext>();
+        var entityType = context.Model.FindEntityType(typeof(MvCountIfSummary));
+
+        Assert.NotNull(entityType);
+        var query = entityType.FindAnnotation("ClickHouse:MaterializedViewQuery")?.Value as string;
+        Assert.NotNull(query);
+
+        // Verify simple count
+        Assert.Contains("count()", query);
+
+        // Verify countIf with condition
+        Assert.Contains("countIf", query);
+        Assert.Contains("\"Revenue\"", query);
+        Assert.Contains("100", query);
+    }
+
+    [Fact]
+    public void AsMaterializedView_ClickHouseAggregates_TranslatesCorrectly()
+    {
+        using var context = CreateContext<ClickHouseAggregatesContext>();
+        var entityType = context.Model.FindEntityType(typeof(MvClickHouseAggregatesSummary));
+
+        Assert.NotNull(entityType);
+        var query = entityType.FindAnnotation("ClickHouse:MaterializedViewQuery")?.Value as string;
+        Assert.NotNull(query);
+
+        // Verify uniq aggregate
+        Assert.Contains("uniq(\"UserId\")", query);
+
+        // Verify any aggregate
+        Assert.Contains("any(\"UserId\")", query);
+
+        // Verify GROUP BY with single string key
+        Assert.Contains("GROUP BY", query);
+    }
+
+    [Fact]
+    public void AsMaterializedView_ToStartOfHour_TranslatesDateTimeFunction()
+    {
+        using var context = CreateContext<DateTimeFunctionsContext>();
+        var entityType = context.Model.FindEntityType(typeof(MvHourlyByStartOfHour));
+
+        Assert.NotNull(entityType);
+        var query = entityType.FindAnnotation("ClickHouse:MaterializedViewQuery")?.Value as string;
+        Assert.NotNull(query);
+
+        // Verify toStartOfHour is used
+        Assert.Contains("toStartOfHour(\"OrderDate\")", query);
+
+        // Verify GROUP BY uses the same expression
+        Assert.Contains("GROUP BY toStartOfHour(\"OrderDate\")", query);
+    }
+
+    #endregion
+
+    #region Integration Tests
+
+    [Fact]
+    public async Task CreateMaterializedView_RawSql_ExecutesSuccessfully()
+    {
+        await using var context = CreateContext<RawSqlMaterializedViewContext>();
+
+        // Create source table first
+        await context.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS Orders (
+                OrderId Int32,
+                OrderDate DateTime64(3),
+                ProductId Int32,
+                Quantity Decimal(18, 4),
+                Revenue Decimal(18, 4)
+            ) ENGINE = MergeTree()
+            ORDER BY (OrderDate, OrderId)
+        ");
+
+        // Create the materialized view
+        await context.Database.ExecuteSqlRawAsync(@"
+            CREATE MATERIALIZED VIEW IF NOT EXISTS DailySummary_MV
+            ENGINE = SummingMergeTree()
+            ORDER BY (Date, ProductId)
+            AS
+            SELECT
+                toDate(OrderDate) AS Date,
+                ProductId,
+                sum(Quantity) AS TotalQuantity,
+                sum(Revenue) AS TotalRevenue
+            FROM Orders
+            GROUP BY Date, ProductId
+        ");
+
+        // Insert some data into source table
+        await context.Database.ExecuteSqlRawAsync(@"
+            INSERT INTO Orders (OrderId, OrderDate, ProductId, Quantity, Revenue) VALUES
+            (1, '2024-01-15 10:00:00', 100, 5, 99.99),
+            (2, '2024-01-15 11:00:00', 100, 3, 59.97),
+            (3, '2024-01-15 12:00:00', 200, 2, 39.98)
+        ");
+
+        // Query the materialized view
+        var results = await context.Database.SqlQueryRaw<MvDailySummaryResult>(
+            "SELECT Date, ProductId, TotalQuantity, TotalRevenue FROM DailySummary_MV FINAL ORDER BY Date, ProductId"
+        ).ToListAsync();
+
+        Assert.Equal(2, results.Count);
+
+        var product100 = results.First(r => r.ProductId == 100);
+        Assert.Equal(8m, product100.TotalQuantity);
+        Assert.Equal(159.96m, product100.TotalRevenue);
+    }
+
+    [Fact]
+    public async Task CreateMaterializedView_SimpleProjection_ExecutesSuccessfully()
+    {
+        await using var context = CreateContext<SimpleProjectionMaterializedViewContext>();
+
+        // Create source table first
+        await context.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS RawEvents (
+                EventName String,
+                EventTime DateTime64(3),
+                UserId String,
+                Value Decimal(18, 4)
+            ) ENGINE = MergeTree()
+            ORDER BY (EventName, EventTime)
+        ");
+
+        // Get the translated SQL query from the model
+        var entityType = context.Model.FindEntityType(typeof(MvProcessedEvent));
+        var selectSql = entityType?.FindAnnotation("ClickHouse:MaterializedViewQuery")?.Value as string;
+        Assert.NotNull(selectSql);
+
+        // Create the materialized view with simple projection
+        await context.Database.ExecuteSqlRawAsync($@"
+            CREATE MATERIALIZED VIEW IF NOT EXISTS ProcessedEvents_MV
+            ENGINE = ReplacingMergeTree(""Version"")
+            ORDER BY (""EventNameId"", ""EventTime"")
+            AS
+            {selectSql}
+        ");
+
+        // Insert some data into source table
+        await context.Database.ExecuteSqlRawAsync(@"
+            INSERT INTO RawEvents (EventName, EventTime, UserId, Value) VALUES
+            ('UserLogin', '2024-01-15 10:00:00', 'user1', 1.0),
+            ('UserLogin', '2024-01-15 10:05:00', 'user2', 1.0),
+            ('Purchase', '2024-01-15 11:00:00', 'user1', 99.99)
+        ");
+
+        // Query the materialized view
+        var results = await context.Database.SqlQueryRaw<MvProcessedEventResult>(
+            "SELECT EventNameId, EventTime, Version, Value, IsActive FROM ProcessedEvents_MV ORDER BY EventTime"
+        ).ToListAsync();
+
+        Assert.Equal(3, results.Count);
+
+        // Verify cityHash64 was applied (all EventNameId values should be non-zero)
+        Assert.All(results, r => Assert.NotEqual(0UL, r.EventNameId));
+
+        // Verify toUnixTimestamp64Milli was applied (Version > 0)
+        Assert.All(results, r => Assert.True(r.Version > 0));
+
+        // Verify constant IsActive = 1
+        Assert.All(results, r => Assert.Equal((byte)1, r.IsActive));
+    }
+
+    #endregion
+
+    #region Operation Ordering Tests
+
+    [Fact]
+    public void MigrationsSqlGenerator_OrdersSourceTablesBeforeMaterializedViews()
+    {
+        using var context = CreateContext<RawSqlMaterializedViewContext>();
+        var generator = context.GetService<IMigrationsSqlGenerator>();
+        var model = context.Model;
+
+        // Create operations in wrong order: MV first, source table second
+        var mvOp = new CreateTableOperation
+        {
+            Name = "DailySummary_MV",
+            Columns =
+            {
+                new AddColumnOperation { Name = "Date", ClrType = typeof(DateTime), ColumnType = "Date" },
+                new AddColumnOperation { Name = "ProductId", ClrType = typeof(int), ColumnType = "Int32" }
+            }
+        };
+        mvOp.AddAnnotation("ClickHouse:MaterializedView", true);
+        mvOp.AddAnnotation("ClickHouse:MaterializedViewSource", "Orders");
+        mvOp.AddAnnotation("ClickHouse:MaterializedViewQuery", "SELECT toDate(OrderDate) AS Date, ProductId FROM Orders");
+        mvOp.AddAnnotation("ClickHouse:Engine", "SummingMergeTree");
+        mvOp.AddAnnotation("ClickHouse:OrderBy", new[] { "Date", "ProductId" });
+
+        var tableOp = new CreateTableOperation
+        {
+            Name = "Orders",
+            Columns =
+            {
+                new AddColumnOperation { Name = "OrderId", ClrType = typeof(int), ColumnType = "Int32" },
+                new AddColumnOperation { Name = "OrderDate", ClrType = typeof(DateTime), ColumnType = "DateTime64(3)" },
+                new AddColumnOperation { Name = "ProductId", ClrType = typeof(int), ColumnType = "Int32" }
+            }
+        };
+        tableOp.AddAnnotation("ClickHouse:Engine", "MergeTree");
+        tableOp.AddAnnotation("ClickHouse:OrderBy", new[] { "OrderDate", "OrderId" });
+
+        // Pass operations in wrong order (MV first)
+        var commands = generator.Generate(new MigrationOperation[] { mvOp, tableOp }, model);
+
+        var allSql = string.Join("\n---\n", commands.Select(c => c.CommandText));
+
+        // Find positions of CREATE statements
+        var ordersIndex = allSql.IndexOf("CREATE TABLE", StringComparison.Ordinal);
+        var mvIndex = allSql.IndexOf("CREATE MATERIALIZED VIEW", StringComparison.Ordinal);
+
+        // Source table should be created before materialized view
+        Assert.True(ordersIndex >= 0, "Orders table CREATE statement not found");
+        Assert.True(mvIndex >= 0, "Materialized view CREATE statement not found");
+        Assert.True(ordersIndex < mvIndex,
+            $"Source table (index {ordersIndex}) should be created before materialized view (index {mvIndex})");
+    }
+
+    [Fact]
+    public void MigrationsSqlGenerator_HandlesMultipleMVsFromSameSource()
+    {
+        using var context = CreateContext<RawSqlMaterializedViewContext>();
+        var generator = context.GetService<IMigrationsSqlGenerator>();
+        var model = context.Model;
+
+        // Create source table operation
+        var tableOp = new CreateTableOperation
+        {
+            Name = "Events",
+            Columns =
+            {
+                new AddColumnOperation { Name = "EventId", ClrType = typeof(int), ColumnType = "Int32" },
+                new AddColumnOperation { Name = "EventDate", ClrType = typeof(DateTime), ColumnType = "DateTime64(3)" }
+            }
+        };
+        tableOp.AddAnnotation("ClickHouse:Engine", "MergeTree");
+        tableOp.AddAnnotation("ClickHouse:OrderBy", new[] { "EventDate" });
+
+        // Create two MVs that depend on the same source
+        var mv1Op = CreateMvOperation("DailySummary_MV", "Events");
+        var mv2Op = CreateMvOperation("HourlySummary_MV", "Events");
+
+        // Pass in order: MV1, Source, MV2 (mixed)
+        var commands = generator.Generate(new MigrationOperation[] { mv1Op, tableOp, mv2Op }, model);
+        var allSql = string.Join("\n---\n", commands.Select(c => c.CommandText));
+
+        var tableIndex = allSql.IndexOf("CREATE TABLE", StringComparison.Ordinal);
+        var mv1Index = allSql.IndexOf("\"DailySummary_MV\"", StringComparison.Ordinal);
+        var mv2Index = allSql.IndexOf("\"HourlySummary_MV\"", StringComparison.Ordinal);
+
+        // Source table should appear before both MVs
+        Assert.True(tableIndex < mv1Index, "Source table should be before first MV");
+        Assert.True(tableIndex < mv2Index, "Source table should be before second MV");
+    }
+
+    [Fact]
+    public void MigrationsSqlGenerator_PreservesOrderForIndependentTables()
+    {
+        using var context = CreateContext<RawSqlMaterializedViewContext>();
+        var generator = context.GetService<IMigrationsSqlGenerator>();
+        var model = context.Model;
+
+        // Create three independent tables (no MV dependencies)
+        var table1 = CreateTableOp("TableA");
+        var table2 = CreateTableOp("TableB");
+        var table3 = CreateTableOp("TableC");
+
+        // Pass in specific order
+        var commands = generator.Generate(new MigrationOperation[] { table1, table2, table3 }, model);
+        var allSql = string.Join("\n---\n", commands.Select(c => c.CommandText));
+
+        var indexA = allSql.IndexOf("\"TableA\"", StringComparison.Ordinal);
+        var indexB = allSql.IndexOf("\"TableB\"", StringComparison.Ordinal);
+        var indexC = allSql.IndexOf("\"TableC\"", StringComparison.Ordinal);
+
+        // Should preserve original order for independent tables
+        Assert.True(indexA < indexB, "TableA should come before TableB");
+        Assert.True(indexB < indexC, "TableB should come before TableC");
+    }
+
+    [Fact]
+    public void MigrationsSqlGenerator_HandlesMVDependingOnExternalTable()
+    {
+        using var context = CreateContext<RawSqlMaterializedViewContext>();
+        var generator = context.GetService<IMigrationsSqlGenerator>();
+        var model = context.Model;
+
+        // Create MV that depends on a table NOT in the migration (already exists)
+        var mvOp = CreateMvOperation("Summary_MV", "ExistingExternalTable");
+
+        // Should not throw - MV is created even though source isn't in migration
+        var commands = generator.Generate(new MigrationOperation[] { mvOp }, model);
+
+        Assert.Single(commands);
+        Assert.Contains("CREATE MATERIALIZED VIEW", commands.First().CommandText);
+    }
+
+    [Fact]
+    public void MigrationsSqlGenerator_PreservesIndexPositionRelativeToTable()
+    {
+        using var context = CreateContext<RawSqlMaterializedViewContext>();
+        var generator = context.GetService<IMigrationsSqlGenerator>();
+        var model = context.Model;
+
+        // Simulate a migration with: Table1, Index on Table1, MV depending on Table1, Table2
+        var table1 = CreateTableOp("Table1");
+        var index1 = new CreateIndexOperation
+        {
+            Name = "IX_Table1_Col",
+            Table = "Table1",
+            Columns = new[] { "Col" }
+        };
+        index1.AddAnnotation("ClickHouse:SkipIndexType", "minmax");
+        index1.AddAnnotation("ClickHouse:SkipIndexGranularity", 1);
+
+        var mvOp = CreateMvOperation("MV_Summary", "Table1");
+        var table2 = CreateTableOp("Table2");
+
+        // Pass in order: MV, Table1, Index1, Table2
+        // Expected: Table1 moves before MV (dependency), Index stays after Table1, Table2 stays at end
+        var commands = generator.Generate(new MigrationOperation[] { mvOp, table1, index1, table2 }, model);
+        var allSql = string.Join("\n---\n", commands.Select(c => c.CommandText));
+
+        // Debug: output the SQL to understand ordering
+        // throw new Exception($"SQL:\n{allSql}");
+
+        var table1Index = allSql.IndexOf("CREATE TABLE", StringComparison.Ordinal);
+        var indexIndex = allSql.IndexOf("IX_Table1_Col", StringComparison.Ordinal);
+        var mvIndex = allSql.IndexOf("CREATE MATERIALIZED VIEW", StringComparison.Ordinal);
+        var table2Index = allSql.IndexOf("\"Table2\"", StringComparison.Ordinal);
+
+        // Table1 should come before MV (dependency sorting)
+        Assert.True(table1Index >= 0, $"Table1 CREATE not found. SQL:\n{allSql}");
+        Assert.True(mvIndex >= 0, $"MV CREATE not found. SQL:\n{allSql}");
+        Assert.True(table1Index < mvIndex, $"Table1 should come before MV. Table1={table1Index}, MV={mvIndex}. SQL:\n{allSql}");
+
+        // Index should come after Table1
+        Assert.True(indexIndex >= 0, $"Index not found. SQL:\n{allSql}");
+        Assert.True(table1Index < indexIndex, $"Index should come after Table1. Table1={table1Index}, Index={indexIndex}");
+
+        // Table2 should exist
+        Assert.True(table2Index >= 0, $"Table2 not found. SQL:\n{allSql}");
+    }
+
+    [Fact]
+    public void MigrationsSqlGenerator_PreservesDropTablePosition()
+    {
+        using var context = CreateContext<RawSqlMaterializedViewContext>();
+        var generator = context.GetService<IMigrationsSqlGenerator>();
+        var model = context.Model;
+
+        // Simulate: DropTable, CreateTable MV, CreateTable Source
+        var dropOp = new DropTableOperation { Name = "OldTable" };
+        var mvOp = CreateMvOperation("MV_Summary", "SourceTable");
+        var sourceOp = CreateTableOp("SourceTable");
+
+        var commands = generator.Generate(new MigrationOperation[] { dropOp, mvOp, sourceOp }, model);
+        var allSql = string.Join("\n---\n", commands.Select(c => c.CommandText));
+
+        var dropIndex = allSql.IndexOf("DROP TABLE", StringComparison.Ordinal);
+        var sourceIndex = allSql.IndexOf("\"SourceTable\"", StringComparison.Ordinal);
+        var mvIndex = allSql.IndexOf("\"MV_Summary\"", StringComparison.Ordinal);
+
+        // Drop should stay first (original position)
+        Assert.True(dropIndex < sourceIndex, "Drop should stay before creates");
+        Assert.True(dropIndex < mvIndex, "Drop should stay before MV");
+        // Source should come before MV (dependency sorting)
+        Assert.True(sourceIndex < mvIndex, "Source should come before MV");
+    }
+
+    [Fact]
+    public void MigrationsSqlGenerator_OrdersAddProjectionAfterCreateTable()
+    {
+        using var context = CreateContext<RawSqlMaterializedViewContext>();
+        var generator = context.GetService<IMigrationsSqlGenerator>();
+        var model = context.Model;
+
+        // Simulate: AddProjection before CreateTable (wrong order)
+        var addProjOp = new EF.CH.Migrations.Operations.AddProjectionOperation
+        {
+            Table = "Orders",
+            Name = "prj_by_date",
+            SelectSql = "SELECT * ORDER BY OrderDate",
+            Materialize = false
+        };
+        var tableOp = CreateTableOp("Orders");
+
+        // Pass in wrong order: projection first, then table
+        var commands = generator.Generate(new MigrationOperation[] { addProjOp, tableOp }, model);
+        var allSql = string.Join("\n---\n", commands.Select(c => c.CommandText));
+
+        var createIndex = allSql.IndexOf("CREATE TABLE", StringComparison.Ordinal);
+        var projIndex = allSql.IndexOf("ADD PROJECTION", StringComparison.Ordinal);
+
+        // Table should come before projection (dependency sorted)
+        Assert.True(createIndex >= 0, $"CREATE TABLE not found. SQL:\n{allSql}");
+        Assert.True(projIndex >= 0, $"ADD PROJECTION not found. SQL:\n{allSql}");
+        Assert.True(createIndex < projIndex, $"CREATE TABLE should come before ADD PROJECTION. Create={createIndex}, Proj={projIndex}");
+    }
+
+    [Fact]
+    public void MigrationsSqlGenerator_OrdersAddColumnAfterCreateTable()
+    {
+        using var context = CreateContext<RawSqlMaterializedViewContext>();
+        var generator = context.GetService<IMigrationsSqlGenerator>();
+        var model = context.Model;
+
+        // Simulate: AddColumn before CreateTable (wrong order in manual migration)
+        var addColOp = new AddColumnOperation
+        {
+            Table = "Orders",
+            Name = "NewColumn",
+            ClrType = typeof(string),
+            ColumnType = "String"
+        };
+        var tableOp = CreateTableOp("Orders");
+
+        // Pass in wrong order
+        var commands = generator.Generate(new MigrationOperation[] { addColOp, tableOp }, model);
+        var allSql = string.Join("\n---\n", commands.Select(c => c.CommandText));
+
+        var createIndex = allSql.IndexOf("CREATE TABLE", StringComparison.Ordinal);
+        var alterIndex = allSql.IndexOf("ALTER TABLE", StringComparison.Ordinal);
+
+        // Table should come before alter (dependency sorted)
+        Assert.True(createIndex >= 0, "CREATE TABLE not found");
+        Assert.True(alterIndex >= 0, "ALTER TABLE not found");
+        Assert.True(createIndex < alterIndex, "CREATE TABLE should come before ALTER TABLE");
+    }
+
+    [Fact]
+    public async Task EnsureCreated_CreatesMaterializedViewsAfterSourceTables()
+    {
+        // This test verifies that EnsureCreated works correctly with materialized views
+        // by relying on the operation ordering fix in the migration generator.
+        await using var context = CreateContext<RawSqlMaterializedViewContext>();
+
+        // Drop any existing tables/views first
+        try
+        {
+            await context.Database.ExecuteSqlRawAsync("DROP VIEW IF EXISTS DailySummary_MV");
+            await context.Database.ExecuteSqlRawAsync("DROP TABLE IF EXISTS Orders");
+        }
+        catch
+        {
+            // Ignore if they don't exist
+        }
+
+        // EnsureCreated should create both the source table and MV in correct order
+        // Without the ordering fix, this would fail because MV is created before source table
+        await context.Database.EnsureCreatedAsync();
+
+        // Verify both exist by inserting data
+        await context.Database.ExecuteSqlRawAsync(@"
+            INSERT INTO Orders (OrderId, OrderDate, ProductId, Quantity, Revenue) VALUES
+            (1, '2024-01-15 10:00:00', 100, 5, 99.99)
+        ");
+
+        // Query the materialized view to verify it works
+        var results = await context.Database.SqlQueryRaw<MvDailySummaryResult>(
+            "SELECT Date, ProductId, TotalQuantity, TotalRevenue FROM DailySummary_MV FINAL"
+        ).ToListAsync();
+
+        // If the MV was created correctly after the source table, we should have data
+        Assert.Single(results);
+        Assert.Equal(100, results.First().ProductId);
+    }
+
+    private static CreateTableOperation CreateMvOperation(string name, string sourceTable)
+    {
+        var op = new CreateTableOperation
+        {
+            Name = name,
+            Columns =
+            {
+                new AddColumnOperation { Name = "Date", ClrType = typeof(DateTime), ColumnType = "Date" }
+            }
+        };
+        op.AddAnnotation("ClickHouse:MaterializedView", true);
+        op.AddAnnotation("ClickHouse:MaterializedViewSource", sourceTable);
+        op.AddAnnotation("ClickHouse:MaterializedViewQuery", $"SELECT toDate(EventDate) AS Date FROM {sourceTable}");
+        op.AddAnnotation("ClickHouse:Engine", "SummingMergeTree");
+        op.AddAnnotation("ClickHouse:OrderBy", new[] { "Date" });
+        return op;
+    }
+
+    private static CreateTableOperation CreateTableOp(string name)
+    {
+        var op = new CreateTableOperation
+        {
+            Name = name,
+            Columns =
+            {
+                new AddColumnOperation { Name = "Id", ClrType = typeof(int), ColumnType = "Int32" }
+            }
+        };
+        op.AddAnnotation("ClickHouse:Engine", "MergeTree");
+        op.AddAnnotation("ClickHouse:OrderBy", new[] { "Id" });
+        return op;
+    }
+
+    #endregion
+
+    private TContext CreateContext<TContext>() where TContext : DbContext
+    {
+        var options = new DbContextOptionsBuilder<TContext>()
+            .UseClickHouse(GetConnectionString())
+            .Options;
+
+        return (TContext)Activator.CreateInstance(typeof(TContext), options)!;
+    }
+}
+
+#region Test Entities
+
+public class MvOrder
+{
+    public int OrderId { get; set; }
+    public DateTime OrderDate { get; set; }
+    public int ProductId { get; set; }
+    public decimal Quantity { get; set; }
+    public decimal Revenue { get; set; }
+}
+
+// Entities for simple projection MV tests (without GroupBy)
+public class MvRawEvent
+{
+    public string EventName { get; set; } = string.Empty;
+    public DateTime EventTime { get; set; }
+    public string UserId { get; set; } = string.Empty;
+    public decimal Value { get; set; }
+}
+
+public class MvProcessedEvent
+{
+    public ulong EventNameId { get; set; }          // cityHash64(EventName)
+    public DateTime EventTime { get; set; }
+    public long Version { get; set; }               // toUnixTimestamp64Milli(EventTime)
+    public decimal Value { get; set; }
+    public byte IsActive { get; set; }              // Constant = 1
+}
+
+public class MvDailySummary
+{
+    public DateTime Date { get; set; }
+    public int ProductId { get; set; }
+    public decimal TotalQuantity { get; set; }
+    public decimal TotalRevenue { get; set; }
+}
+
+public class MvHourlySummary
+{
+    public DateTime Hour { get; set; }
+    public int ProductId { get; set; }
+    public int OrderCount { get; set; }
+    public decimal TotalRevenue { get; set; }
+}
+
+public class MvDailySummaryResult
+{
+    public DateTime Date { get; set; }
+    public int ProductId { get; set; }
+    public decimal TotalQuantity { get; set; }
+    public decimal TotalRevenue { get; set; }
+}
+
+public class MvProcessedEventResult
+{
+    public ulong EventNameId { get; set; }
+    public DateTime EventTime { get; set; }
+    public long Version { get; set; }
+    public decimal Value { get; set; }
+    public byte IsActive { get; set; }
+}
+
+#endregion
+
+#region Test Contexts
+
+public class RawSqlMaterializedViewContext : DbContext
+{
+    public RawSqlMaterializedViewContext(DbContextOptions<RawSqlMaterializedViewContext> options)
+        : base(options) { }
+
+    public DbSet<MvOrder> Orders => Set<MvOrder>();
+    public DbSet<MvDailySummary> DailySummaries => Set<MvDailySummary>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<MvOrder>(entity =>
+        {
+            entity.HasKey(e => e.OrderId);
+            entity.ToTable("Orders");
+            entity.UseMergeTree(x => new { x.OrderDate, x.OrderId });
+        });
+
+        modelBuilder.Entity<MvDailySummary>(entity =>
+        {
+            entity.ToTable("DailySummary_MV");
+            entity.UseSummingMergeTree(x => new { x.Date, x.ProductId });
+            entity.AsMaterializedViewRaw(
+                sourceTable: "Orders",
+                selectSql: @"
+                    SELECT
+                        toDate(OrderDate) AS Date,
+                        ProductId,
+                        sum(Quantity) AS TotalQuantity,
+                        sum(Revenue) AS TotalRevenue
+                    FROM Orders
+                    GROUP BY Date, ProductId
+                ",
+                populate: false
+            );
+        });
+    }
+}
+
+public class LinqMaterializedViewContext : DbContext
+{
+    public LinqMaterializedViewContext(DbContextOptions<LinqMaterializedViewContext> options)
+        : base(options) { }
+
+    public DbSet<MvOrder> Orders => Set<MvOrder>();
+    public DbSet<MvHourlySummary> HourlySummaries => Set<MvHourlySummary>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<MvOrder>(entity =>
+        {
+            entity.HasKey(e => e.OrderId);
+            entity.ToTable("Orders");
+            entity.UseMergeTree(x => new { x.OrderDate, x.OrderId });
+        });
+
+        modelBuilder.Entity<MvHourlySummary>(entity =>
+        {
+            entity.ToTable("HourlySummary_MV");
+            entity.UseSummingMergeTree(x => new { x.Hour, x.ProductId });
+            entity.AsMaterializedView<MvHourlySummary, MvOrder>(
+                query: orders => orders
+                    .GroupBy(o => new { Hour = o.OrderDate.Date, o.ProductId })
+                    .Select(g => new MvHourlySummary
+                    {
+                        Hour = g.Key.Hour,
+                        ProductId = g.Key.ProductId,
+                        OrderCount = g.Count(),
+                        TotalRevenue = g.Sum(o => o.Revenue)
+                    }),
+                populate: false
+            );
+        });
+    }
+}
+
+/// <summary>
+/// Context for testing simple projection MV (Select without GroupBy).
+/// Demonstrates data transformation with CityHash64, ToUnixTimestamp64Milli, and constants.
+/// </summary>
+public class SimpleProjectionMaterializedViewContext : DbContext
+{
+    public SimpleProjectionMaterializedViewContext(DbContextOptions<SimpleProjectionMaterializedViewContext> options)
+        : base(options) { }
+
+    public DbSet<MvRawEvent> RawEvents => Set<MvRawEvent>();
+    public DbSet<MvProcessedEvent> ProcessedEvents => Set<MvProcessedEvent>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        // Source table
+        modelBuilder.Entity<MvRawEvent>(entity =>
+        {
+            entity.ToTable("RawEvents");
+            entity.HasNoKey();
+            entity.UseMergeTree(x => new { x.EventName, x.EventTime });
+        });
+
+        // MV with simple projection (no GroupBy)
+        modelBuilder.Entity<MvProcessedEvent>(entity =>
+        {
+            entity.ToTable("ProcessedEvents_MV");
+            entity.UseReplacingMergeTree(
+                x => x.Version,
+                x => new { x.EventNameId, x.EventTime });
+
+            entity.AsMaterializedView<MvProcessedEvent, MvRawEvent>(
+                query: raw => raw.Select(r => new MvProcessedEvent
+                {
+                    EventNameId = r.EventName.CityHash64(),
+                    EventTime = r.EventTime,
+                    Version = r.EventTime.ToUnixTimestamp64Milli(),
+                    Value = r.Value,
+                    IsActive = 1
+                }),
+                populate: false);
+        });
+    }
+}
+
+/// <summary>
+/// Context for testing all standard LINQ aggregates with selectors.
+/// Verifies Sum, Average, Min, Max translate with column references.
+/// </summary>
+public class AllAggregatesContext : DbContext
+{
+    public AllAggregatesContext(DbContextOptions<AllAggregatesContext> options)
+        : base(options) { }
+
+    public DbSet<MvOrder> Orders => Set<MvOrder>();
+    public DbSet<MvAllAggregatesSummary> AllAggregatesSummaries => Set<MvAllAggregatesSummary>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<MvOrder>(entity =>
+        {
+            entity.HasKey(e => e.OrderId);
+            entity.ToTable("Orders");
+            entity.UseMergeTree(x => new { x.OrderDate, x.OrderId });
+        });
+
+        modelBuilder.Entity<MvAllAggregatesSummary>(entity =>
+        {
+            entity.ToTable("AllAggregates_MV");
+            entity.UseSummingMergeTree(x => x.ProductId);
+            entity.AsMaterializedView<MvAllAggregatesSummary, MvOrder>(
+                query: orders => orders
+                    .GroupBy(o => o.ProductId)
+                    .Select(g => new MvAllAggregatesSummary
+                    {
+                        ProductId = g.Key,
+                        TotalQuantity = g.Sum(o => o.Quantity),
+                        AverageRevenue = g.Average(o => o.Revenue),
+                        MinRevenue = g.Min(o => o.Revenue),
+                        MaxRevenue = g.Max(o => o.Revenue),
+                        OrderCount = g.Count()
+                    }),
+                populate: false);
+        });
+    }
+}
+
+/// <summary>
+/// Result entity for all aggregates test.
+/// </summary>
+public class MvAllAggregatesSummary
+{
+    public int ProductId { get; set; }
+    public decimal TotalQuantity { get; set; }
+    public decimal AverageRevenue { get; set; }
+    public decimal MinRevenue { get; set; }
+    public decimal MaxRevenue { get; set; }
+    public int OrderCount { get; set; }
+}
+
+/// <summary>
+/// Context for testing single-value group key (g.Key direct access).
+/// </summary>
+public class SingleKeyGroupByContext : DbContext
+{
+    public SingleKeyGroupByContext(DbContextOptions<SingleKeyGroupByContext> options)
+        : base(options) { }
+
+    public DbSet<MvOrder> Orders => Set<MvOrder>();
+    public DbSet<MvDailyStats> DailyStats => Set<MvDailyStats>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<MvOrder>(entity =>
+        {
+            entity.HasKey(e => e.OrderId);
+            entity.ToTable("Orders");
+            entity.UseMergeTree(x => new { x.OrderDate, x.OrderId });
+        });
+
+        modelBuilder.Entity<MvDailyStats>(entity =>
+        {
+            entity.ToTable("DailyStats_MV");
+            entity.UseSummingMergeTree(x => x.Date);
+            // Single-value key: g.Key is directly the DateTime
+            entity.AsMaterializedView<MvDailyStats, MvOrder>(
+                query: orders => orders
+                    .GroupBy(o => o.OrderDate.Date)
+                    .Select(g => new MvDailyStats
+                    {
+                        Date = g.Key,  // Direct g.Key access
+                        TotalOrders = g.Count(),
+                        TotalRevenue = g.Sum(o => o.Revenue)
+                    }),
+                populate: false);
+        });
+    }
+}
+
+/// <summary>
+/// Result entity for single-key group by test.
+/// </summary>
+public class MvDailyStats
+{
+    public DateTime Date { get; set; }
+    public int TotalOrders { get; set; }
+    public decimal TotalRevenue { get; set; }
+}
+
+/// <summary>
+/// Context for testing Count with predicate (countIf).
+/// </summary>
+public class CountIfContext : DbContext
+{
+    public CountIfContext(DbContextOptions<CountIfContext> options)
+        : base(options) { }
+
+    public DbSet<MvOrder> Orders => Set<MvOrder>();
+    public DbSet<MvCountIfSummary> CountIfSummaries => Set<MvCountIfSummary>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<MvOrder>(entity =>
+        {
+            entity.HasKey(e => e.OrderId);
+            entity.ToTable("Orders");
+            entity.UseMergeTree(x => new { x.OrderDate, x.OrderId });
+        });
+
+        modelBuilder.Entity<MvCountIfSummary>(entity =>
+        {
+            entity.ToTable("CountIf_MV");
+            entity.UseSummingMergeTree(x => x.ProductId);
+            entity.AsMaterializedView<MvCountIfSummary, MvOrder>(
+                query: orders => orders
+                    .GroupBy(o => o.ProductId)
+                    .Select(g => new MvCountIfSummary
+                    {
+                        ProductId = g.Key,
+                        TotalOrders = g.Count(),
+                        HighValueOrders = g.Count(o => o.Revenue > 100)
+                    }),
+                populate: false);
+        });
+    }
+}
+
+/// <summary>
+/// Result entity for countIf test.
+/// </summary>
+public class MvCountIfSummary
+{
+    public int ProductId { get; set; }
+    public int TotalOrders { get; set; }
+    public int HighValueOrders { get; set; }
+}
+
+/// <summary>
+/// Context for testing ClickHouse-specific aggregates.
+/// </summary>
+public class ClickHouseAggregatesContext : DbContext
+{
+    public ClickHouseAggregatesContext(DbContextOptions<ClickHouseAggregatesContext> options)
+        : base(options) { }
+
+    public DbSet<MvRawEvent> RawEvents => Set<MvRawEvent>();
+    public DbSet<MvClickHouseAggregatesSummary> AggregatesSummaries => Set<MvClickHouseAggregatesSummary>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<MvRawEvent>(entity =>
+        {
+            entity.ToTable("RawEvents");
+            entity.HasNoKey();
+            entity.UseMergeTree(x => new { x.EventName, x.EventTime });
+        });
+
+        modelBuilder.Entity<MvClickHouseAggregatesSummary>(entity =>
+        {
+            entity.ToTable("ClickHouseAggregates_MV");
+            entity.UseSummingMergeTree(x => x.EventName);
+            entity.AsMaterializedView<MvClickHouseAggregatesSummary, MvRawEvent>(
+                query: events => events
+                    .GroupBy(e => e.EventName)
+                    .Select(g => new MvClickHouseAggregatesSummary
+                    {
+                        EventName = g.Key,
+                        UniqueUsers = ClickHouseAggregates.Uniq(g, e => e.UserId),
+                        AnyUserId = ClickHouseAggregates.AnyValue(g, e => e.UserId)
+                    }),
+                populate: false);
+        });
+    }
+}
+
+/// <summary>
+/// Result entity for ClickHouse aggregates test.
+/// </summary>
+public class MvClickHouseAggregatesSummary
+{
+    public string EventName { get; set; } = string.Empty;
+    public ulong UniqueUsers { get; set; }
+    public string AnyUserId { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Context for testing DateTime function translations.
+/// </summary>
+public class DateTimeFunctionsContext : DbContext
+{
+    public DateTimeFunctionsContext(DbContextOptions<DateTimeFunctionsContext> options)
+        : base(options) { }
+
+    public DbSet<MvOrder> Orders => Set<MvOrder>();
+    public DbSet<MvHourlyByStartOfHour> HourlySummaries => Set<MvHourlyByStartOfHour>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<MvOrder>(entity =>
+        {
+            entity.HasKey(e => e.OrderId);
+            entity.ToTable("Orders");
+            entity.UseMergeTree(x => new { x.OrderDate, x.OrderId });
+        });
+
+        modelBuilder.Entity<MvHourlyByStartOfHour>(entity =>
+        {
+            entity.ToTable("HourlyByStartOfHour_MV");
+            entity.UseSummingMergeTree(x => x.Hour);
+            entity.AsMaterializedView<MvHourlyByStartOfHour, MvOrder>(
+                query: orders => orders
+                    .GroupBy(o => o.OrderDate.ToStartOfHour())
+                    .Select(g => new MvHourlyByStartOfHour
+                    {
+                        Hour = g.Key,
+                        TotalOrders = g.Count(),
+                        TotalRevenue = g.Sum(o => o.Revenue)
+                    }),
+                populate: false);
+        });
+    }
+}
+
+/// <summary>
+/// Result entity for ToStartOfHour test.
+/// </summary>
+public class MvHourlyByStartOfHour
+{
+    public DateTime Hour { get; set; }
+    public int TotalOrders { get; set; }
+    public decimal TotalRevenue { get; set; }
+}
+
+#endregion

@@ -28,6 +28,276 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
     }
 
     /// <summary>
+    /// Override the main Generate method to sort operations so that source tables
+    /// are created before materialized views and dictionaries that depend on them.
+    /// </summary>
+    public override IReadOnlyList<MigrationCommand> Generate(
+        IReadOnlyList<MigrationOperation> operations,
+        IModel? model,
+        MigrationsSqlGenerationOptions options = MigrationsSqlGenerationOptions.Default)
+    {
+        var sortedOperations = SortOperationsForClickHouse(operations, model);
+        return base.Generate(sortedOperations, model, options);
+    }
+
+    /// <summary>
+    /// Sorts migration operations to ensure proper dependency ordering:
+    /// 1. Source tables are created before materialized views and dictionaries that depend on them
+    /// 2. Tables are created before any operations that modify them (indices, projections, columns, etc.)
+    /// </summary>
+    private IReadOnlyList<MigrationOperation> SortOperationsForClickHouse(
+        IReadOnlyList<MigrationOperation> operations,
+        IModel? model)
+    {
+        if (operations.Count < 2)
+        {
+            return operations;
+        }
+
+        // Build a set of tables being created in this migration
+        var tablesBeingCreated = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var op in operations)
+        {
+            if (op is CreateTableOperation createOp)
+            {
+                tablesBeingCreated.Add(createOp.Name);
+            }
+        }
+
+        // If no tables being created, no reordering needed
+        if (tablesBeingCreated.Count == 0)
+        {
+            return operations;
+        }
+
+        // Build dependency graph: operation index -> set of table names it depends on
+        var dependencies = new Dictionary<int, HashSet<string>>();
+        for (int i = 0; i < operations.Count; i++)
+        {
+            var deps = GetOperationDependencies(operations[i], model);
+            // Only track dependencies on tables being created in this migration
+            deps.IntersectWith(tablesBeingCreated);
+            dependencies[i] = deps;
+        }
+
+        // Build reverse map: table name -> index of its CreateTableOperation
+        var tableToCreateIndex = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        for (int i = 0; i < operations.Count; i++)
+        {
+            if (operations[i] is CreateTableOperation createOp)
+            {
+                tableToCreateIndex[createOp.Name] = i;
+            }
+        }
+
+        // Topological sort using Kahn's algorithm
+        // Calculate in-degree for each operation (how many CreateTableOperations must come before it)
+        var inDegree = new int[operations.Count];
+        for (int i = 0; i < operations.Count; i++)
+        {
+            foreach (var dep in dependencies[i])
+            {
+                if (tableToCreateIndex.TryGetValue(dep, out var createIdx) && createIdx != i)
+                {
+                    inDegree[i]++;
+                }
+            }
+        }
+
+        // Start with operations that have no dependencies (in-degree = 0)
+        var ready = new List<int>();
+        for (int i = 0; i < operations.Count; i++)
+        {
+            if (inDegree[i] == 0)
+            {
+                ready.Add(i);
+            }
+        }
+
+        var result = new List<MigrationOperation>(operations.Count);
+        var processed = new HashSet<int>();
+
+        while (ready.Count > 0)
+        {
+            // Sort ready operations by original index to maintain relative order
+            ready.Sort();
+
+            // Process all currently ready operations
+            var currentBatch = new List<int>(ready);
+            ready.Clear();
+
+            foreach (var idx in currentBatch)
+            {
+                if (processed.Contains(idx))
+                    continue;
+
+                result.Add(operations[idx]);
+                processed.Add(idx);
+
+                // If this is a CreateTableOperation, decrease in-degree of dependent operations
+                if (operations[idx] is CreateTableOperation createOp)
+                {
+                    for (int i = 0; i < operations.Count; i++)
+                    {
+                        if (!processed.Contains(i) && dependencies[i].Contains(createOp.Name))
+                        {
+                            inDegree[i]--;
+                            if (inDegree[i] == 0)
+                            {
+                                ready.Add(i);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // If we couldn't process all operations (cycle detected), add remaining in original order
+        if (result.Count < operations.Count)
+        {
+            for (int i = 0; i < operations.Count; i++)
+            {
+                if (!processed.Contains(i))
+                {
+                    result.Add(operations[i]);
+                }
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Gets the table names that an operation depends on.
+    /// </summary>
+    private HashSet<string> GetOperationDependencies(MigrationOperation operation, IModel? model)
+    {
+        var deps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        switch (operation)
+        {
+            case CreateTableOperation createOp:
+                // MVs and Dictionaries depend on their source tables
+                var sourceDep = GetSourceTableDependency(createOp, model);
+                if (!string.IsNullOrEmpty(sourceDep))
+                {
+                    deps.Add(sourceDep);
+                }
+                break;
+
+            case CreateIndexOperation indexOp when !string.IsNullOrEmpty(indexOp.Table):
+                deps.Add(indexOp.Table);
+                break;
+
+            case DropIndexOperation dropIndexOp when !string.IsNullOrEmpty(dropIndexOp.Table):
+                deps.Add(dropIndexOp.Table);
+                break;
+
+            case AddColumnOperation addColOp when !string.IsNullOrEmpty(addColOp.Table):
+                deps.Add(addColOp.Table);
+                break;
+
+            case DropColumnOperation dropColOp when !string.IsNullOrEmpty(dropColOp.Table):
+                deps.Add(dropColOp.Table);
+                break;
+
+            case AlterColumnOperation alterColOp when !string.IsNullOrEmpty(alterColOp.Table):
+                deps.Add(alterColOp.Table);
+                break;
+
+            case RenameColumnOperation renameColOp when !string.IsNullOrEmpty(renameColOp.Table):
+                deps.Add(renameColOp.Table);
+                break;
+
+            case AddPrimaryKeyOperation addPkOp when !string.IsNullOrEmpty(addPkOp.Table):
+                deps.Add(addPkOp.Table);
+                break;
+
+            case DropPrimaryKeyOperation dropPkOp when !string.IsNullOrEmpty(dropPkOp.Table):
+                deps.Add(dropPkOp.Table);
+                break;
+
+            case AddForeignKeyOperation addFkOp when !string.IsNullOrEmpty(addFkOp.Table):
+                deps.Add(addFkOp.Table);
+                break;
+
+            case DropForeignKeyOperation dropFkOp when !string.IsNullOrEmpty(dropFkOp.Table):
+                deps.Add(dropFkOp.Table);
+                break;
+
+            case AddUniqueConstraintOperation addUniqueOp when !string.IsNullOrEmpty(addUniqueOp.Table):
+                deps.Add(addUniqueOp.Table);
+                break;
+
+            case DropUniqueConstraintOperation dropUniqueOp when !string.IsNullOrEmpty(dropUniqueOp.Table):
+                deps.Add(dropUniqueOp.Table);
+                break;
+
+            case AddCheckConstraintOperation addCheckOp when !string.IsNullOrEmpty(addCheckOp.Table):
+                deps.Add(addCheckOp.Table);
+                break;
+
+            case DropCheckConstraintOperation dropCheckOp when !string.IsNullOrEmpty(dropCheckOp.Table):
+                deps.Add(dropCheckOp.Table);
+                break;
+
+            // Custom ClickHouse operations
+            case Migrations.Operations.AddProjectionOperation addProjOp when !string.IsNullOrEmpty(addProjOp.Table):
+                deps.Add(addProjOp.Table);
+                break;
+
+            case Migrations.Operations.DropProjectionOperation dropProjOp when !string.IsNullOrEmpty(dropProjOp.Table):
+                deps.Add(dropProjOp.Table);
+                break;
+
+            case Migrations.Operations.MaterializeProjectionOperation matProjOp when !string.IsNullOrEmpty(matProjOp.Table):
+                deps.Add(matProjOp.Table);
+                break;
+
+            // DropTableOperation, RenameTableOperation, SqlOperation, etc. have no table dependency
+            // (or operate on tables that must already exist)
+        }
+
+        return deps;
+    }
+
+    /// <summary>
+    /// Gets the source table that a CreateTableOperation depends on, if any.
+    /// Materialized views depend on their source table.
+    /// Dictionaries sourced from ClickHouse tables depend on that table.
+    /// </summary>
+    private string? GetSourceTableDependency(CreateTableOperation operation, IModel? model)
+    {
+        // Get entity type for additional annotation lookup
+        var entityType = model?.GetEntityTypes()
+            .FirstOrDefault(e => e.GetTableName() == operation.Name
+                              && (e.GetSchema() ?? model.GetDefaultSchema()) == operation.Schema);
+
+        // Check for materialized view source
+        var mvSource = GetAnnotation<string>(operation, ClickHouseAnnotationNames.MaterializedViewSource)
+                    ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.MaterializedViewSource);
+        if (!string.IsNullOrEmpty(mvSource))
+        {
+            return mvSource;
+        }
+
+        // Check for dictionary source (only for ClickHouse-sourced dictionaries)
+        var dictSource = GetAnnotation<string>(operation, ClickHouseAnnotationNames.DictionarySource)
+                      ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.DictionarySource);
+        var sourceProvider = GetAnnotation<string>(operation, ClickHouseAnnotationNames.DictionarySourceProvider)
+                          ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.DictionarySourceProvider)
+                          ?? "clickhouse";
+
+        // Only consider dependency if dictionary is sourced from a ClickHouse table
+        if (!string.IsNullOrEmpty(dictSource) && sourceProvider == "clickhouse")
+        {
+            return dictSource;
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Generates CREATE TABLE or CREATE MATERIALIZED VIEW with ClickHouse ENGINE clause.
     /// Skips DDL for external entities (they use table functions, not physical tables).
     /// </summary>
