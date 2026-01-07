@@ -468,6 +468,245 @@ public class MaterializedViewTests : IAsyncLifetime
 
     #endregion
 
+    #region Migration Operation Ordering
+
+    [Fact]
+    public void MigrationsSqlGenerator_OrdersSourceTablesBeforeMaterializedViews()
+    {
+        using var context = CreateContext<RawSqlMaterializedViewContext>();
+        var generator = context.GetService<IMigrationsSqlGenerator>();
+        var model = context.Model;
+
+        // Create MV operation first (wrong order)
+        var mvOp = new CreateTableOperation
+        {
+            Name = "DailySummary_MV",
+            Columns =
+            {
+                new AddColumnOperation { Name = "Date", ClrType = typeof(DateTime), ColumnType = "Date" },
+                new AddColumnOperation { Name = "ProductId", ClrType = typeof(int), ColumnType = "Int32" }
+            }
+        };
+        mvOp.AddAnnotation("ClickHouse:MaterializedView", true);
+        mvOp.AddAnnotation("ClickHouse:MaterializedViewSource", "Orders");
+        mvOp.AddAnnotation("ClickHouse:MaterializedViewQuery", "SELECT toDate(OrderDate) AS Date, ProductId FROM Orders");
+        mvOp.AddAnnotation("ClickHouse:Engine", "SummingMergeTree");
+        mvOp.AddAnnotation("ClickHouse:OrderBy", new[] { "Date", "ProductId" });
+
+        // Create source table operation second
+        var tableOp = new CreateTableOperation
+        {
+            Name = "Orders",
+            Columns =
+            {
+                new AddColumnOperation { Name = "OrderId", ClrType = typeof(int), ColumnType = "Int32" },
+                new AddColumnOperation { Name = "OrderDate", ClrType = typeof(DateTime), ColumnType = "DateTime64(3)" },
+                new AddColumnOperation { Name = "ProductId", ClrType = typeof(int), ColumnType = "Int32" }
+            },
+            PrimaryKey = new AddPrimaryKeyOperation { Columns = new[] { "OrderId" } }
+        };
+        tableOp.AddAnnotation("ClickHouse:Engine", "MergeTree");
+        tableOp.AddAnnotation("ClickHouse:OrderBy", new[] { "OrderDate", "OrderId" });
+
+        // Generate with MV first, source table second (wrong order)
+        var commands = generator.Generate(new MigrationOperation[] { mvOp, tableOp }, model);
+        var allSql = string.Join("\n", commands.Select(c => c.CommandText));
+
+        // Verify CREATE TABLE appears before CREATE MATERIALIZED VIEW
+        var tableIndex = allSql.IndexOf("CREATE TABLE", StringComparison.Ordinal);
+        var mvIndex = allSql.IndexOf("CREATE MATERIALIZED VIEW", StringComparison.Ordinal);
+
+        Assert.True(tableIndex >= 0, "CREATE TABLE should be present");
+        Assert.True(mvIndex >= 0, "CREATE MATERIALIZED VIEW should be present");
+        Assert.True(tableIndex < mvIndex, "CREATE TABLE should come before CREATE MATERIALIZED VIEW");
+    }
+
+    [Fact]
+    public void MigrationsSqlGenerator_OrdersMultipleMVsAfterSource()
+    {
+        using var context = CreateContext<RawSqlMaterializedViewContext>();
+        var generator = context.GetService<IMigrationsSqlGenerator>();
+        var model = context.Model;
+
+        // Create two MVs first
+        var mv1Op = new CreateTableOperation { Name = "Summary1_MV" };
+        mv1Op.AddAnnotation("ClickHouse:MaterializedView", true);
+        mv1Op.AddAnnotation("ClickHouse:MaterializedViewSource", "Orders");
+        mv1Op.AddAnnotation("ClickHouse:MaterializedViewQuery", "SELECT 1 FROM Orders");
+        mv1Op.AddAnnotation("ClickHouse:Engine", "MergeTree");
+
+        var mv2Op = new CreateTableOperation { Name = "Summary2_MV" };
+        mv2Op.AddAnnotation("ClickHouse:MaterializedView", true);
+        mv2Op.AddAnnotation("ClickHouse:MaterializedViewSource", "Orders");
+        mv2Op.AddAnnotation("ClickHouse:MaterializedViewQuery", "SELECT 2 FROM Orders");
+        mv2Op.AddAnnotation("ClickHouse:Engine", "MergeTree");
+
+        // Source table last
+        var tableOp = new CreateTableOperation
+        {
+            Name = "Orders",
+            Columns = { new AddColumnOperation { Name = "Id", ClrType = typeof(int), ColumnType = "Int32" } },
+            PrimaryKey = new AddPrimaryKeyOperation { Columns = new[] { "Id" } }
+        };
+        tableOp.AddAnnotation("ClickHouse:Engine", "MergeTree");
+
+        var commands = generator.Generate(new MigrationOperation[] { mv1Op, mv2Op, tableOp }, model);
+        var allSql = string.Join("\n", commands.Select(c => c.CommandText));
+
+        var tableIndex = allSql.IndexOf("CREATE TABLE", StringComparison.Ordinal);
+        var mv1Index = allSql.IndexOf("Summary1_MV", StringComparison.Ordinal);
+        var mv2Index = allSql.IndexOf("Summary2_MV", StringComparison.Ordinal);
+
+        Assert.True(tableIndex < mv1Index, "Source table should come before MV1");
+        Assert.True(tableIndex < mv2Index, "Source table should come before MV2");
+    }
+
+    [Fact]
+    public void MigrationsSqlGenerator_PreservesOrderForIndependentTables()
+    {
+        using var context = CreateContext<RawSqlMaterializedViewContext>();
+        var generator = context.GetService<IMigrationsSqlGenerator>();
+        var model = context.Model;
+
+        // Two independent tables - should preserve original order
+        var table1Op = new CreateTableOperation
+        {
+            Name = "TableA",
+            Columns = { new AddColumnOperation { Name = "Id", ClrType = typeof(int), ColumnType = "Int32" } },
+            PrimaryKey = new AddPrimaryKeyOperation { Columns = new[] { "Id" } }
+        };
+        table1Op.AddAnnotation("ClickHouse:Engine", "MergeTree");
+
+        var table2Op = new CreateTableOperation
+        {
+            Name = "TableB",
+            Columns = { new AddColumnOperation { Name = "Id", ClrType = typeof(int), ColumnType = "Int32" } },
+            PrimaryKey = new AddPrimaryKeyOperation { Columns = new[] { "Id" } }
+        };
+        table2Op.AddAnnotation("ClickHouse:Engine", "MergeTree");
+
+        var commands = generator.Generate(new MigrationOperation[] { table1Op, table2Op }, model);
+        var allSql = string.Join("\n", commands.Select(c => c.CommandText));
+
+        var tableAIndex = allSql.IndexOf("\"TableA\"", StringComparison.Ordinal);
+        var tableBIndex = allSql.IndexOf("\"TableB\"", StringComparison.Ordinal);
+
+        Assert.True(tableAIndex < tableBIndex, "TableA should come before TableB (original order preserved)");
+    }
+
+    [Fact]
+    public void MigrationsSqlGenerator_OrdersAddProjectionAfterCreateTable()
+    {
+        using var context = CreateContext<RawSqlMaterializedViewContext>();
+        var generator = context.GetService<IMigrationsSqlGenerator>();
+        var model = context.Model;
+
+        // AddProjection first (wrong order)
+        var addProjOp = new EF.CH.Migrations.Operations.AddProjectionOperation
+        {
+            Table = "Orders",
+            Name = "prj_by_date",
+            SelectSql = "SELECT * ORDER BY OrderDate",
+            Materialize = false
+        };
+
+        // CreateTable second
+        var tableOp = new CreateTableOperation
+        {
+            Name = "Orders",
+            Columns = { new AddColumnOperation { Name = "Id", ClrType = typeof(int), ColumnType = "Int32" } },
+            PrimaryKey = new AddPrimaryKeyOperation { Columns = new[] { "Id" } }
+        };
+        tableOp.AddAnnotation("ClickHouse:Engine", "MergeTree");
+
+        var commands = generator.Generate(new MigrationOperation[] { addProjOp, tableOp }, model);
+        var allSql = string.Join("\n", commands.Select(c => c.CommandText));
+
+        var createTableIndex = allSql.IndexOf("CREATE TABLE", StringComparison.Ordinal);
+        var addProjectionIndex = allSql.IndexOf("ADD PROJECTION", StringComparison.Ordinal);
+
+        Assert.True(createTableIndex >= 0, "CREATE TABLE should be present");
+        Assert.True(addProjectionIndex >= 0, "ADD PROJECTION should be present");
+        Assert.True(createTableIndex < addProjectionIndex, "CREATE TABLE should come before ADD PROJECTION");
+    }
+
+    [Fact]
+    public void MigrationsSqlGenerator_OrdersCreateIndexAfterCreateTable()
+    {
+        using var context = CreateContext<RawSqlMaterializedViewContext>();
+        var generator = context.GetService<IMigrationsSqlGenerator>();
+        var model = context.Model;
+
+        // CreateIndex first (wrong order)
+        var createIndexOp = new CreateIndexOperation
+        {
+            Name = "IX_Orders_OrderDate",
+            Table = "Orders",
+            Columns = new[] { "OrderDate" }
+        };
+
+        // CreateTable second
+        var tableOp = new CreateTableOperation
+        {
+            Name = "Orders",
+            Columns =
+            {
+                new AddColumnOperation { Name = "Id", ClrType = typeof(int), ColumnType = "Int32" },
+                new AddColumnOperation { Name = "OrderDate", ClrType = typeof(DateTime), ColumnType = "DateTime64(3)" }
+            },
+            PrimaryKey = new AddPrimaryKeyOperation { Columns = new[] { "Id" } }
+        };
+        tableOp.AddAnnotation("ClickHouse:Engine", "MergeTree");
+
+        var commands = generator.Generate(new MigrationOperation[] { createIndexOp, tableOp }, model);
+        var allSql = string.Join("\n", commands.Select(c => c.CommandText));
+
+        var createTableIndex = allSql.IndexOf("CREATE TABLE", StringComparison.Ordinal);
+        var addIndexIndex = allSql.IndexOf("ADD INDEX", StringComparison.Ordinal);
+
+        Assert.True(createTableIndex >= 0, "CREATE TABLE should be present");
+        Assert.True(addIndexIndex >= 0, "ADD INDEX should be present");
+        Assert.True(createTableIndex < addIndexIndex, "CREATE TABLE should come before ADD INDEX");
+    }
+
+    [Fact]
+    public void MigrationsSqlGenerator_OrdersAddColumnAfterCreateTable()
+    {
+        using var context = CreateContext<RawSqlMaterializedViewContext>();
+        var generator = context.GetService<IMigrationsSqlGenerator>();
+        var model = context.Model;
+
+        // AddColumn first (wrong order)
+        var addColOp = new AddColumnOperation
+        {
+            Table = "Orders",
+            Name = "NewColumn",
+            ClrType = typeof(string),
+            ColumnType = "String"
+        };
+
+        // CreateTable second
+        var tableOp = new CreateTableOperation
+        {
+            Name = "Orders",
+            Columns = { new AddColumnOperation { Name = "Id", ClrType = typeof(int), ColumnType = "Int32" } },
+            PrimaryKey = new AddPrimaryKeyOperation { Columns = new[] { "Id" } }
+        };
+        tableOp.AddAnnotation("ClickHouse:Engine", "MergeTree");
+
+        var commands = generator.Generate(new MigrationOperation[] { addColOp, tableOp }, model);
+        var allSql = string.Join("\n", commands.Select(c => c.CommandText));
+
+        var createTableIndex = allSql.IndexOf("CREATE TABLE", StringComparison.Ordinal);
+        var addColumnIndex = allSql.IndexOf("ADD COLUMN", StringComparison.Ordinal);
+
+        Assert.True(createTableIndex >= 0, "CREATE TABLE should be present");
+        Assert.True(addColumnIndex >= 0, "ADD COLUMN should be present");
+        Assert.True(createTableIndex < addColumnIndex, "CREATE TABLE should come before ADD COLUMN");
+    }
+
+    #endregion
+
     private TContext CreateContext<TContext>() where TContext : DbContext
     {
         var options = new DbContextOptionsBuilder<TContext>()
