@@ -324,13 +324,7 @@ public class ClickHouseIntegrationTests : IAsyncLifetime
 
     #region Query Modifier Tests (FINAL, SAMPLE, SETTINGS)
 
-    // NOTE: The FINAL, SAMPLE, and SETTINGS extension methods have infrastructure in place
-    // but require deeper EF Core expression tree integration to fully work. The translator
-    // sets flags but the SQL generator doesn't receive them through the standard pipeline.
-    // These tests document the intended behavior and will pass once the implementation
-    // is completed with proper ShapedQueryExpression modification.
-
-    [Fact(Skip = "FINAL implementation incomplete - requires expression tree modification")]
+    [Fact]
     public async Task Final_QueriesReplacingMergeTreeWithDeduplication()
     {
         await using var context = CreateContext<UsersDbContext>();
@@ -369,7 +363,7 @@ public class ClickHouseIntegrationTests : IAsyncLifetime
         Assert.Equal(2, finalResult[0].Version);
     }
 
-    [Fact(Skip = "SAMPLE implementation incomplete - requires expression tree modification")]
+    [Fact]
     public async Task Sample_ReturnsSubsetOfData()
     {
         await using var context = CreateContext<EventsDbContext>();
@@ -411,7 +405,7 @@ public class ClickHouseIntegrationTests : IAsyncLifetime
         Assert.True(sampledResults.Count < 100, $"Expected fewer than 100 rows with 10% sample, got {sampledResults.Count}");
     }
 
-    [Fact(Skip = "SETTINGS implementation incomplete - requires expression tree modification")]
+    [Fact]
     public async Task WithSetting_AppliesQuerySettings()
     {
         await using var context = CreateContext<EventsDbContext>();
@@ -448,7 +442,7 @@ public class ClickHouseIntegrationTests : IAsyncLifetime
         Assert.Equal("test", results[0].EventType);
     }
 
-    [Fact(Skip = "SETTINGS implementation incomplete - requires expression tree modification")]
+    [Fact]
     public async Task WithSettings_AppliesMultipleQuerySettings()
     {
         await using var context = CreateContext<EventsDbContext>();
