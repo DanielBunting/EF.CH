@@ -199,9 +199,9 @@ public class IdempotentDdlIntegrationTests : IAsyncLifetime
         await context.Database.ExecuteSqlRawAsync(
             @"CREATE TABLE IF NOT EXISTS ""mv_source"" (""Id"" UUID, ""Value"" Int32) ENGINE = MergeTree() ORDER BY (""Id"");");
 
-        // Create MV
+        // Create MV - SummingMergeTree requires non-empty ORDER BY in newer ClickHouse versions
         var mvSql = @"CREATE MATERIALIZED VIEW IF NOT EXISTS ""test_mv""
-            ENGINE = SummingMergeTree() ORDER BY ()
+            ENGINE = MergeTree() ORDER BY (tuple())
             AS SELECT sum(""Value"") AS ""TotalValue"" FROM ""mv_source"";";
 
         // First run
