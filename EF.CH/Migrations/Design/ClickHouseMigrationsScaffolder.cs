@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using EF.CH.Infrastructure;
+using EF.CH.Metadata;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
@@ -199,6 +200,8 @@ public class ClickHouseMigrationsScaffolder : MigrationsScaffolder
 
     /// <summary>
     /// Gets the migration operations by diffing the model.
+    /// Also enriches DropTableOperation with annotations from the previous model
+    /// for proper phase ordering of MVs and dictionaries.
     /// </summary>
     [SuppressMessage("Usage", "EF1001:Internal EF Core API usage")]
     private IReadOnlyList<MigrationOperation> GetMigrationOperations()
@@ -221,7 +224,65 @@ public class ClickHouseMigrationsScaffolder : MigrationsScaffolder
             }
         }
 
-        return _modelDiffer.GetDifferences(lastModel, _model.GetRelationalModel());
+        var operations = _modelDiffer.GetDifferences(lastModel, _model.GetRelationalModel());
+
+        // Enrich DropTableOperations with annotations from previous model
+        // so the splitter can distinguish MVs/dicts from regular tables
+        return EnrichDropOperationsWithAnnotations(operations, lastModel);
+    }
+
+    /// <summary>
+    /// Enriches DropTableOperation with annotations from the previous model.
+    /// This allows the splitter to correctly classify MV and dictionary drops.
+    /// </summary>
+    private static IReadOnlyList<MigrationOperation> EnrichDropOperationsWithAnnotations(
+        IReadOnlyList<MigrationOperation> operations,
+        IRelationalModel? previousModel)
+    {
+        if (previousModel == null)
+            return operations;
+
+        foreach (var op in operations)
+        {
+            if (op is DropTableOperation dropOp)
+            {
+                // Find the table in the previous model
+                var previousTable = previousModel.Tables
+                    .FirstOrDefault(t => string.Equals(t.Name, dropOp.Name, StringComparison.OrdinalIgnoreCase));
+
+                var entityType = previousTable?.EntityTypeMappings.FirstOrDefault()?.TypeBase as IEntityType;
+                if (entityType == null)
+                    continue;
+
+                // Copy MaterializedView annotations
+                var isMv = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedView)?.Value;
+                if (isMv is true)
+                {
+                    dropOp.AddAnnotation(ClickHouseAnnotationNames.MaterializedView, true);
+
+                    var mvSource = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewSource)?.Value;
+                    if (mvSource != null)
+                        dropOp.AddAnnotation(ClickHouseAnnotationNames.MaterializedViewSource, mvSource);
+
+                    var mvQuery = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewQuery)?.Value;
+                    if (mvQuery != null)
+                        dropOp.AddAnnotation(ClickHouseAnnotationNames.MaterializedViewQuery, mvQuery);
+                }
+
+                // Copy Dictionary annotations
+                var isDict = entityType.FindAnnotation(ClickHouseAnnotationNames.Dictionary)?.Value;
+                if (isDict is true)
+                {
+                    dropOp.AddAnnotation(ClickHouseAnnotationNames.Dictionary, true);
+
+                    var dictSource = entityType.FindAnnotation(ClickHouseAnnotationNames.DictionarySource)?.Value;
+                    if (dictSource != null)
+                        dropOp.AddAnnotation(ClickHouseAnnotationNames.DictionarySource, dictSource);
+                }
+            }
+        }
+
+        return operations;
     }
 
     /// <summary>

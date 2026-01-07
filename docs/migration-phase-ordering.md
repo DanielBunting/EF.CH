@@ -1,123 +1,113 @@
 # Migration Phase Ordering
 
-When EF.CH splits a migration into individual step files, operations are sorted into phases to ensure dependencies are satisfied. This document explains the ordering strategy.
+When EF.CH splits a migration into individual step files, operations are automatically sorted to ensure they execute in a safe order. This document explains why ordering matters and what to expect.
 
-## The Problem
+## Why Ordering Matters
 
-ClickHouse has unique constraints that make migration ordering critical:
+ClickHouse lacks transaction support. If step 3 of a 5-step migration fails, steps 1-2 have already been applied and cannot be rolled back. This makes operation ordering critical for:
 
-1. **No transactions**: If step 3 of 5 fails, steps 1-2 have already been applied and cannot be rolled back
-2. **Materialized views depend on source tables**: An MV cannot be created before its source table exists
-3. **Projections depend on parent tables**: A projection cannot be added to a non-existent table
-4. **LINQ-based MVs**: When using `AsMaterializedView<TTarget, TSource>()`, the source table dependency is embedded in the query expression, not always detectable via annotations
+- **Materialized views**: Must be created after their source tables exist
+- **Cascading MVs**: If MV-B reads from MV-A, MV-A must be created first
+- **Indexes**: Must be created after the columns they reference
+- **Dictionaries**: Must be created after their source tables
+- **Projections**: Must be added after their parent tables exist
 
-The original approach used topological sorting based on annotation detection. This failed for LINQ-based materialized views where the source table couldn't be reliably determined.
+When dropping objects, the order reverses - dependents must be dropped before their sources.
 
-## The Solution: Phase-Based Ordering
+## Automatic Phase Ordering
 
-Instead of detecting individual dependencies, operations are categorized into phases that guarantee correct ordering:
+EF.CH automatically sorts operations into 9 phases:
 
-| Phase | Operations | Rationale |
-|-------|-----------|-----------|
-| 1 | Drop projections, Drop indexes | Remove dependents before their parents |
-| 2 | Drop tables | Safe after dependents removed |
-| 3 | Create regular tables | Base tables must exist first |
-| 4 | Create MVs and dictionaries | Source tables now exist |
-| 5 | Add projections, Add indexes | Parent tables now exist |
-| 6 | Other (columns, alters, renames) | Table modifications |
+| Phase | What Happens |
+|-------|-------------|
+| 1 | Drop projections and indexes |
+| 2 | Drop materialized views and dictionaries |
+| 3 | Drop regular tables |
+| 4 | Create regular tables |
+| 5 | Add columns |
+| 6 | Create materialized views and dictionaries |
+| 7 | Modify columns (alter, drop, rename) |
+| 8 | Create indexes |
+| 9 | Add and materialize projections |
 
-## How It Works
+You don't need to worry about the order you define operations in your migration - EF.CH will reorder them correctly.
 
-### Detection
+## Cascading Dependencies
 
-- **Regular tables**: `CreateTableOperation` without MV or Dictionary annotations
-- **MVs**: `CreateTableOperation` with `ClickHouse:MaterializedView = true` annotation
-- **Dictionaries**: `CreateTableOperation` with `ClickHouse:Dictionary = true` annotation
+When you have materialized views that read from other materialized views, EF.CH analyzes the SQL queries to determine the correct order:
 
-### Example
-
-Given these operations in any order:
 ```
-AddProjectionOperation (prj_daily on Orders)
-CreateTableOperation (HourlySummary, MV=true)
-DropIndexOperation (IX_Old on OldTable)
-CreateTableOperation (Orders)
-DropTableOperation (OldTable)
-CreateIndexOperation (IX_Orders_Date on Orders)
+Orders (table)
+    ↓
+HourlySummary (MV reading from Orders)
+    ↓
+DailySummary (MV reading from HourlySummary)
 ```
 
-After phase sorting:
+**Creating**: Orders → HourlySummary → DailySummary
+
+**Dropping**: DailySummary → HourlySummary → Orders
+
+This works automatically for both raw SQL and LINQ-based materialized views.
+
+## What You See
+
+When you run `dotnet ef migrations add`, each operation becomes a separate step file:
+
 ```
-Phase 1: DropIndexOperation (IX_Old)
-Phase 2: DropTableOperation (OldTable)
-Phase 3: CreateTableOperation (Orders)           <- Regular table
-Phase 4: CreateTableOperation (HourlySummary)    <- MV, after all tables
-Phase 5: AddProjectionOperation (prj_daily)
-Phase 5: CreateIndexOperation (IX_Orders_Date)
+Migrations/
+├── 20250107_AddAnalytics_001_CreateTable_Orders.cs
+├── 20250107_AddAnalytics_002_CreateTable_HourlySummary.cs
+├── 20250107_AddAnalytics_003_CreateTable_DailySummary.cs
+├── 20250107_AddAnalytics_004_CreateIndex_IX_Orders_Date.cs
+└── 20250107_AddAnalyticsModelSnapshot.cs
 ```
 
-## Limitations
+The step numbers reflect the safe execution order, not the order you defined them.
 
-### Drop Ordering for MVs
+## Edge Cases
 
-When dropping tables, we cannot reliably detect whether a `DropTableOperation` is for a materialized view or a regular table. The entity has been removed from the model, so annotations aren't available.
+### Dropping MVs and Their Source Tables
 
-**Conservative approach**: All table drops happen in phase 2, after projection/index drops. If you're dropping both an MV and its source table in the same migration, you may need to split them into separate migrations or manually order the operations.
+When you remove both an MV and its source table in the same migration, EF.CH ensures the MV is dropped first. The system remembers what type each entity was (table, MV, or dictionary) even after you remove it from your model.
 
-### Within-Phase Ordering
+### Adding Columns with Indexes
 
-Operations within the same phase maintain their original order from the migration. This preserves any intentional ordering you've specified.
-
-## Implementation
-
-The ordering is implemented in `ClickHouseMigrationsSplitter.SortOperationsByDependencies()`:
+If you add a new column and an index on that column in the same migration:
 
 ```csharp
-switch (op)
-{
-    case DropProjectionOperation:
-    case DropIndexOperation:
-        phase1_DropProjectionsIndexes.Add(item);
-        break;
-
-    case DropTableOperation:
-        phase2_DropTables.Add(item);
-        break;
-
-    case CreateTableOperation createOp:
-        if (IsMaterializedViewOrDictionary(createOp))
-            phase4_CreateMvsDicts.Add(item);
-        else
-            phase3_CreateTables.Add(item);
-        break;
-
-    case AddProjectionOperation:
-    case MaterializeProjectionOperation:
-    case CreateIndexOperation:
-        phase5_AddProjectionsIndexes.Add(item);
-        break;
-
-    default:
-        phase6_Other.Add(item);
-        break;
-}
+// In your migration
+migrationBuilder.AddColumn<string>("Email", "Users");
+migrationBuilder.CreateIndex("IX_Users_Email", "Users", "Email");
 ```
 
-## Why Not Topological Sort?
+EF.CH ensures the column is added (Phase 5) before the index is created (Phase 8).
 
-The previous implementation used Kahn's algorithm to build a dependency graph based on:
-- `MaterializedViewSource` annotation for MVs
-- Table names for indexes, projections, columns
+### Adding Columns Referenced by MVs
 
-This failed when:
-1. LINQ-based MVs didn't have the source table annotated
-2. Complex queries referenced multiple tables
-3. The annotation was set but didn't match the actual table name
+If you add a column and create a materialized view that uses it:
 
-Phase-based ordering is:
-- **Simpler**: No graph traversal, just categorization
-- **More robust**: Works regardless of how MVs are defined
-- **Predictable**: Same input always produces same output
+```csharp
+// In your migration
+migrationBuilder.AddColumn<decimal>("Discount", "Orders");
+migrationBuilder.CreateTable("DiscountSummary", /* MV that references Discount */);
+```
+
+EF.CH ensures the column is added (Phase 5) before the MV is created (Phase 6).
+
+### Dictionary Drops
+
+Dictionaries use `DROP DICTIONARY` syntax instead of `DROP TABLE`. EF.CH generates the correct DDL automatically based on annotations from your model configuration.
+
+## Troubleshooting
+
+### Migration Failed Partway Through
+
+Check `__EFMigrationsHistory` to see which steps completed. Fix the underlying issue, then re-run `dotnet ef database update` - completed steps are skipped automatically.
+
+### Unexpected Order
+
+If operations aren't in the order you expected, it's likely because EF.CH reordered them for safety. The step file names include the operation description so you can verify the order makes sense.
 
 ## See Also
 

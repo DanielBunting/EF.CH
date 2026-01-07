@@ -1095,7 +1095,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
     }
 
     /// <summary>
-    /// Generate DROP TABLE.
+    /// Generate DROP TABLE or DROP DICTIONARY based on annotations.
     /// </summary>
     protected override void Generate(
         DropTableOperation operation,
@@ -1106,9 +1106,22 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         ArgumentNullException.ThrowIfNull(operation);
         ArgumentNullException.ThrowIfNull(builder);
 
-        builder
-            .Append("DROP TABLE IF EXISTS ")
-            .Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name, operation.Schema));
+        // Check if this is a dictionary (annotation was persisted by scaffolder)
+        var isDictionary = operation.FindAnnotation(ClickHouseAnnotationNames.Dictionary)?.Value is true;
+
+        if (isDictionary)
+        {
+            builder
+                .Append("DROP DICTIONARY IF EXISTS ")
+                .Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name, operation.Schema));
+        }
+        else
+        {
+            // Both regular tables and materialized views use DROP TABLE in ClickHouse
+            builder
+                .Append("DROP TABLE IF EXISTS ")
+                .Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name, operation.Schema));
+        }
 
         if (terminate)
         {
