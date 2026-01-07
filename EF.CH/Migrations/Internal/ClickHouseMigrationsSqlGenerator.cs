@@ -28,6 +28,160 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
     }
 
     /// <summary>
+    /// Intercepts all migration operations and sorts them to ensure proper dependency order.
+    /// Tables are created before their dependent operations (MVs, indices, projections, etc.).
+    /// </summary>
+    public override IReadOnlyList<MigrationCommand> Generate(
+        IReadOnlyList<MigrationOperation> operations,
+        IModel? model,
+        MigrationsSqlGenerationOptions options = MigrationsSqlGenerationOptions.Default)
+    {
+        var sortedOperations = SortOperationsForClickHouse(operations, model);
+        return base.Generate(sortedOperations, model, options);
+    }
+
+    /// <summary>
+    /// Topologically sorts operations so tables are created before dependent operations.
+    /// Uses Kahn's algorithm to ensure correct ordering while preserving original order
+    /// for operations with no dependencies.
+    /// </summary>
+    private IReadOnlyList<MigrationOperation> SortOperationsForClickHouse(
+        IReadOnlyList<MigrationOperation> operations,
+        IModel? model)
+    {
+        if (operations.Count <= 1)
+            return operations;
+
+        // Build map of table name -> CreateTableOperation
+        var tableOperations = new Dictionary<string, MigrationOperation>(StringComparer.OrdinalIgnoreCase);
+        foreach (var op in operations)
+        {
+            if (op is CreateTableOperation createOp)
+            {
+                tableOperations[createOp.Name] = op;
+            }
+        }
+
+        // Build dependency graph using Kahn's algorithm
+        var inDegree = new Dictionary<MigrationOperation, int>();
+        var dependents = new Dictionary<MigrationOperation, List<MigrationOperation>>();
+
+        foreach (var op in operations)
+        {
+            inDegree[op] = 0;
+            dependents[op] = new List<MigrationOperation>();
+        }
+
+        // Calculate dependencies
+        foreach (var op in operations)
+        {
+            var deps = GetOperationDependencies(op, model);
+            foreach (var dep in deps)
+            {
+                if (tableOperations.TryGetValue(dep, out var depOp) && depOp != op)
+                {
+                    dependents[depOp].Add(op);
+                    inDegree[op]++;
+                }
+            }
+        }
+
+        // Topological sort - preserve original order for equal-priority operations
+        var queue = new Queue<MigrationOperation>();
+        var originalOrder = operations.Select((op, idx) => (op, idx)).ToDictionary(x => x.op, x => x.idx);
+
+        foreach (var op in operations.OrderBy(o => originalOrder[o]))
+        {
+            if (inDegree[op] == 0)
+                queue.Enqueue(op);
+        }
+
+        var result = new List<MigrationOperation>();
+        while (queue.Count > 0)
+        {
+            var op = queue.Dequeue();
+            result.Add(op);
+
+            foreach (var dependent in dependents[op].OrderBy(d => originalOrder[d]))
+            {
+                inDegree[dependent]--;
+                if (inDegree[dependent] == 0)
+                    queue.Enqueue(dependent);
+            }
+        }
+
+        // Add any remaining (shouldn't happen with valid migrations)
+        foreach (var op in operations)
+        {
+            if (!result.Contains(op))
+                result.Add(op);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Gets table names that this operation depends on.
+    /// </summary>
+    private HashSet<string> GetOperationDependencies(MigrationOperation operation, IModel? model)
+    {
+        var deps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        switch (operation)
+        {
+            case CreateTableOperation createOp:
+                var sourceDep = GetSourceTableDependency(createOp, model);
+                if (!string.IsNullOrEmpty(sourceDep))
+                    deps.Add(sourceDep);
+                break;
+            case CreateIndexOperation indexOp when !string.IsNullOrEmpty(indexOp.Table):
+                deps.Add(indexOp.Table);
+                break;
+            case DropIndexOperation dropIndexOp when !string.IsNullOrEmpty(dropIndexOp.Table):
+                deps.Add(dropIndexOp.Table);
+                break;
+            case AddColumnOperation addColOp when !string.IsNullOrEmpty(addColOp.Table):
+                deps.Add(addColOp.Table);
+                break;
+            case DropColumnOperation dropColOp when !string.IsNullOrEmpty(dropColOp.Table):
+                deps.Add(dropColOp.Table);
+                break;
+            case AlterColumnOperation alterColOp when !string.IsNullOrEmpty(alterColOp.Table):
+                deps.Add(alterColOp.Table);
+                break;
+            case AddProjectionOperation addProjOp when !string.IsNullOrEmpty(addProjOp.Table):
+                deps.Add(addProjOp.Table);
+                break;
+            case DropProjectionOperation dropProjOp when !string.IsNullOrEmpty(dropProjOp.Table):
+                deps.Add(dropProjOp.Table);
+                break;
+            case MaterializeProjectionOperation matProjOp when !string.IsNullOrEmpty(matProjOp.Table):
+                deps.Add(matProjOp.Table);
+                break;
+        }
+
+        return deps;
+    }
+
+    /// <summary>
+    /// Gets the source table dependency for materialized views and dictionaries.
+    /// </summary>
+    private static string? GetSourceTableDependency(CreateTableOperation operation, IModel? model)
+    {
+        // Check for materialized view source
+        var mvSource = GetAnnotation<string>(operation, ClickHouseAnnotationNames.MaterializedViewSource);
+        if (!string.IsNullOrEmpty(mvSource))
+            return mvSource;
+
+        // Check for dictionary source
+        var dictSource = GetAnnotation<string>(operation, ClickHouseAnnotationNames.DictionarySource);
+        if (!string.IsNullOrEmpty(dictSource))
+            return dictSource;
+
+        return null;
+    }
+
+    /// <summary>
     /// Generates CREATE TABLE or CREATE MATERIALIZED VIEW with ClickHouse ENGINE clause.
     /// Skips DDL for external entities (they use table functions, not physical tables).
     /// </summary>
