@@ -18,6 +18,33 @@ dotnet add package Microsoft.EntityFrameworkCore.Design
 dotnet tool install --global dotnet-ef
 ```
 
+## Split Migrations (ClickHouse-Specific)
+
+ClickHouse lacks ACID transactions, which means a multi-operation migration that fails partway through leaves the database in an inconsistent state with no rollback capability.
+
+EF.CH solves this by automatically **splitting migrations into individual step files**, one operation per file:
+
+```
+Migrations/
+├── 20250107120000_AddOrders_001_CreateTable_Orders.cs
+├── 20250107120000_AddOrders_002_CreateTable_OrderItems.cs
+├── 20250107120000_AddOrders_003_CreateIndex_IX_OrderItems.cs
+└── 20250107120000_AddOrdersModelSnapshot.cs
+```
+
+### Key Benefits
+
+- **Atomic steps**: Each operation is tracked independently in migration history
+- **Idempotent DDL**: All operations use `IF NOT EXISTS`/`IF EXISTS` syntax
+- **Phase ordering**: Operations are sorted to ensure dependencies are satisfied (tables before MVs, drops before creates)
+- **Resume capability**: If step 2 fails, fix the issue and re-run; step 1 won't be re-executed
+
+### Forward-Only
+
+ClickHouse migrations are forward-only. The `Down()` method throws `ClickHouseDownMigrationNotSupportedException`. To undo changes, create a new forward migration.
+
+See [Split Migrations](features/split-migrations.md) for detailed documentation.
+
 ## Creating Migrations
 
 ### Initial Migration
@@ -26,7 +53,7 @@ dotnet tool install --global dotnet-ef
 dotnet ef migrations add InitialCreate
 ```
 
-This creates a migration file in `Migrations/` with `Up()` and `Down()` methods.
+This generates split migration files in `Migrations/`, each with its own `Up()` method containing a single operation.
 
 ### Adding Changes
 
@@ -302,6 +329,8 @@ DELETE FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20240115_InitialCreat
 
 ## See Also
 
+- [Split Migrations](features/split-migrations.md) - How migrations are split into step files
+- [Migration Phase Ordering](migration-phase-ordering.md) - How operations are ordered by phase
 - [Getting Started](getting-started.md)
 - [Scaffolding](scaffolding.md)
 - [EF Core Migrations Docs](https://learn.microsoft.com/en-us/ef/core/managing-schemas/migrations/)
