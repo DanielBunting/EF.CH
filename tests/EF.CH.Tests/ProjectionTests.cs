@@ -1,5 +1,6 @@
 using EF.CH.Extensions;
 using EF.CH.Metadata;
+using EF.CH.Migrations.Operations;
 using EF.CH.Projections;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -193,7 +194,7 @@ public class ProjectionTests : IAsyncLifetime
         var generator = context.GetService<IMigrationsSqlGenerator>();
         var model = context.Model;
 
-        var operation = new Migrations.Operations.DropProjectionOperation
+        var operation = new DropProjectionOperation
         {
             Table = "orders",
             Name = "prj_old",
@@ -216,7 +217,7 @@ public class ProjectionTests : IAsyncLifetime
         var generator = context.GetService<IMigrationsSqlGenerator>();
         var model = context.Model;
 
-        var operation = new Migrations.Operations.MaterializeProjectionOperation
+        var operation = new MaterializeProjectionOperation
         {
             Table = "orders",
             Name = "prj_by_region"
@@ -237,7 +238,7 @@ public class ProjectionTests : IAsyncLifetime
         var generator = context.GetService<IMigrationsSqlGenerator>();
         var model = context.Model;
 
-        var operation = new Migrations.Operations.MaterializeProjectionOperation
+        var operation = new MaterializeProjectionOperation
         {
             Table = "orders",
             Name = "prj_by_region",
