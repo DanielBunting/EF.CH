@@ -28,8 +28,8 @@ public class ClickHouseSqlNullabilityProcessor : SqlNullabilityProcessor
 
     public ClickHouseSqlNullabilityProcessor(
         RelationalParameterBasedSqlProcessorDependencies dependencies,
-        RelationalParameterBasedSqlProcessorParameters parameters)
-        : base(dependencies, parameters)
+        bool useRelationalNulls)
+        : base(dependencies, useRelationalNulls)
     {
         _sqlExpressionFactory = dependencies.SqlExpressionFactory;
         _typeMappingSource = dependencies.TypeMappingSource;
@@ -76,37 +76,31 @@ public class ClickHouseSqlNullabilityProcessor : SqlNullabilityProcessor
     }
 
     /// <summary>
-    /// Visits extension expressions, handling ClickHouse-specific expressions like ClickHouseTableModifierExpression
-    /// and ClickHouseWindowFunctionExpression.
+    /// Visits table expressions, handling ClickHouse-specific table expressions.
     /// </summary>
-    protected override Expression VisitExtension(Expression node)
+    protected override TableExpressionBase Visit(TableExpressionBase tableExpressionBase)
     {
-        if (node is ClickHouseTableModifierExpression modifierExpression)
+        switch (tableExpressionBase)
         {
-            // Visit the wrapped table expression
-            var visitedTable = Visit(modifierExpression.Table);
+            case ClickHouseTableModifierExpression modifierExpression:
+                // Visit the wrapped table expression
+                var visitedTable = Visit(modifierExpression.Table);
+                return visitedTable != modifierExpression.Table
+                    ? new ClickHouseTableModifierExpression(
+                        visitedTable,
+                        modifierExpression.UseFinal,
+                        modifierExpression.SampleFraction,
+                        modifierExpression.SampleOffset)
+                    : modifierExpression;
 
-            // Return a new modifier expression with the visited table
-            return visitedTable != modifierExpression.Table
-                ? new ClickHouseTableModifierExpression(
-                    (TableExpressionBase)visitedTable,
-                    modifierExpression.UseFinal,
-                    modifierExpression.SampleFraction,
-                    modifierExpression.SampleOffset)
-                : modifierExpression;
+            case ClickHouseExternalTableFunctionExpression:
+            case ClickHouseDictionaryTableExpression:
+                // These are leaf nodes, no children to visit
+                return tableExpressionBase;
+
+            default:
+                return base.Visit(tableExpressionBase);
         }
-
-        if (node is ClickHouseWindowFunctionExpression windowExpression)
-        {
-            return VisitWindowFunction(windowExpression);
-        }
-
-        if (node is ClickHouseJsonPathExpression jsonPathExpression)
-        {
-            return VisitJsonPath(jsonPathExpression);
-        }
-
-        return base.VisitExtension(node);
     }
 
     /// <summary>
@@ -169,7 +163,8 @@ public class ClickHouseSqlNullabilityProcessor : SqlNullabilityProcessor
     }
 
     /// <summary>
-    /// Visits custom SQL expressions, handling ClickHouse-specific expressions like ClickHouseJsonPathExpression.
+    /// Visits custom SQL expressions, handling ClickHouse-specific expressions like ClickHouseJsonPathExpression
+    /// and ClickHouseWindowFunctionExpression.
     /// </summary>
     protected override SqlExpression VisitCustomSqlExpression(
         SqlExpression sqlExpression,
@@ -181,6 +176,13 @@ public class ClickHouseSqlNullabilityProcessor : SqlNullabilityProcessor
             // JSON path expressions are nullable (the path may not exist)
             nullable = true;
             return VisitJsonPath(jsonPathExpression);
+        }
+
+        if (sqlExpression is ClickHouseWindowFunctionExpression windowExpression)
+        {
+            // Window functions may return null for some functions like lag/lead
+            nullable = true;
+            return VisitWindowFunction(windowExpression);
         }
 
         return base.VisitCustomSqlExpression(sqlExpression, allowOptimizedExpansion, out nullable);

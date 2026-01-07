@@ -2,7 +2,6 @@ using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Query.SqlExpressions;
 using Microsoft.EntityFrameworkCore.Storage;
-using static System.Linq.Expressions.Expression;
 
 namespace EF.CH.Query.Internal.Expressions;
 
@@ -202,28 +201,6 @@ public sealed class ClickHouseJsonPathExpression : SqlExpression
                 expressionPrinter.Append($"[{ArrayIndices[i].Value + 1}]");
             }
         }
-    }
-
-    /// <inheritdoc />
-    public override Expression Quote()
-    {
-        var quotedColumn = Column.Quote();
-
-        var segmentsArray = NewArrayInit(
-            typeof(string),
-            PathSegments.Select(s => Constant(s)));
-
-        var indicesArray = NewArrayInit(
-            typeof(int?),
-            ArrayIndices.Select(i => Constant(i, typeof(int?))));
-
-        return New(
-            typeof(ClickHouseJsonPathExpression).GetConstructors().First(),
-            quotedColumn,
-            segmentsArray,
-            indicesArray,
-            Constant(Type, typeof(Type)),
-            Constant(TypeMapping, typeof(RelationalTypeMapping)));
     }
 
     /// <inheritdoc />

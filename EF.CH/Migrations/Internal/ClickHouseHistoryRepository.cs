@@ -17,12 +17,6 @@ public class ClickHouseHistoryRepository : HistoryRepository
     }
 
     /// <summary>
-    /// ClickHouse doesn't support distributed locks in the traditional sense.
-    /// We use explicit transactions (none available) or advisory locking (not available).
-    /// </summary>
-    public override LockReleaseBehavior LockReleaseBehavior => LockReleaseBehavior.Explicit;
-
-    /// <summary>
     /// Gets the SQL to check if the history table exists.
     /// Uses ClickHouse system.tables to check for table existence.
     /// </summary>
@@ -49,28 +43,6 @@ public class ClickHouseHistoryRepository : HistoryRepository
     {
         // If we get any result (1), the table exists
         return value is not null && value != DBNull.Value;
-    }
-
-    /// <summary>
-    /// Acquires a database lock for migration operations.
-    /// ClickHouse doesn't support traditional locking, so this returns a no-op lock.
-    /// </summary>
-    public override IMigrationsDatabaseLock AcquireDatabaseLock()
-    {
-        // ClickHouse doesn't support database locks in the traditional sense
-        // Return a no-op lock
-        return new ClickHouseNoOpDatabaseLock(this);
-    }
-
-    /// <summary>
-    /// Acquires a database lock asynchronously for migration operations.
-    /// ClickHouse doesn't support traditional locking, so this returns a no-op lock.
-    /// </summary>
-    public override Task<IMigrationsDatabaseLock> AcquireDatabaseLockAsync(CancellationToken cancellationToken = default)
-    {
-        // ClickHouse doesn't support database locks in the traditional sense
-        // Return a no-op lock
-        return Task.FromResult<IMigrationsDatabaseLock>(new ClickHouseNoOpDatabaseLock(this));
     }
 
     /// <summary>
@@ -183,23 +155,4 @@ public class ClickHouseHistoryRepository : HistoryRepository
         // ClickHouse doesn't support procedural IF statements
         return string.Empty;
     }
-}
-
-/// <summary>
-/// No-op database lock for ClickHouse since it doesn't support traditional locking.
-/// </summary>
-internal sealed class ClickHouseNoOpDatabaseLock : IMigrationsDatabaseLock
-{
-    private readonly IHistoryRepository _historyRepository;
-
-    public ClickHouseNoOpDatabaseLock(IHistoryRepository? historyRepository = null)
-    {
-        _historyRepository = historyRepository!;
-    }
-
-    public IHistoryRepository HistoryRepository => _historyRepository;
-
-    public void Dispose() { }
-
-    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 }

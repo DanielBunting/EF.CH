@@ -63,8 +63,7 @@ public class ClickHouseMigrationsScaffolder : MigrationsScaffolder
         string migrationName,
         string? rootNamespace,
         string? subNamespace = null,
-        string? language = null,
-        bool dryRun = false)
+        string? language = null)
     {
         // Clear any previous pending migrations
         _pendingStepMigrations.Clear();
@@ -76,7 +75,7 @@ public class ClickHouseMigrationsScaffolder : MigrationsScaffolder
         // If single operation or empty, use standard scaffolding
         if (operations.Count <= 1)
         {
-            return base.ScaffoldMigration(migrationName, rootNamespace, subNamespace, language, dryRun);
+            return base.ScaffoldMigration(migrationName, rootNamespace, subNamespace, language);
         }
 
         // Get the code generator
@@ -170,14 +169,13 @@ public class ClickHouseMigrationsScaffolder : MigrationsScaffolder
     public override MigrationFiles Save(
         string projectDir,
         ScaffoldedMigration migration,
-        string? outputDir,
-        bool dryRun = false)
+        string? outputDir)
     {
         // Save the primary (first step) migration using base implementation
-        var files = base.Save(projectDir, migration, outputDir, dryRun);
+        var files = base.Save(projectDir, migration, outputDir);
 
-        // If we have pending step migrations, save them too (unless dry run)
-        if (_pendingStepMigrations.Count > 0 && !dryRun)
+        // If we have pending step migrations, save them too
+        if (_pendingStepMigrations.Count > 0)
         {
             var migrationsDir = Path.GetDirectoryName(files.MigrationFile)
                 ?? Path.Combine(projectDir, outputDir ?? "Migrations");
