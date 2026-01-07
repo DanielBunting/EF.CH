@@ -347,7 +347,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         }
 
         builder
-            .Append("CREATE TABLE ")
+            .Append("CREATE TABLE IF NOT EXISTS ")
             .Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name, operation.Schema))
             .AppendLine(" (");
 
@@ -391,10 +391,10 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
 
         foreach (var projection in projections)
         {
-            // ALTER TABLE "table" ADD PROJECTION "name" (SELECT ...)
+            // ALTER TABLE "table" ADD PROJECTION IF NOT EXISTS "name" (SELECT ...)
             builder.Append("ALTER TABLE ");
             builder.Append(tableName);
-            builder.Append(" ADD PROJECTION ");
+            builder.Append(" ADD PROJECTION IF NOT EXISTS ");
             builder.Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(projection.Name));
             builder.Append(" (");
             builder.Append(projection.SelectSql);
@@ -444,7 +444,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         }
 
         builder
-            .Append("CREATE MATERIALIZED VIEW ")
+            .Append("CREATE MATERIALIZED VIEW IF NOT EXISTS ")
             .Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name, operation.Schema));
 
         builder.AppendLine();
@@ -537,7 +537,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         }
 
         // CREATE DICTIONARY
-        builder.Append("CREATE DICTIONARY ");
+        builder.Append("CREATE DICTIONARY IF NOT EXISTS ");
         builder.Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name, operation.Schema));
         builder.AppendLine();
         builder.AppendLine("(");
@@ -1095,7 +1095,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
     }
 
     /// <summary>
-    /// Generate DROP TABLE.
+    /// Generate DROP TABLE or DROP DICTIONARY based on annotations.
     /// </summary>
     protected override void Generate(
         DropTableOperation operation,
@@ -1106,9 +1106,22 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         ArgumentNullException.ThrowIfNull(operation);
         ArgumentNullException.ThrowIfNull(builder);
 
-        builder
-            .Append("DROP TABLE IF EXISTS ")
-            .Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name, operation.Schema));
+        // Check if this is a dictionary (annotation was persisted by scaffolder)
+        var isDictionary = operation.FindAnnotation(ClickHouseAnnotationNames.Dictionary)?.Value is true;
+
+        if (isDictionary)
+        {
+            builder
+                .Append("DROP DICTIONARY IF EXISTS ")
+                .Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name, operation.Schema));
+        }
+        else
+        {
+            // Both regular tables and materialized views use DROP TABLE in ClickHouse
+            builder
+                .Append("DROP TABLE IF EXISTS ")
+                .Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name, operation.Schema));
+        }
 
         if (terminate)
         {
@@ -1132,7 +1145,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         builder
             .Append("ALTER TABLE ")
             .Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Table, operation.Schema))
-            .Append(" ADD COLUMN ");
+            .Append(" ADD COLUMN IF NOT EXISTS ");
 
         ColumnDefinition(operation, model, builder);
 
@@ -1158,7 +1171,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         builder
             .Append("ALTER TABLE ")
             .Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Table, operation.Schema))
-            .Append(" DROP COLUMN ")
+            .Append(" DROP COLUMN IF EXISTS ")
             .Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name));
 
         if (terminate)
@@ -1657,7 +1670,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         builder
             .Append("ALTER TABLE ")
             .Append(tableName)
-            .Append(" ADD INDEX ")
+            .Append(" ADD INDEX IF NOT EXISTS ")
             .Append(indexName)
             .Append(" (");
 
@@ -1774,7 +1787,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         builder
             .Append("ALTER TABLE ")
             .Append(tableName)
-            .Append(" DROP INDEX ")
+            .Append(" DROP INDEX IF EXISTS ")
             .Append(indexName);
 
         if (terminate)
@@ -1878,7 +1891,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
 
         builder.Append("ALTER TABLE ");
         builder.Append(tableName);
-        builder.Append(" ADD PROJECTION ");
+        builder.Append(" ADD PROJECTION IF NOT EXISTS ");
         builder.Append(projectionName);
         builder.Append(" (");
         builder.Append(operation.SelectSql);
