@@ -1,4 +1,5 @@
 using EF.CH.Infrastructure;
+using EF.CH.Migrations.Design;
 using EF.CH.Scaffolding.Internal;
 using Microsoft.EntityFrameworkCore.Design;
 using Microsoft.EntityFrameworkCore.Migrations.Design;
@@ -38,5 +39,13 @@ public class ClickHouseDesignTimeServices : IDesignTimeServices
 
         // Register migrations code generator to include ClickHouse extension namespaces
         services.Replace(ServiceDescriptor.Singleton<IMigrationsCodeGenerator, ClickHouseCSharpMigrationsGenerator>());
+
+        // Register step migrations infrastructure for ClickHouse
+        // The splitter splits operations into individual step migrations
+        services.AddSingleton<ClickHouseMigrationsSplitter>();
+
+        // The scaffolder generates multiple migration files (one per operation)
+        // This enables atomic execution and resume after partial failure
+        services.Replace(ServiceDescriptor.Scoped<IMigrationsScaffolder, ClickHouseMigrationsScaffolder>());
     }
 }

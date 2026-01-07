@@ -231,7 +231,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         }
 
         builder
-            .Append("CREATE TABLE ")
+            .Append("CREATE TABLE IF NOT EXISTS ")
             .Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name, operation.Schema))
             .AppendLine(" (");
 
@@ -278,7 +278,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
             // ALTER TABLE "table" ADD PROJECTION "name" (SELECT ...)
             builder.Append("ALTER TABLE ");
             builder.Append(tableName);
-            builder.Append(" ADD PROJECTION ");
+            builder.Append(" ADD PROJECTION IF NOT EXISTS ");
             builder.Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(projection.Name));
             builder.Append(" (");
             builder.Append(projection.SelectSql);
@@ -328,7 +328,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         }
 
         builder
-            .Append("CREATE MATERIALIZED VIEW ")
+            .Append("CREATE MATERIALIZED VIEW IF NOT EXISTS ")
             .Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name, operation.Schema));
 
         builder.AppendLine();
@@ -421,7 +421,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         }
 
         // CREATE DICTIONARY
-        builder.Append("CREATE DICTIONARY ");
+        builder.Append("CREATE DICTIONARY IF NOT EXISTS ");
         builder.Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name, operation.Schema));
         builder.AppendLine();
         builder.AppendLine("(");
@@ -1016,7 +1016,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         builder
             .Append("ALTER TABLE ")
             .Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Table, operation.Schema))
-            .Append(" ADD COLUMN ");
+            .Append(" ADD COLUMN IF NOT EXISTS ");
 
         ColumnDefinition(operation, model, builder);
 
@@ -1042,7 +1042,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         builder
             .Append("ALTER TABLE ")
             .Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Table, operation.Schema))
-            .Append(" DROP COLUMN ")
+            .Append(" DROP COLUMN IF EXISTS ")
             .Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name));
 
         if (terminate)
@@ -1541,7 +1541,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         builder
             .Append("ALTER TABLE ")
             .Append(tableName)
-            .Append(" ADD INDEX ")
+            .Append(" ADD INDEX IF NOT EXISTS ")
             .Append(indexName)
             .Append(" (");
 
@@ -1658,7 +1658,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         builder
             .Append("ALTER TABLE ")
             .Append(tableName)
-            .Append(" DROP INDEX ")
+            .Append(" DROP INDEX IF EXISTS ")
             .Append(indexName);
 
         if (terminate)
@@ -1762,7 +1762,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
 
         builder.Append("ALTER TABLE ");
         builder.Append(tableName);
-        builder.Append(" ADD PROJECTION ");
+        builder.Append(" ADD PROJECTION IF NOT EXISTS ");
         builder.Append(projectionName);
         builder.Append(" (");
         builder.Append(operation.SelectSql);
@@ -1799,11 +1799,8 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
 
         builder.Append("ALTER TABLE ");
         builder.Append(tableName);
-        builder.Append(" DROP PROJECTION ");
-        if (operation.IfExists)
-        {
-            builder.Append("IF EXISTS ");
-        }
+        // Always use IF EXISTS for idempotency during step migrations
+        builder.Append(" DROP PROJECTION IF EXISTS ");
         builder.Append(projectionName);
         builder.AppendLine(Dependencies.SqlGenerationHelper.StatementTerminator);
         EndStatement(builder);
