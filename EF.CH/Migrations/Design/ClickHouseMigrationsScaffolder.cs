@@ -108,8 +108,8 @@ public class ClickHouseMigrationsScaffolder : MigrationsScaffolder
         for (int i = 0; i < steps.Count; i++)
         {
             var step = steps[i];
-            var stepName = $"{migrationName}_{step.StepSuffix}";
-            var stepId = $"{timestamp}_{stepName}";
+            var stepId = $"{timestamp}_{migrationName}_{step.StepSuffix}";
+            var stepClassName = $"_{stepId}"; // Underscore prefix for valid C# class name
             var stepComment = $"// Step {step.StepNumber} of {steps.Count}: {step.OperationDescription}";
 
             // Generate Up code for this step's single operation
@@ -118,7 +118,7 @@ public class ClickHouseMigrationsScaffolder : MigrationsScaffolder
             var migrationCode = GenerateStepMigrationCode(
                 codeGenerator,
                 stepId,
-                stepName,
+                stepClassName,
                 upOperations,
                 finalSubNamespace,
                 contextType,
@@ -127,7 +127,7 @@ public class ClickHouseMigrationsScaffolder : MigrationsScaffolder
             var metadataCode = codeGenerator.GenerateMetadata(
                 finalSubNamespace,
                 contextType,
-                stepName,
+                stepClassName,
                 stepId,
                 _model);
 
@@ -150,7 +150,7 @@ public class ClickHouseMigrationsScaffolder : MigrationsScaffolder
                 // Store additional steps for writing in Save()
                 _pendingStepMigrations.Add(new StepMigrationData(
                     stepId,
-                    stepName,
+                    stepClassName,
                     migrationCode,
                     metadataCode,
                     stepComment));
@@ -182,8 +182,8 @@ public class ClickHouseMigrationsScaffolder : MigrationsScaffolder
 
             foreach (var step in _pendingStepMigrations)
             {
-                var migrationFile = Path.Combine(migrationsDir, $"{step.MigrationName}.cs");
-                var metadataFile = Path.Combine(migrationsDir, $"{step.MigrationName}.Designer.cs");
+                var migrationFile = Path.Combine(migrationsDir, $"{step.MigrationId}.cs");
+                var metadataFile = Path.Combine(migrationsDir, $"{step.MigrationId}.Designer.cs");
 
                 File.WriteAllText(migrationFile, step.MigrationCode);
                 File.WriteAllText(metadataFile, step.MigrationMetadataCode);
@@ -224,9 +224,72 @@ public class ClickHouseMigrationsScaffolder : MigrationsScaffolder
 
         var operations = _modelDiffer.GetDifferences(lastModel, _model.GetRelationalModel());
 
+        // Enrich CreateTableOperations with annotations from current model
+        // so the splitter can distinguish MVs/dicts from regular tables
+        operations = EnrichCreateOperationsWithAnnotations(operations, _model);
+
         // Enrich DropTableOperations with annotations from previous model
         // so the splitter can distinguish MVs/dicts from regular tables
         return EnrichDropOperationsWithAnnotations(operations, lastModel);
+    }
+
+    /// <summary>
+    /// Enriches CreateTableOperation with annotations from the current model.
+    /// This allows the splitter to correctly classify MV and dictionary creates.
+    /// </summary>
+    private static IReadOnlyList<MigrationOperation> EnrichCreateOperationsWithAnnotations(
+        IReadOnlyList<MigrationOperation> operations,
+        IModel model)
+    {
+        foreach (var op in operations)
+        {
+            if (op is CreateTableOperation createOp)
+            {
+                // Find the entity type for this table
+                var entityType = model.GetEntityTypes()
+                    .FirstOrDefault(e => string.Equals(e.GetTableName(), createOp.Name, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(e.GetSchema() ?? model.GetDefaultSchema(), createOp.Schema, StringComparison.OrdinalIgnoreCase));
+
+                if (entityType == null)
+                    continue;
+
+                // Copy MaterializedView annotations
+                var isMv = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedView)?.Value;
+                if (isMv is true)
+                {
+                    createOp.AddAnnotation(ClickHouseAnnotationNames.MaterializedView, true);
+
+                    var mvSource = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewSource)?.Value;
+                    if (mvSource != null)
+                        createOp.AddAnnotation(ClickHouseAnnotationNames.MaterializedViewSource, mvSource);
+
+                    var mvQuery = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewQuery)?.Value;
+                    if (mvQuery != null)
+                        createOp.AddAnnotation(ClickHouseAnnotationNames.MaterializedViewQuery, mvQuery);
+
+                    var mvPopulate = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewPopulate)?.Value;
+                    if (mvPopulate != null)
+                        createOp.AddAnnotation(ClickHouseAnnotationNames.MaterializedViewPopulate, mvPopulate);
+                }
+
+                // Copy Dictionary annotations
+                var isDict = entityType.FindAnnotation(ClickHouseAnnotationNames.Dictionary)?.Value;
+                if (isDict is true)
+                {
+                    createOp.AddAnnotation(ClickHouseAnnotationNames.Dictionary, true);
+
+                    var dictSource = entityType.FindAnnotation(ClickHouseAnnotationNames.DictionarySource)?.Value;
+                    if (dictSource != null)
+                        createOp.AddAnnotation(ClickHouseAnnotationNames.DictionarySource, dictSource);
+
+                    var dictProvider = entityType.FindAnnotation(ClickHouseAnnotationNames.DictionarySourceProvider)?.Value;
+                    if (dictProvider != null)
+                        createOp.AddAnnotation(ClickHouseAnnotationNames.DictionarySourceProvider, dictProvider);
+                }
+            }
+        }
+
+        return operations;
     }
 
     /// <summary>
