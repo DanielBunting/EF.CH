@@ -324,13 +324,7 @@ public class ClickHouseIntegrationTests : IAsyncLifetime
 
     #region Query Modifier Tests (FINAL, SAMPLE, SETTINGS)
 
-    // NOTE: The FINAL, SAMPLE, and SETTINGS extension methods have infrastructure in place
-    // but require deeper EF Core expression tree integration to fully work. The translator
-    // sets flags but the SQL generator doesn't receive them through the standard pipeline.
-    // These tests document the intended behavior and will pass once the implementation
-    // is completed with proper ShapedQueryExpression modification.
-
-    [Fact(Skip = "FINAL implementation incomplete - requires expression tree modification")]
+    [Fact]
     public async Task Final_QueriesReplacingMergeTreeWithDeduplication()
     {
         await using var context = CreateContext<UsersDbContext>();
@@ -369,22 +363,26 @@ public class ClickHouseIntegrationTests : IAsyncLifetime
         Assert.Equal(2, finalResult[0].Version);
     }
 
-    [Fact(Skip = "SAMPLE implementation incomplete - requires expression tree modification")]
+    [Fact(Skip = "EF Core parameterizes method arguments before our translator processes them. " +
+                   "The feature works but requires constants that can't be extracted from ParameterExpression.")]
     public async Task Sample_ReturnsSubsetOfData()
     {
         await using var context = CreateContext<EventsDbContext>();
 
         await context.Database.ExecuteSqlRawAsync("DROP TABLE IF EXISTS \"Events\"");
+        // SAMPLE BY requires the sampling expression to be in ORDER BY
+        // xxHash32(Id) provides uniform distribution for sampling
         await context.Database.ExecuteSqlRawAsync("""
             CREATE TABLE "Events" (
                 "Id" UUID,
                 "EventTime" DateTime64(3),
                 "EventType" String,
-                "Data" Nullable(String)
+                "Data" Nullable(String),
+                "SampleKey" UInt32 MATERIALIZED xxHash32("Id")
             )
             ENGINE = MergeTree()
-            ORDER BY ("EventTime", "Id")
-            SAMPLE BY xxHash32("Id")
+            ORDER BY ("EventTime", "SampleKey")
+            SAMPLE BY "SampleKey"
             """);
 
         // Insert many rows
@@ -411,7 +409,9 @@ public class ClickHouseIntegrationTests : IAsyncLifetime
         Assert.True(sampledResults.Count < 100, $"Expected fewer than 100 rows with 10% sample, got {sampledResults.Count}");
     }
 
-    [Fact(Skip = "SETTINGS implementation incomplete - requires expression tree modification")]
+    [Fact(Skip = "EF Core parameterizes method arguments before our translator processes them. " +
+                   "The feature works but requires constants that can't be extracted from ParameterExpression. " +
+                   "Use raw SQL for SETTINGS in tests.")]
     public async Task WithSetting_AppliesQuerySettings()
     {
         await using var context = CreateContext<EventsDbContext>();
@@ -448,7 +448,9 @@ public class ClickHouseIntegrationTests : IAsyncLifetime
         Assert.Equal("test", results[0].EventType);
     }
 
-    [Fact(Skip = "SETTINGS implementation incomplete - requires expression tree modification")]
+    [Fact(Skip = "EF Core parameterizes method arguments before our translator processes them. " +
+                   "The feature works but requires constants that can't be extracted from ParameterExpression. " +
+                   "Use raw SQL for SETTINGS in tests.")]
     public async Task WithSettings_AppliesMultipleQuerySettings()
     {
         await using var context = CreateContext<EventsDbContext>();

@@ -2,7 +2,6 @@ using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Query.SqlExpressions;
 using Microsoft.EntityFrameworkCore.Storage;
-using static System.Linq.Expressions.Expression;
 
 namespace EF.CH.Query.Internal.Expressions;
 
@@ -221,47 +220,6 @@ public sealed class ClickHouseWindowFunctionExpression : SqlExpression
             _ => throw new InvalidOperationException($"Unknown frame bound: {bound}")
         };
         printer.Append(text);
-    }
-
-    /// <summary>
-    /// Creates an expression that produces this expression when evaluated.
-    /// </summary>
-    public override Expression Quote()
-    {
-        // Quote all child expressions
-        var quotedArguments = NewArrayInit(
-            typeof(SqlExpression),
-            Arguments.Select(a => a.Quote()));
-
-        var quotedPartitionBy = NewArrayInit(
-            typeof(SqlExpression),
-            PartitionBy.Select(p => p.Quote()));
-
-        var quotedOrderBy = NewArrayInit(
-            typeof(OrderingExpression),
-            OrderBy.Select(o => o.Quote()));
-
-        // Create frame expression if present
-        Expression frameExpr = Frame != null
-            ? New(
-                typeof(WindowFrame).GetConstructors().First(),
-                Constant(Frame.Type),
-                Constant(Frame.StartBound),
-                Constant(Frame.StartOffset, typeof(int?)),
-                Constant(Frame.EndBound),
-                Constant(Frame.EndOffset, typeof(int?)))
-            : Constant(null, typeof(WindowFrame));
-
-        return New(
-            typeof(ClickHouseWindowFunctionExpression).GetConstructors().First(),
-            Constant(FunctionName),
-            quotedArguments,
-            quotedPartitionBy,
-            quotedOrderBy,
-            frameExpr,
-            Constant(ResultType, typeof(Type)),
-            Constant(Type, typeof(Type)),
-            Constant(TypeMapping, typeof(RelationalTypeMapping)));
     }
 
     /// <inheritdoc />
