@@ -111,6 +111,6 @@ If operations aren't in the order you expected, it's likely because EF.CH reorde
 
 ## See Also
 
-- [Split Migrations](features/split-migrations.md) - How migrations are split into steps
+- [Split Migrations](features/schema/split-migrations.md) - How migrations are split into steps
 - [Migrations](migrations.md) - General migration documentation
-- [Materialized Views](features/materialized-views.md) - MV configuration
+- [Materialized Views](features/schema/materialized-views.md) - MV configuration

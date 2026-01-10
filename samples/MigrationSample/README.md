@@ -159,5 +159,5 @@ dotnet ef migrations add AddNewColumn
 ## Learn More
 
 - [Migrations Documentation](../../docs/migrations.md)
-- [Keyless Entities](../../docs/features/keyless-entities.md)
-- [Partitioning](../../docs/features/partitioning.md)
+- [Keyless Entities](../../docs/features/operations/keyless-entities.md)
+- [Partitioning](../../docs/features/storage/partitioning.md)

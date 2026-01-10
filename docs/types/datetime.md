@@ -257,32 +257,89 @@ modelBuilder.Entity<Event>(entity =>
 
 ## Timezone Handling
 
-### DateTimeOffset
+### DateTimeOffset with Timezone Configuration
 
-Use `DateTimeOffset` when timezone matters:
+Use `DateTimeOffset` when timezone matters. Configure the timezone with the `ClickHouseTimeZone` attribute:
 
 ```csharp
+using EF.CH.Metadata.Attributes;
+
 public class UserActivity
 {
     public Guid UserId { get; set; }
-    public DateTimeOffset ActivityTime { get; set; }  // Preserves timezone
-}
 
-// Insert with timezone
+    [ClickHouseTimeZone("America/New_York")]
+    public DateTimeOffset ActivityTime { get; set; }
+
+    [ClickHouseTimeZone("Europe/London")]
+    public DateTimeOffset? ScheduledTime { get; set; }
+}
+```
+
+Or use the fluent API:
+
+```csharp
+modelBuilder.Entity<UserActivity>(entity =>
+{
+    entity.Property(e => e.ActivityTime)
+        .HasTimeZone("America/New_York");
+
+    entity.Property(e => e.ScheduledTime)
+        .HasTimeZone("Europe/London");
+});
+```
+
+### How Timezone Handling Works
+
+1. **Storage**: Values are always stored as UTC in ClickHouse
+2. **Reading**: The configured timezone determines the offset calculation
+3. **DST**: Daylight Saving Time transitions are handled automatically
+
+```csharp
+// Insert with any timezone - stored as UTC
 context.Activities.Add(new UserActivity
 {
     UserId = Guid.NewGuid(),
-    ActivityTime = DateTimeOffset.Now  // Local timezone preserved
+    ActivityTime = DateTimeOffset.Now  // Local time converted to UTC for storage
 });
+
+// Query returns DateTimeOffset with correct offset for configured timezone
+var activity = await context.Activities.FirstAsync();
+// activity.ActivityTime.Offset reflects "America/New_York" offset
+// Including DST: -05:00 (EST) or -04:00 (EDT)
+```
+
+### IANA Timezone Names
+
+Use IANA timezone names (supported on all platforms with .NET 6+):
+
+| Region | Examples |
+|--------|----------|
+| Americas | `America/New_York`, `America/Los_Angeles`, `America/Chicago` |
+| Europe | `Europe/London`, `Europe/Paris`, `Europe/Berlin` |
+| Asia | `Asia/Tokyo`, `Asia/Shanghai`, `Asia/Singapore` |
+| Other | `Australia/Sydney`, `Pacific/Auckland`, `UTC` |
+
+### Generated DDL
+
+```sql
+CREATE TABLE "UserActivities" (
+    "UserId" UUID NOT NULL,
+    "ActivityTime" DateTime64(3, 'America/New_York') NOT NULL,
+    "ScheduledTime" Nullable(DateTime64(3, 'Europe/London'))
+)
 ```
 
 ### UTC Convention
 
-For consistency, use UTC:
+For consistency when not using specific timezones, use UTC:
 
 ```csharp
-// Always use UTC
+// Good: Always UTC for DateTime
 Timestamp = DateTime.UtcNow
+
+// Good: UTC offset for DateTimeOffset
+CreatedAt = DateTimeOffset.UtcNow
 
 // Convert from local if needed
 Timestamp = localTime.ToUniversalTime()
@@ -365,5 +422,7 @@ entity.HasTtl("Timestamp + INTERVAL 1 YEAR");
 ## See Also
 
 - [Type Mappings Overview](overview.md)
-- [Partitioning](../features/partitioning.md)
-- [TTL](../features/ttl.md)
+- [Attributes Reference](../attributes-reference.md) - ClickHouseTimeZone attribute
+- [Partitioning](../features/storage/partitioning.md)
+- [TTL](../features/storage/ttl.md)
+- [Gap Filling](../features/query/interpolate.md) - Fill gaps in time series data

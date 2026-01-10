@@ -4,10 +4,11 @@ CollapsingMergeTree tracks state changes using a "sign" column (+1/-1). Rows wit
 
 ## When to Use
 
-- User session tracking (active sessions)
-- Real-time state management
-- Event sourcing with state snapshots
-- When you need to "undo" or "cancel" previous rows
+- **User session tracking** - Track active sessions with real-time updates
+- **Real-time state management** - Current inventory, account balances
+- **Event sourcing** - State snapshots from event streams
+- **Change Data Capture (CDC)** - Process database changes as insert/delete pairs
+- **Shopping carts** - Add/remove items with immediate consistency
 
 ## How It Works
 
@@ -322,6 +323,113 @@ context.UserSessions.Where(s => s.UserId == 123)
 ### Consider VersionedCollapsingMergeTree
 
 If inserts can arrive out of order, use [VersionedCollapsingMergeTree](versioned-collapsing.md) instead.
+
+## Real-World Examples
+
+### Shopping Cart
+
+```csharp
+public class CartItem
+{
+    public Guid CartId { get; set; }
+    public string ProductId { get; set; } = string.Empty;
+    public int Quantity { get; set; }
+    public decimal Price { get; set; }
+    public sbyte Sign { get; set; }
+}
+
+// Add item to cart
+context.CartItems.Add(new CartItem
+{
+    CartId = cartId,
+    ProductId = "SKU-123",
+    Quantity = 2,
+    Price = 29.99m,
+    Sign = 1
+});
+
+// Remove item (cancel with exact values)
+context.CartItems.Add(new CartItem
+{
+    CartId = cartId,
+    ProductId = "SKU-123",
+    Quantity = 2,
+    Price = 29.99m,
+    Sign = -1
+});
+
+// Get cart total
+var cartTotal = await context.CartItems
+    .Where(c => c.CartId == cartId)
+    .GroupBy(c => c.CartId)
+    .Select(g => new
+    {
+        TotalItems = g.Sum(c => c.Quantity * c.Sign),
+        TotalPrice = g.Sum(c => c.Price * c.Quantity * c.Sign)
+    })
+    .FirstOrDefaultAsync();
+```
+
+### Change Data Capture (CDC)
+
+Process database changes where each change comes as a pair of old/new values:
+
+```csharp
+public class AccountBalance
+{
+    public string AccountId { get; set; } = string.Empty;
+    public decimal Balance { get; set; }
+    public DateTime UpdatedAt { get; set; }
+    public sbyte Sign { get; set; }
+}
+
+// CDC processor receives: DELETE old row, INSERT new row
+public async Task ProcessCdcEvent(CdcEvent evt)
+{
+    if (evt.Operation == "UPDATE")
+    {
+        // Cancel old state
+        context.AccountBalances.Add(new AccountBalance
+        {
+            AccountId = evt.OldData.AccountId,
+            Balance = evt.OldData.Balance,
+            UpdatedAt = evt.OldData.UpdatedAt,
+            Sign = -1
+        });
+
+        // Add new state
+        context.AccountBalances.Add(new AccountBalance
+        {
+            AccountId = evt.NewData.AccountId,
+            Balance = evt.NewData.Balance,
+            UpdatedAt = evt.NewData.UpdatedAt,
+            Sign = 1
+        });
+    }
+    else if (evt.Operation == "INSERT")
+    {
+        context.AccountBalances.Add(new AccountBalance
+        {
+            AccountId = evt.NewData.AccountId,
+            Balance = evt.NewData.Balance,
+            UpdatedAt = evt.NewData.UpdatedAt,
+            Sign = 1
+        });
+    }
+    else if (evt.Operation == "DELETE")
+    {
+        context.AccountBalances.Add(new AccountBalance
+        {
+            AccountId = evt.OldData.AccountId,
+            Balance = evt.OldData.Balance,
+            UpdatedAt = evt.OldData.UpdatedAt,
+            Sign = -1
+        });
+    }
+
+    await context.SaveChangesAsync();
+}
+```
 
 ## Limitations
 

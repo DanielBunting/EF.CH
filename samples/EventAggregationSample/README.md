@@ -158,5 +158,5 @@ TTL "Date" + INTERVAL 5 YEAR
 ## See Also
 
 - [Null Engine Documentation](../../docs/engines/null.md)
-- [TTL Documentation](../../docs/features/ttl.md)
-- [Materialized Views](../../docs/features/materialized-views.md)
+- [TTL Documentation](../../docs/features/storage/ttl.md)
+- [Materialized Views](../../docs/features/schema/materialized-views.md)

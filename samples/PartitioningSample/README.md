@@ -139,5 +139,5 @@ var decemberLogs = await context.AccessLogs
 
 ## Learn More
 
-- [Partitioning Documentation](../../docs/features/partitioning.md)
-- [TTL Documentation](../../docs/features/ttl.md)
+- [Partitioning Documentation](../../docs/features/storage/partitioning.md)
+- [TTL Documentation](../../docs/features/storage/ttl.md)

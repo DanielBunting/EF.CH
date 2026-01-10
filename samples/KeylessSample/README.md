@@ -172,6 +172,6 @@ ORDER BY ("Id")
 
 ## Learn More
 
-- [Keyless Entities Documentation](../../docs/features/keyless-entities.md)
+- [Keyless Entities Documentation](../../docs/features/operations/keyless-entities.md)
 - [ReplacingMergeTree](../../docs/engines/replacing-mergetree.md)
-- [TTL](../../docs/features/ttl.md)
+- [TTL](../../docs/features/storage/ttl.md)

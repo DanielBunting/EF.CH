@@ -146,5 +146,5 @@ See [ReplacingMergeTree Sample](../ReplacingMergeTreeSample/) for update pattern
 
 ## Learn More
 
-- [Delete Operations Documentation](../../docs/features/delete-operations.md)
+- [Delete Operations Documentation](../../docs/features/operations/delete-operations.md)
 - [ReplacingMergeTree Documentation](../../docs/engines/replacing-mergetree.md)

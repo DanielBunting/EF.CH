@@ -111,11 +111,28 @@ EF.CH provides extension methods that translate to ClickHouse's native JSON subc
 
 ### Path Syntax
 
+Paths use dot notation for objects and bracket notation for arrays:
+
 ```
 user.email           → "Payload"."user"."email"
 tags[0]              → "Payload"."tags"[1]           (auto-converts to 1-based)
 order.items[0].name  → "Payload"."order"."items"[1]."name"
 ```
+
+**Path Syntax Reference:**
+
+| Path | Description | Generated SQL |
+|------|-------------|---------------|
+| `"field"` | Top-level field | `"Col"."field"` |
+| `"a.b"` | Nested object | `"Col"."a"."b"` |
+| `"arr[0]"` | Array element (0-indexed) | `"Col"."arr"[1]` |
+| `"a.b[0].c"` | Mixed path | `"Col"."a"."b"[1]."c"` |
+
+**Important:**
+- C# uses 0-based indexing, ClickHouse uses 1-based
+- EF.CH automatically converts indices (`[0]` → `[1]`)
+- Paths are case-sensitive
+- Invalid paths return NULL (use `HasPath()` to check)
 
 ### Query Examples
 
@@ -485,5 +502,6 @@ These limitations may be resolved in future ClickHouse versions as the JSON type
 ## See Also
 
 - [Type Mappings Overview](overview.md)
+- [Attributes Reference](../attributes-reference.md) - ClickHouseJson attribute
 - [ClickHouse JSON Docs](https://clickhouse.com/docs/en/sql-reference/data-types/json)
 - [ClickHouse JSON Subcolumn Syntax](https://clickhouse.com/docs/en/sql-reference/data-types/newjson)

@@ -36,11 +36,27 @@ ALTER TABLE "Events" DELETE WHERE "Id" = @p0
 
 | Aspect | Lightweight | Mutation |
 |--------|-------------|----------|
-| Speed | Instant marking | Async rewrite |
-| Visibility | Immediate | Eventually consistent |
-| Resource Usage | Low | High (rewrites parts) |
-| Row Count | Returns count | Returns 0 |
-| Use Case | Normal operations | Bulk maintenance |
+| **Speed** | Instant marking | Async (queued operation) |
+| **Visibility** | Immediate | Eventually consistent |
+| **Resource Usage** | Low | High (rewrites data parts) |
+| **Row Count** | Returns count | Returns 0 |
+| **Concurrent Queries** | No impact | May slow other queries |
+| **Disk I/O** | Minimal | Rewrites entire parts |
+| **Use Case** | Normal operations | Bulk maintenance |
+
+### Performance Characteristics
+
+**Lightweight Delete:**
+- Rows are marked with a hidden `_row_exists` column
+- Queries automatically filter marked rows
+- Physical deletion happens during background merges
+- Best for: interactive applications, real-time operations
+
+**Mutation Delete:**
+- Rewrites entire data parts containing deleted rows
+- Runs asynchronously in the background
+- Can be monitored via `system.mutations`
+- Best for: scheduled maintenance jobs, bulk cleanup
 
 ## Entity Framework Delete
 
@@ -265,7 +281,8 @@ await context.Database.ExecuteSqlRawAsync(
 
 ## See Also
 
-- [ReplacingMergeTree](../engines/replacing-mergetree.md) - For update semantics
-- [TTL](ttl.md) - For automatic data expiration
-- [Partitioning](partitioning.md) - For partition-based deletion
+- [ReplacingMergeTree](../../engines/replacing-mergetree.md) - For update semantics
+- [TTL](../storage/ttl.md) - For automatic data expiration
+- [Partitioning](../storage/partitioning.md) - For partition-based deletion
+- [Troubleshooting](../../troubleshooting.md) - Common delete issues
 - [ClickHouse DELETE Docs](https://clickhouse.com/docs/en/sql-reference/statements/delete)

@@ -43,7 +43,7 @@ Migrations/
 
 ClickHouse migrations are forward-only. The `Down()` method throws `ClickHouseDownMigrationNotSupportedException`. To undo changes, create a new forward migration.
 
-See [Split Migrations](features/split-migrations.md) for detailed documentation.
+See [Split Migrations](features/schema/split-migrations.md) for detailed documentation.
 
 ## Creating Migrations
 
@@ -329,7 +329,7 @@ DELETE FROM "__EFMigrationsHistory" WHERE "MigrationId" = '20240115_InitialCreat
 
 ## See Also
 
-- [Split Migrations](features/split-migrations.md) - How migrations are split into step files
+- [Split Migrations](features/schema/split-migrations.md) - How migrations are split into step files
 - [Migration Phase Ordering](migration-phase-ordering.md) - How operations are ordered by phase
 - [Getting Started](getting-started.md)
 - [Scaffolding](scaffolding.md)

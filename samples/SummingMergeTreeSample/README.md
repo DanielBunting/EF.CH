@@ -161,4 +161,4 @@ var totals = await context.DailySales
 ## Learn More
 
 - [SummingMergeTree Documentation](../../docs/engines/summing-mergetree.md)
-- [Materialized Views](../../docs/features/materialized-views.md)
+- [Materialized Views](../../docs/features/schema/materialized-views.md)

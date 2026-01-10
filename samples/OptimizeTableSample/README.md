@@ -143,6 +143,6 @@ Best practices:
 
 ## Learn More
 
-- [OPTIMIZE TABLE Documentation](../../docs/features/optimize.md)
+- [OPTIMIZE TABLE Documentation](../../docs/features/storage/optimize.md)
 - [ReplacingMergeTree](../../docs/engines/replacing-mergetree.md)
-- [Query Modifiers (Final)](../../docs/features/query-modifiers.md)
+- [Query Modifiers (Final)](../../docs/features/query/query-modifiers.md)

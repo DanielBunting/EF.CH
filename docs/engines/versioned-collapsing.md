@@ -4,10 +4,11 @@ VersionedCollapsingMergeTree extends CollapsingMergeTree with a version column, 
 
 ## When to Use
 
-- Distributed systems where events arrive out of order
-- Event sourcing with potential reordering
-- State tracking with unreliable message ordering
-- Any CollapsingMergeTree use case where order isn't guaranteed
+- **Distributed systems** - Events from multiple nodes arrive out of order
+- **Event sourcing** - State reconstruction from event streams with potential reordering
+- **Message queues** - Kafka/RabbitMQ consumers with parallel processing
+- **CDC pipelines** - Database change events with network delays
+- **Multi-region replication** - Updates from geographically distributed sources
 
 ## How It Works
 
@@ -313,6 +314,88 @@ public class VersionedSessionService
 // ✗ Wrong: Version mismatch
 { UserId=1, PageViews=5, Sign=+1, Version=1 }
 { UserId=1, PageViews=5, Sign=-1, Version=2 }  // Won't collapse!
+```
+
+## Real-World Example: Multi-Region Inventory
+
+In a distributed system, inventory updates from multiple warehouses may arrive out of order:
+
+```csharp
+public class InventoryState
+{
+    public string ProductId { get; set; } = string.Empty;
+    public string WarehouseId { get; set; } = string.Empty;
+    public int Quantity { get; set; }
+    public DateTime LastUpdated { get; set; }
+    public sbyte Sign { get; set; }
+    public ulong Version { get; set; }  // Logical clock or timestamp
+}
+
+public class InventoryContext : DbContext
+{
+    public DbSet<InventoryState> Inventory => Set<InventoryState>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<InventoryState>(entity =>
+        {
+            entity.HasNoKey();
+            entity.UseVersionedCollapsingMergeTree(
+                signColumn: x => x.Sign,
+                versionColumn: x => x.Version,
+                orderByColumn: x => new { x.ProductId, x.WarehouseId });
+        });
+    }
+}
+
+// Warehouse A sends update (version 5)
+// Warehouse B sends update (version 3) - delayed in transit
+// Both arrive at ClickHouse in reverse order - still works correctly!
+
+public class InventoryUpdater
+{
+    public async Task ProcessUpdate(InventoryEvent evt)
+    {
+        // Each warehouse tracks its own version counter
+        var version = evt.LogicalTimestamp;
+
+        // Cancel previous state
+        _context.Inventory.Add(new InventoryState
+        {
+            ProductId = evt.ProductId,
+            WarehouseId = evt.WarehouseId,
+            Quantity = evt.PreviousQuantity,
+            LastUpdated = evt.PreviousTimestamp,
+            Sign = -1,
+            Version = evt.PreviousVersion
+        });
+
+        // Add new state
+        _context.Inventory.Add(new InventoryState
+        {
+            ProductId = evt.ProductId,
+            WarehouseId = evt.WarehouseId,
+            Quantity = evt.NewQuantity,
+            LastUpdated = evt.Timestamp,
+            Sign = 1,
+            Version = version
+        });
+
+        await _context.SaveChangesAsync();
+    }
+}
+
+// Query total inventory across all warehouses
+var productInventory = await context.Inventory
+    .Where(i => i.ProductId == productId)
+    .GroupBy(i => i.ProductId)
+    .Select(g => new
+    {
+        ProductId = g.Key,
+        TotalQuantity = g.Sum(i => i.Quantity * i.Sign),
+        WarehouseCount = g.Select(i => i.WarehouseId).Distinct().Count()
+    })
+    .FirstOrDefaultAsync();
 ```
 
 ## Limitations

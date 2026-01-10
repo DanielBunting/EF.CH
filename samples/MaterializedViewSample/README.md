@@ -118,5 +118,5 @@ modelBuilder.Entity<DailySales>(entity =>
 
 ## Learn More
 
-- [Materialized Views Documentation](../../docs/features/materialized-views.md)
+- [Materialized Views Documentation](../../docs/features/schema/materialized-views.md)
 - [SummingMergeTree Documentation](../../docs/engines/summing-mergetree.md)

@@ -297,4 +297,4 @@ context.Events.Where(e => e.UserId == userId)
 
 - [ClickHouse Concepts](clickhouse-concepts.md) - Understanding ClickHouse architecture
 - [ReplacingMergeTree](engines/replacing-mergetree.md) - Deduplication workaround
-- [Delete Operations](features/delete-operations.md) - Delete strategies
+- [Delete Operations](features/operations/delete-operations.md) - Delete strategies

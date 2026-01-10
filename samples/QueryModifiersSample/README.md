@@ -176,5 +176,5 @@ entity.UseReplacingMergeTree(
 
 ## Learn More
 
-- [Query Modifiers Documentation](../../docs/features/query-modifiers.md)
+- [Query Modifiers Documentation](../../docs/features/query/query-modifiers.md)
 - [ReplacingMergeTree Documentation](../../docs/engines/replacing-mergetree.md)
