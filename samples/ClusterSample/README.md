@@ -190,3 +190,9 @@ docker compose start clickhouse2
 
 # Node 2 will automatically sync from the other replicas
 ```
+
+## See Also
+
+- [Clustering and Replication](../../docs/features/clustering.md) - Full clustering setup guide
+- [Replicated Engines](../../docs/features/replicated-engines.md) - Engine configuration details
+- [Connection Routing](../../docs/features/connection-routing.md) - Read/write splitting

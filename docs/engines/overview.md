@@ -165,6 +165,40 @@ ORDER BY ("OrderDate", "Id")
 TTL "OrderDate" + INTERVAL 2 YEAR
 ```
 
+## Replicated Engine Variants
+
+Every MergeTree engine has a `Replicated` variant for multi-node clusters:
+
+| Non-Replicated | Replicated |
+|----------------|------------|
+| `UseMergeTree` | `UseReplicatedMergeTree` |
+| `UseReplacingMergeTree` | `UseReplicatedReplacingMergeTree` |
+| `UseSummingMergeTree` | `UseReplicatedSummingMergeTree` |
+| `UseAggregatingMergeTree` | `UseReplicatedAggregatingMergeTree` |
+| `UseCollapsingMergeTree` | `UseReplicatedCollapsingMergeTree` |
+| `UseVersionedCollapsingMergeTree` | `UseReplicatedVersionedCollapsingMergeTree` |
+
+Replicated engines use ClickHouse Keeper (or ZooKeeper) to coordinate data across replicas:
+
+```csharp
+entity.UseReplicatedMergeTree(x => new { x.Timestamp, x.Id })
+      .WithCluster("my_cluster")
+      .WithReplication("/clickhouse/tables/{database}/{table}");
+```
+
+This generates:
+
+```sql
+CREATE TABLE "Events" ON CLUSTER my_cluster
+(
+    ...
+)
+ENGINE = ReplicatedMergeTree('/clickhouse/tables/mydb/Events', '{replica}')
+ORDER BY ("Timestamp", "Id")
+```
+
+See [Replicated Engines](../features/replicated-engines.md) for detailed configuration and examples.
+
 ## See Also
 
 - [MergeTree](mergetree.md) - Basic append-only engine
@@ -173,4 +207,6 @@ TTL "OrderDate" + INTERVAL 2 YEAR
 - [AggregatingMergeTree](aggregating-mergetree.md) - Complex aggregates
 - [CollapsingMergeTree](collapsing-mergetree.md) - State tracking
 - [Null](null.md) - Discard data (MV source tables)
+- [Replicated Engines](../features/replicated-engines.md) - Cluster replication
+- [Clustering](../features/clustering.md) - Multi-datacenter setup
 - [ClickHouse Official Docs](https://clickhouse.com/docs/en/engines/table-engines/mergetree-family)

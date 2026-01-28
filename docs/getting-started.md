@@ -222,6 +222,7 @@ services.AddDbContext<AppDbContext>(options =>
 - Read [ClickHouse Concepts](clickhouse-concepts.md) to understand key differences from traditional databases
 - Learn about [Table Engines](engines/overview.md) to choose the right engine for your use case
 - Explore [Type Mappings](types/overview.md) for complex types like arrays and maps
+- Set up [Clustering](features/clustering.md) for multi-datacenter deployments with replication
 - Check out the [samples](../samples/) for complete working examples
 
 ## Troubleshooting
