@@ -469,4 +469,55 @@ public static class ClickHouseAnnotationNames
     public const string TimeZone = Prefix + "TimeZone";
 
     #endregion
+
+    #region Table Groups
+
+    /// <summary>
+    /// The table group this entity belongs to.
+    /// Table groups define cluster, connection, and replication settings.
+    /// Value is the table group name from configuration.
+    /// </summary>
+    public const string TableGroup = Prefix + "TableGroup";
+
+    #endregion
+
+    #region Replication and Clustering
+
+    /// <summary>
+    /// The ZooKeeper/Keeper path for replicated tables.
+    /// Supports placeholders: {database}, {table}, {uuid}.
+    /// </summary>
+    public const string ReplicatedPath = Prefix + "ReplicatedPath";
+
+    /// <summary>
+    /// The replica name for replicated tables.
+    /// Usually "{replica}" which ClickHouse resolves from server macros.
+    /// </summary>
+    public const string ReplicaName = Prefix + "ReplicaName";
+
+    /// <summary>
+    /// The cluster name for DDL operations (used in ON CLUSTER clause).
+    /// This is set at the options level for default cluster.
+    /// </summary>
+    public const string ClusterName = Prefix + "ClusterName";
+
+    /// <summary>
+    /// Entity-specific cluster name override.
+    /// Takes precedence over default cluster name.
+    /// </summary>
+    public const string EntityClusterName = Prefix + "EntityClusterName";
+
+    /// <summary>
+    /// Marks this entity as local-only (no ON CLUSTER, no replication).
+    /// Value type: bool
+    /// </summary>
+    public const string IsLocalOnly = Prefix + "IsLocalOnly";
+
+    /// <summary>
+    /// Whether this entity uses a replicated engine variant.
+    /// Value type: bool
+    /// </summary>
+    public const string IsReplicated = Prefix + "IsReplicated";
+
+    #endregion
 }
