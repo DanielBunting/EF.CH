@@ -1,4 +1,7 @@
+using EF.CH.Configuration;
+using EF.CH.Infrastructure;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -8,13 +11,20 @@ namespace EF.CH.Migrations.Internal;
 /// <summary>
 /// ClickHouse-specific implementation of migration history tracking.
 /// Stores applied migrations in __EFMigrationsHistory table with MergeTree engine.
+/// Supports replicated history tables on clusters.
 /// </summary>
 public class ClickHouseHistoryRepository : HistoryRepository
 {
-    public ClickHouseHistoryRepository(HistoryRepositoryDependencies dependencies)
+    private readonly IDbContextOptions _options;
+
+    public ClickHouseHistoryRepository(HistoryRepositoryDependencies dependencies, IDbContextOptions options)
         : base(dependencies)
     {
+        _options = options;
     }
+
+    private ClickHouseOptionsExtension? GetOptionsExtension()
+        => _options.FindExtension<ClickHouseOptionsExtension>();
 
     /// <summary>
     /// Gets the SQL to check if the history table exists.
@@ -57,6 +67,7 @@ public class ClickHouseHistoryRepository : HistoryRepository
 
     /// <summary>
     /// Generates SQL to create the history table with MergeTree engine.
+    /// Supports cluster-aware and replicated configurations.
     /// </summary>
     public override string GetCreateScript()
     {
@@ -64,15 +75,78 @@ public class ClickHouseHistoryRepository : HistoryRepository
         var migrationIdColumn = SqlGenerationHelper.DelimitIdentifier(MigrationIdColumnName);
         var productVersionColumn = SqlGenerationHelper.DelimitIdentifier(ProductVersionColumnName);
 
+        var extension = GetOptionsExtension();
+        var clusterClause = GetClusterClause(extension);
+        var engineClause = GetEngineClause(extension);
+
         return $"""
-            CREATE TABLE {tableName} (
+            CREATE TABLE {tableName}{clusterClause} (
                 {migrationIdColumn} String,
                 {productVersionColumn} String
             )
-            ENGINE = MergeTree()
+            ENGINE = {engineClause}
             ORDER BY ({migrationIdColumn})
             {SqlGenerationHelper.StatementTerminator}
             """;
+    }
+
+    /// <summary>
+    /// Gets the ON CLUSTER clause for the history table.
+    /// </summary>
+    private string GetClusterClause(ClickHouseOptionsExtension? extension)
+    {
+        // Check for migrations history cluster in configuration
+        var clusterName = extension?.Configuration?.Defaults?.MigrationsHistoryCluster
+                       ?? extension?.ClusterName;
+
+        if (string.IsNullOrEmpty(clusterName))
+        {
+            return string.Empty;
+        }
+
+        return $" ON CLUSTER {SqlGenerationHelper.DelimitIdentifier(clusterName)}";
+    }
+
+    /// <summary>
+    /// Gets the ENGINE clause for the history table.
+    /// Uses ReplicatedMergeTree if configured for replication.
+    /// </summary>
+    private string GetEngineClause(ClickHouseOptionsExtension? extension)
+    {
+        var shouldReplicate = extension?.Configuration?.Defaults?.ReplicateMigrationsHistory ?? false;
+        var hasCluster = !string.IsNullOrEmpty(extension?.Configuration?.Defaults?.MigrationsHistoryCluster)
+                      || !string.IsNullOrEmpty(extension?.ClusterName);
+
+        if (shouldReplicate && hasCluster)
+        {
+            // Use ReplicatedMergeTree for cluster-aware history
+            var clusterName = extension?.Configuration?.Defaults?.MigrationsHistoryCluster
+                           ?? extension?.ClusterName;
+            var basePath = GetReplicationBasePath(extension, clusterName);
+
+            return $"ReplicatedMergeTree('{basePath}', '{{replica}}')";
+        }
+
+        return "MergeTree()";
+    }
+
+    /// <summary>
+    /// Gets the ZooKeeper base path for the history table.
+    /// </summary>
+    private string GetReplicationBasePath(ClickHouseOptionsExtension? extension, string? clusterName)
+    {
+        // Try to get from cluster configuration
+        if (!string.IsNullOrEmpty(clusterName) &&
+            extension?.Configuration?.Clusters?.TryGetValue(clusterName, out var clusterConfig) == true)
+        {
+            var basePath = clusterConfig.Replication.ZooKeeperBasePath
+                .Replace("{database}", "{database}")
+                .Replace("{table}", "__EFMigrationsHistory");
+            return basePath;
+        }
+
+        // Default path
+        return "/clickhouse/tables/{uuid}";
     }
 
     /// <summary>

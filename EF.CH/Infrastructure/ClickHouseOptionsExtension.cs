@@ -1,6 +1,7 @@
 using System.Data.Common;
 using System.Globalization;
 using System.Text;
+using EF.CH.Configuration;
 using EF.CH.Diagnostics;
 using EF.CH.Dictionaries;
 using EF.CH.External;
@@ -35,6 +36,9 @@ public class ClickHouseOptionsExtension : RelationalOptionsExtension
     private bool _useKeylessEntitiesByDefault;
     private ClickHouseDeleteStrategy _deleteStrategy = ClickHouseDeleteStrategy.Lightweight;
     private DbContextOptionsExtensionInfo? _info;
+    private ClickHouseConfiguration? _configuration;
+    private string? _clusterName;
+    private bool _useConnectionRouting;
 
     /// <summary>
     /// Creates a new instance of <see cref="ClickHouseOptionsExtension"/>.
@@ -52,6 +56,9 @@ public class ClickHouseOptionsExtension : RelationalOptionsExtension
         _useQuerySplitting = copyFrom._useQuerySplitting;
         _useKeylessEntitiesByDefault = copyFrom._useKeylessEntitiesByDefault;
         _deleteStrategy = copyFrom._deleteStrategy;
+        _configuration = copyFrom._configuration;
+        _clusterName = copyFrom._clusterName;
+        _useConnectionRouting = copyFrom._useConnectionRouting;
     }
 
     /// <summary>
@@ -77,6 +84,22 @@ public class ClickHouseOptionsExtension : RelationalOptionsExtension
     /// Defaults to <see cref="ClickHouseDeleteStrategy.Lightweight"/>.
     /// </summary>
     public virtual ClickHouseDeleteStrategy DeleteStrategy => _deleteStrategy;
+
+    /// <summary>
+    /// Gets the multi-datacenter configuration for ClickHouse.
+    /// </summary>
+    public virtual ClickHouseConfiguration? Configuration => _configuration;
+
+    /// <summary>
+    /// Gets the default cluster name for ON CLUSTER DDL operations.
+    /// This is used when entities don't specify a cluster or table group.
+    /// </summary>
+    public virtual string? ClusterName => _clusterName;
+
+    /// <summary>
+    /// Gets whether connection routing (read/write splitting) is enabled.
+    /// </summary>
+    public virtual bool UseConnectionRouting => _useConnectionRouting;
 
     /// <summary>
     /// Creates a copy with the specified connection string.
@@ -141,6 +164,39 @@ public class ClickHouseOptionsExtension : RelationalOptionsExtension
     public virtual ClickHouseOptionsExtension WithMaxBatchSize(int maxBatchSize)
     {
         return (ClickHouseOptionsExtension)base.WithMaxBatchSize(maxBatchSize);
+    }
+
+    /// <summary>
+    /// Creates a copy with the specified multi-datacenter configuration.
+    /// </summary>
+    /// <param name="configuration">The cluster configuration.</param>
+    public virtual ClickHouseOptionsExtension WithConfiguration(ClickHouseConfiguration configuration)
+    {
+        var clone = (ClickHouseOptionsExtension)Clone();
+        clone._configuration = configuration;
+        return clone;
+    }
+
+    /// <summary>
+    /// Creates a copy with the specified default cluster name.
+    /// </summary>
+    /// <param name="clusterName">The cluster name for ON CLUSTER DDL operations.</param>
+    public virtual ClickHouseOptionsExtension WithClusterName(string? clusterName)
+    {
+        var clone = (ClickHouseOptionsExtension)Clone();
+        clone._clusterName = clusterName;
+        return clone;
+    }
+
+    /// <summary>
+    /// Creates a copy with connection routing (read/write splitting) enabled.
+    /// </summary>
+    /// <param name="useConnectionRouting">Whether to enable connection routing.</param>
+    public virtual ClickHouseOptionsExtension WithConnectionRouting(bool useConnectionRouting = true)
+    {
+        var clone = (ClickHouseOptionsExtension)Clone();
+        clone._useConnectionRouting = useConnectionRouting;
+        return clone;
     }
 
     /// <summary>
@@ -210,6 +266,16 @@ public class ClickHouseOptionsExtension : RelationalOptionsExtension
                         builder.Append("QuerySplitting ");
                     }
 
+                    if (Extension.UseConnectionRouting)
+                    {
+                        builder.Append("ConnectionRouting ");
+                    }
+
+                    if (!string.IsNullOrEmpty(Extension.ClusterName))
+                    {
+                        builder.Append(CultureInfo.InvariantCulture, $"Cluster={Extension.ClusterName} ");
+                    }
+
                     builder.Append(CultureInfo.InvariantCulture, $"MaxBatchSize={Extension.MaxBatchSize} ");
 
                     _logFragment = builder.ToString();
@@ -226,6 +292,10 @@ public class ClickHouseOptionsExtension : RelationalOptionsExtension
             hashCode.Add(Extension.UseQuerySplitting);
             hashCode.Add(Extension.UseKeylessEntitiesByDefault);
             hashCode.Add(Extension.DeleteStrategy);
+            hashCode.Add(Extension.ClusterName);
+            hashCode.Add(Extension.UseConnectionRouting);
+            // Configuration is reference-compared intentionally - same object = same hash
+            hashCode.Add(Extension.Configuration?.GetHashCode() ?? 0);
             return hashCode.ToHashCode();
         }
 
@@ -234,7 +304,10 @@ public class ClickHouseOptionsExtension : RelationalOptionsExtension
                && base.ShouldUseSameServiceProvider(other)
                && Extension.UseQuerySplitting == otherInfo.Extension.UseQuerySplitting
                && Extension.UseKeylessEntitiesByDefault == otherInfo.Extension.UseKeylessEntitiesByDefault
-               && Extension.DeleteStrategy == otherInfo.Extension.DeleteStrategy;
+               && Extension.DeleteStrategy == otherInfo.Extension.DeleteStrategy
+               && Extension.ClusterName == otherInfo.Extension.ClusterName
+               && Extension.UseConnectionRouting == otherInfo.Extension.UseConnectionRouting
+               && ReferenceEquals(Extension.Configuration, otherInfo.Extension.Configuration);
 
         public override void PopulateDebugInfo(IDictionary<string, string> debugInfo)
         {
@@ -245,6 +318,9 @@ public class ClickHouseOptionsExtension : RelationalOptionsExtension
             debugInfo["ClickHouse:KeylessEntitiesByDefault"] = Extension.UseKeylessEntitiesByDefault.ToString();
             debugInfo["ClickHouse:MaxBatchSize"] = Extension.MaxBatchSize.ToString()!;
             debugInfo["ClickHouse:DeleteStrategy"] = Extension.DeleteStrategy.ToString();
+            debugInfo["ClickHouse:ClusterName"] = Extension.ClusterName ?? "(null)";
+            debugInfo["ClickHouse:ConnectionRouting"] = Extension.UseConnectionRouting.ToString();
+            debugInfo["ClickHouse:HasConfiguration"] = (Extension.Configuration != null).ToString();
         }
     }
 }

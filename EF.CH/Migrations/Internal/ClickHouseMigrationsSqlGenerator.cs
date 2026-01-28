@@ -1,4 +1,5 @@
 using System.Linq.Expressions;
+using EF.CH.Configuration;
 using EF.CH.Dictionaries;
 using EF.CH.Infrastructure;
 using EF.CH.Metadata;
@@ -6,6 +7,7 @@ using EF.CH.Migrations.Operations;
 using EF.CH.Projections;
 using EF.CH.Query.Internal;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Migrations.Operations;
@@ -19,13 +21,19 @@ namespace EF.CH.Migrations.Internal;
 public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
 {
     private readonly IRelationalTypeMappingSource _typeMappingSource;
+    private readonly IDbContextOptions _options;
 
     public ClickHouseMigrationsSqlGenerator(
-        MigrationsSqlGeneratorDependencies dependencies)
+        MigrationsSqlGeneratorDependencies dependencies,
+        IDbContextOptions options)
         : base(dependencies)
     {
         _typeMappingSource = dependencies.TypeMappingSource;
+        _options = options;
     }
+
+    private ClickHouseOptionsExtension? GetOptionsExtension()
+        => _options.FindExtension<ClickHouseOptionsExtension>();
 
     /// <summary>
     /// Override the main Generate method to sort operations so that source tables
@@ -346,9 +354,13 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
             return;
         }
 
+        // Get ON CLUSTER clause
+        var onClusterClause = GetOnClusterClause(operation.Name, operation.Schema, entityType, model, operation);
+
         builder
             .Append("CREATE TABLE IF NOT EXISTS ")
             .Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name, operation.Schema))
+            .Append(onClusterClause)
             .AppendLine(" (");
 
         using (builder.Indent())
@@ -443,9 +455,13 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
                 $"Materialized view '{operation.Name}' must have a view query defined via AsMaterializedViewRaw() or AsMaterializedView().");
         }
 
+        // Get ON CLUSTER clause
+        var onClusterClause = GetOnClusterClause(operation.Name, operation.Schema, entityType, model, operation);
+
         builder
             .Append("CREATE MATERIALIZED VIEW IF NOT EXISTS ")
-            .Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name, operation.Schema));
+            .Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name, operation.Schema))
+            .Append(onClusterClause);
 
         builder.AppendLine();
 
@@ -536,9 +552,13 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
             sourceQuery = BuildDictionarySourceQuery(operation, entityType, model);
         }
 
+        // Get ON CLUSTER clause
+        var onClusterClause = GetOnClusterClause(operation.Name, operation.Schema, entityType, model, operation);
+
         // CREATE DICTIONARY
         builder.Append("CREATE DICTIONARY IF NOT EXISTS ");
         builder.Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name, operation.Schema));
+        builder.Append(onClusterClause);
         builder.AppendLine();
         builder.AppendLine("(");
 
@@ -990,9 +1010,49 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         builder.AppendLine();
         builder.Append("ENGINE = ");
 
+        // Check if this is a replicated engine
+        var isReplicated = engine.StartsWith("Replicated", StringComparison.OrdinalIgnoreCase);
+        var extension = GetOptionsExtension();
+
+        // Get replication parameters for replicated engines
+        string? replicationPath = null;
+        string? replicaName = null;
+        if (isReplicated)
+        {
+            replicationPath = GetReplicationPath(entityType, operation.Name, extension);
+            replicaName = GetReplicaName(entityType, extension);
+        }
+
         // Generate engine with parameters
         switch (engine)
         {
+            // Replicated engines
+            case "ReplicatedReplacingMergeTree" when !string.IsNullOrEmpty(versionColumn) && !string.IsNullOrEmpty(isDeletedColumn):
+                builder.Append($"ReplicatedReplacingMergeTree({replicationPath}, {replicaName}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(versionColumn)}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(isDeletedColumn)})");
+                break;
+            case "ReplicatedReplacingMergeTree" when !string.IsNullOrEmpty(versionColumn):
+                builder.Append($"ReplicatedReplacingMergeTree({replicationPath}, {replicaName}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(versionColumn)})");
+                break;
+            case "ReplicatedReplacingMergeTree":
+                builder.Append($"ReplicatedReplacingMergeTree({replicationPath}, {replicaName})");
+                break;
+            case "ReplicatedCollapsingMergeTree" when !string.IsNullOrEmpty(signColumn):
+                builder.Append($"ReplicatedCollapsingMergeTree({replicationPath}, {replicaName}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(signColumn)})");
+                break;
+            case "ReplicatedVersionedCollapsingMergeTree" when !string.IsNullOrEmpty(signColumn) && !string.IsNullOrEmpty(versionColumn):
+                builder.Append($"ReplicatedVersionedCollapsingMergeTree({replicationPath}, {replicaName}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(signColumn)}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(versionColumn)})");
+                break;
+            case "ReplicatedMergeTree":
+                builder.Append($"ReplicatedMergeTree({replicationPath}, {replicaName})");
+                break;
+            case "ReplicatedSummingMergeTree":
+                builder.Append($"ReplicatedSummingMergeTree({replicationPath}, {replicaName})");
+                break;
+            case "ReplicatedAggregatingMergeTree":
+                builder.Append($"ReplicatedAggregatingMergeTree({replicationPath}, {replicaName})");
+                break;
+
+            // Non-replicated engines
             case "ReplacingMergeTree" when !string.IsNullOrEmpty(versionColumn) && !string.IsNullOrEmpty(isDeletedColumn):
                 // ReplacingMergeTree(version, is_deleted) - ClickHouse 23.2+
                 builder.Append($"ReplacingMergeTree({Dependencies.SqlGenerationHelper.DelimitIdentifier(versionColumn)}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(isDeletedColumn)})");
@@ -1106,6 +1166,14 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         ArgumentNullException.ThrowIfNull(operation);
         ArgumentNullException.ThrowIfNull(builder);
 
+        // Try to find entity type for cluster info
+        var entityType = model?.GetEntityTypes()
+            .FirstOrDefault(e => e.GetTableName() == operation.Name
+                              && (e.GetSchema() ?? model.GetDefaultSchema()) == operation.Schema);
+
+        // Get ON CLUSTER clause
+        var onClusterClause = GetOnClusterClause(operation.Name, operation.Schema, entityType, model, operation);
+
         // Check if this is a dictionary (annotation was persisted by scaffolder)
         var isDictionary = operation.FindAnnotation(ClickHouseAnnotationNames.Dictionary)?.Value is true;
 
@@ -1113,14 +1181,16 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         {
             builder
                 .Append("DROP DICTIONARY IF EXISTS ")
-                .Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name, operation.Schema));
+                .Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name, operation.Schema))
+                .Append(onClusterClause);
         }
         else
         {
             // Both regular tables and materialized views use DROP TABLE in ClickHouse
             builder
                 .Append("DROP TABLE IF EXISTS ")
-                .Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name, operation.Schema));
+                .Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name, operation.Schema))
+                .Append(onClusterClause);
         }
 
         if (terminate)
@@ -1989,6 +2059,155 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         var annotation = entityType.FindAnnotation(name);
         return annotation?.Value is T value ? value : default;
     }
+
+    #region Cluster Support
+
+    /// <summary>
+    /// Gets the ON CLUSTER clause for DDL operations.
+    /// Returns empty string if no cluster is configured.
+    /// </summary>
+    private string GetOnClusterClause(string? tableName, string? schema, IEntityType? entityType, IModel? model, MigrationOperation? operation = null)
+    {
+        var extension = GetOptionsExtension();
+
+        // Check if entity is marked as local-only (check operation first, then entity type)
+        var isLocalOnly = (operation != null && GetAnnotation<bool?>(operation, ClickHouseAnnotationNames.IsLocalOnly) == true)
+                       || (GetEntityAnnotation<bool?>(entityType, ClickHouseAnnotationNames.IsLocalOnly) ?? false);
+        if (isLocalOnly)
+        {
+            return string.Empty;
+        }
+
+        // Get cluster name from: operation override → entity override → table group → default cluster
+        var clusterName = operation != null
+            ? GetAnnotation<string>(operation, ClickHouseAnnotationNames.EntityClusterName)
+            : null;
+
+        if (string.IsNullOrEmpty(clusterName))
+        {
+            clusterName = GetClusterForEntity(entityType, extension);
+        }
+
+        if (string.IsNullOrEmpty(clusterName))
+        {
+            return string.Empty;
+        }
+
+        return $" ON CLUSTER {Dependencies.SqlGenerationHelper.DelimitIdentifier(clusterName)}";
+    }
+
+    /// <summary>
+    /// Gets the cluster name for an entity type.
+    /// Priority: entity cluster override → table group cluster → default cluster.
+    /// </summary>
+    private static string? GetClusterForEntity(IEntityType? entityType, ClickHouseOptionsExtension? extension)
+    {
+        // 1. Direct entity cluster override
+        var entityCluster = GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.EntityClusterName);
+        if (!string.IsNullOrEmpty(entityCluster))
+        {
+            return entityCluster;
+        }
+
+        // 2. Table group cluster
+        var tableGroup = GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.TableGroup)
+                      ?? extension?.Configuration?.Defaults?.TableGroup;
+
+        if (!string.IsNullOrEmpty(tableGroup) &&
+            extension?.Configuration?.TableGroups?.TryGetValue(tableGroup, out var groupConfig) == true)
+        {
+            return groupConfig.Cluster;
+        }
+
+        // 3. Default cluster from extension
+        return extension?.ClusterName;
+    }
+
+    /// <summary>
+    /// Gets the replication path for replicated engines.
+    /// Returns a quoted string suitable for use in SQL.
+    /// </summary>
+    private string GetReplicationPath(IEntityType? entityType, string tableName, ClickHouseOptionsExtension? extension)
+    {
+        // 1. Entity-level override
+        var entityPath = GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.ReplicatedPath);
+        if (!string.IsNullOrEmpty(entityPath))
+        {
+            return QuoteReplicationString(ReplacePlaceholders(entityPath, tableName));
+        }
+
+        // 2. Get from table group's cluster configuration
+        var tableGroup = GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.TableGroup)
+                      ?? extension?.Configuration?.Defaults?.TableGroup;
+
+        if (!string.IsNullOrEmpty(tableGroup) &&
+            extension?.Configuration?.TableGroups?.TryGetValue(tableGroup, out var groupConfig) == true &&
+            !string.IsNullOrEmpty(groupConfig.Cluster) &&
+            extension.Configuration.Clusters.TryGetValue(groupConfig.Cluster, out var clusterConfig))
+        {
+            return QuoteReplicationString(ReplacePlaceholders(clusterConfig.Replication.ZooKeeperBasePath, tableName));
+        }
+
+        // 3. Default path (use {uuid} for automatic unique path)
+        return "'/clickhouse/tables/{uuid}'";
+    }
+
+    /// <summary>
+    /// Gets the replica name for replicated engines.
+    /// Returns a quoted string suitable for use in SQL.
+    /// </summary>
+    private string GetReplicaName(IEntityType? entityType, ClickHouseOptionsExtension? extension)
+    {
+        // 1. Entity-level override
+        var entityReplica = GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.ReplicaName);
+        if (!string.IsNullOrEmpty(entityReplica))
+        {
+            return QuoteReplicationString(entityReplica);
+        }
+
+        // 2. Get from table group's cluster configuration
+        var tableGroup = GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.TableGroup)
+                      ?? extension?.Configuration?.Defaults?.TableGroup;
+
+        if (!string.IsNullOrEmpty(tableGroup) &&
+            extension?.Configuration?.TableGroups?.TryGetValue(tableGroup, out var groupConfig) == true &&
+            !string.IsNullOrEmpty(groupConfig.Cluster) &&
+            extension.Configuration.Clusters.TryGetValue(groupConfig.Cluster, out var clusterConfig))
+        {
+            return QuoteReplicationString(clusterConfig.Replication.ReplicaNameMacro);
+        }
+
+        // 3. Default replica macro
+        return "'{replica}'";
+    }
+
+    /// <summary>
+    /// Replaces placeholders in ZooKeeper path.
+    /// </summary>
+    private static string ReplacePlaceholders(string path, string tableName)
+    {
+        return path
+            .Replace("{table}", tableName)
+            .Replace("{uuid}", "{uuid}");  // Keep {uuid} as-is, ClickHouse resolves it
+    }
+
+    /// <summary>
+    /// Quotes a string for use in replication engine arguments.
+    /// Wraps in single quotes and escapes any existing single quotes.
+    /// </summary>
+    private static string QuoteReplicationString(string value)
+    {
+        // If already quoted, return as-is
+        if (value.StartsWith('\'') && value.EndsWith('\''))
+        {
+            return value;
+        }
+
+        // Escape any single quotes in the value and wrap
+        return $"'{value.Replace("'", "\\'")}'";
+    }
+
+    #endregion
 
     /// <summary>
     /// Checks if an AddColumnOperation contains identity/auto-increment annotations

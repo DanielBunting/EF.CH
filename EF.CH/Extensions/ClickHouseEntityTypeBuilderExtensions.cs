@@ -9,6 +9,97 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 namespace EF.CH.Extensions;
 
 /// <summary>
+/// A builder that provides fluent chaining for configuring replicated engine options.
+/// </summary>
+/// <remarks>
+/// <para>
+/// This builder is returned from replicated engine methods (e.g., <c>UseReplicatedMergeTree</c>)
+/// and allows chaining cluster and replication configuration in a fluent manner.
+/// </para>
+/// <para>
+/// The builder supports implicit conversion back to <see cref="EntityTypeBuilder{TEntity}"/>,
+/// ensuring backward compatibility with existing code that chains other entity configuration methods.
+/// </para>
+/// </remarks>
+/// <typeparam name="TEntity">The entity type being configured.</typeparam>
+/// <example>
+/// <code>
+/// // Fluent chain pattern
+/// entity.UseReplicatedMergeTree(x => x.Id)
+///       .WithCluster("geo_cluster")
+///       .WithReplication("/clickhouse/geo/{database}/{table}");
+///
+/// // Implicit conversion allows continued chaining
+/// entity.UseReplicatedMergeTree(x => x.Id)
+///       .WithCluster("geo_cluster")
+///       .HasPartitionByMonth(x => x.OrderDate);  // Continues with EntityTypeBuilder
+/// </code>
+/// </example>
+public class ReplicatedEngineBuilder<TEntity> where TEntity : class
+{
+    private readonly EntityTypeBuilder<TEntity> _builder;
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ReplicatedEngineBuilder{TEntity}"/> class.
+    /// </summary>
+    /// <param name="builder">The underlying entity type builder.</param>
+    internal ReplicatedEngineBuilder(EntityTypeBuilder<TEntity> builder)
+    {
+        _builder = builder;
+    }
+
+    /// <summary>
+    /// Configures the cluster name for this entity's DDL operations (ON CLUSTER clause).
+    /// </summary>
+    /// <param name="clusterName">The cluster name as defined in ClickHouse server configuration.</param>
+    /// <returns>This builder for continued chaining.</returns>
+    public ReplicatedEngineBuilder<TEntity> WithCluster(string clusterName)
+    {
+        _builder.UseCluster(clusterName);
+        return this;
+    }
+
+    /// <summary>
+    /// Configures replication settings for this entity.
+    /// </summary>
+    /// <param name="zooKeeperPath">The ZooKeeper/Keeper path for replication metadata. Supports placeholders: {database}, {table}, {uuid}</param>
+    /// <param name="replicaName">The replica name, usually "{replica}" for macro expansion.</param>
+    /// <returns>This builder for continued chaining.</returns>
+    public ReplicatedEngineBuilder<TEntity> WithReplication(
+        string zooKeeperPath,
+        string replicaName = "{replica}")
+    {
+        _builder.HasReplication(zooKeeperPath, replicaName);
+        return this;
+    }
+
+    /// <summary>
+    /// Assigns this entity to a table group.
+    /// </summary>
+    /// <param name="tableGroupName">The table group name from configuration.</param>
+    /// <returns>This builder for continued chaining.</returns>
+    public ReplicatedEngineBuilder<TEntity> WithTableGroup(string tableGroupName)
+    {
+        _builder.UseTableGroup(tableGroupName);
+        return this;
+    }
+
+    /// <summary>
+    /// Returns the underlying entity type builder for continued configuration.
+    /// </summary>
+    /// <returns>The underlying <see cref="EntityTypeBuilder{TEntity}"/>.</returns>
+    public EntityTypeBuilder<TEntity> And() => _builder;
+
+    /// <summary>
+    /// Implicitly converts the builder back to <see cref="EntityTypeBuilder{TEntity}"/>
+    /// for seamless integration with existing configuration patterns.
+    /// </summary>
+    /// <param name="builder">The replicated engine builder to convert.</param>
+    public static implicit operator EntityTypeBuilder<TEntity>(
+        ReplicatedEngineBuilder<TEntity> builder) => builder._builder;
+}
+
+/// <summary>
 /// Extension methods for configuring ClickHouse-specific entity type options.
 /// </summary>
 public static class ClickHouseEntityTypeBuilderExtensions
@@ -519,6 +610,523 @@ public static class ClickHouseEntityTypeBuilderExtensions
         builder.HasAnnotation(ClickHouseAnnotationNames.VersionColumn, versionColumn);
         builder.HasAnnotation(ClickHouseAnnotationNames.OrderBy, orderByColumns);
 
+        return builder;
+    }
+
+    #endregion
+
+    #region Replicated Engines
+
+    /// <summary>
+    /// Configures the entity to use a ReplicatedMergeTree engine.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// ReplicatedMergeTree requires ZooKeeper/Keeper coordination for replication.
+    /// The ZooKeeper path and replica name can be configured via <see cref="HasReplication"/>,
+    /// or will use defaults from the table group or cluster configuration.
+    /// </para>
+    /// <para>
+    /// Tables using replicated engines should also have a cluster configured via <see cref="UseCluster"/>
+    /// or inherit one from their table group.
+    /// </para>
+    /// </remarks>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="orderByColumns">The columns for ORDER BY clause.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    public static EntityTypeBuilder UseReplicatedMergeTree(
+        this EntityTypeBuilder builder,
+        params string[] orderByColumns)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(orderByColumns);
+
+        if (orderByColumns.Length == 0)
+        {
+            throw new ArgumentException("At least one ORDER BY column is required for ReplicatedMergeTree.", nameof(orderByColumns));
+        }
+
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, "ReplicatedMergeTree");
+        builder.HasAnnotation(ClickHouseAnnotationNames.OrderBy, orderByColumns);
+        builder.HasAnnotation(ClickHouseAnnotationNames.IsReplicated, true);
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Configures the entity to use a ReplicatedMergeTree engine.
+    /// </summary>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="orderByExpression">Expression selecting the ORDER BY columns.</param>
+    /// <returns>A builder for configuring replicated engine options with fluent chaining.</returns>
+    /// <example>
+    /// <code>
+    /// entity.UseReplicatedMergeTree(x => x.Id)
+    ///       .WithCluster("geo_cluster")
+    ///       .WithReplication("/clickhouse/geo/{database}/{table}");
+    /// </code>
+    /// </example>
+    public static ReplicatedEngineBuilder<TEntity> UseReplicatedMergeTree<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        Expression<Func<TEntity, object>> orderByExpression)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(orderByExpression);
+        var columns = ExpressionExtensions.GetPropertyNames(orderByExpression);
+        ((EntityTypeBuilder)builder).UseReplicatedMergeTree(columns);
+        return new ReplicatedEngineBuilder<TEntity>(builder);
+    }
+
+    /// <summary>
+    /// Configures the entity to use a ReplicatedMergeTree engine.
+    /// </summary>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="orderByColumns">The columns for ORDER BY clause.</param>
+    /// <returns>A builder for configuring replicated engine options with fluent chaining.</returns>
+    public static ReplicatedEngineBuilder<TEntity> UseReplicatedMergeTree<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        params string[] orderByColumns)
+        where TEntity : class
+    {
+        ((EntityTypeBuilder)builder).UseReplicatedMergeTree(orderByColumns);
+        return new ReplicatedEngineBuilder<TEntity>(builder);
+    }
+
+    /// <summary>
+    /// Configures the entity to use a ReplicatedReplacingMergeTree engine.
+    /// </summary>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="orderByColumns">The columns for ORDER BY clause.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    public static EntityTypeBuilder UseReplicatedReplacingMergeTree(
+        this EntityTypeBuilder builder,
+        params string[] orderByColumns)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(orderByColumns);
+
+        if (orderByColumns.Length == 0)
+        {
+            throw new ArgumentException("At least one ORDER BY column is required for ReplicatedReplacingMergeTree.", nameof(orderByColumns));
+        }
+
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, "ReplicatedReplacingMergeTree");
+        builder.HasAnnotation(ClickHouseAnnotationNames.OrderBy, orderByColumns);
+        builder.HasAnnotation(ClickHouseAnnotationNames.IsReplicated, true);
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Configures the entity to use a ReplicatedReplacingMergeTree engine with a version column.
+    /// </summary>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <typeparam name="TVersion">The version column type.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="versionColumnExpression">Expression selecting the version column for deduplication.</param>
+    /// <param name="orderByExpression">Expression selecting the ORDER BY columns.</param>
+    /// <returns>A builder for configuring replicated engine options with fluent chaining.</returns>
+    /// <example>
+    /// <code>
+    /// entity.UseReplicatedReplacingMergeTree(x => x.Version, x => x.Id)
+    ///       .WithCluster("geo_cluster")
+    ///       .WithReplication("/clickhouse/geo/{database}/{table}");
+    /// </code>
+    /// </example>
+    public static ReplicatedEngineBuilder<TEntity> UseReplicatedReplacingMergeTree<TEntity, TVersion>(
+        this EntityTypeBuilder<TEntity> builder,
+        Expression<Func<TEntity, TVersion>> versionColumnExpression,
+        Expression<Func<TEntity, object>> orderByExpression)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(versionColumnExpression);
+        ArgumentNullException.ThrowIfNull(orderByExpression);
+
+        var versionColumn = ExpressionExtensions.GetPropertyName(versionColumnExpression);
+        var columns = ExpressionExtensions.GetPropertyNames(orderByExpression);
+
+        ((EntityTypeBuilder)builder).UseReplicatedReplacingMergeTree(columns);
+        builder.HasAnnotation(ClickHouseAnnotationNames.VersionColumn, versionColumn);
+
+        return new ReplicatedEngineBuilder<TEntity>(builder);
+    }
+
+    /// <summary>
+    /// Configures the entity to use a ReplicatedReplacingMergeTree engine.
+    /// </summary>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="orderByExpression">Expression selecting the ORDER BY columns.</param>
+    /// <returns>A builder for configuring replicated engine options with fluent chaining.</returns>
+    public static ReplicatedEngineBuilder<TEntity> UseReplicatedReplacingMergeTree<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        Expression<Func<TEntity, object>> orderByExpression)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(orderByExpression);
+        var columns = ExpressionExtensions.GetPropertyNames(orderByExpression);
+        ((EntityTypeBuilder)builder).UseReplicatedReplacingMergeTree(columns);
+        return new ReplicatedEngineBuilder<TEntity>(builder);
+    }
+
+    /// <summary>
+    /// Configures the entity to use a ReplicatedSummingMergeTree engine.
+    /// </summary>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="orderByColumns">The columns for ORDER BY clause.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    public static EntityTypeBuilder UseReplicatedSummingMergeTree(
+        this EntityTypeBuilder builder,
+        params string[] orderByColumns)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(orderByColumns);
+
+        if (orderByColumns.Length == 0)
+        {
+            throw new ArgumentException("At least one ORDER BY column is required for ReplicatedSummingMergeTree.", nameof(orderByColumns));
+        }
+
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, "ReplicatedSummingMergeTree");
+        builder.HasAnnotation(ClickHouseAnnotationNames.OrderBy, orderByColumns);
+        builder.HasAnnotation(ClickHouseAnnotationNames.IsReplicated, true);
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Configures the entity to use a ReplicatedSummingMergeTree engine.
+    /// </summary>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="orderByExpression">Expression selecting the ORDER BY columns.</param>
+    /// <returns>A builder for configuring replicated engine options with fluent chaining.</returns>
+    public static ReplicatedEngineBuilder<TEntity> UseReplicatedSummingMergeTree<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        Expression<Func<TEntity, object>> orderByExpression)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(orderByExpression);
+        var columns = ExpressionExtensions.GetPropertyNames(orderByExpression);
+        ((EntityTypeBuilder)builder).UseReplicatedSummingMergeTree(columns);
+        return new ReplicatedEngineBuilder<TEntity>(builder);
+    }
+
+    /// <summary>
+    /// Configures the entity to use a ReplicatedAggregatingMergeTree engine.
+    /// </summary>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="orderByColumns">The columns for ORDER BY clause.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    public static EntityTypeBuilder UseReplicatedAggregatingMergeTree(
+        this EntityTypeBuilder builder,
+        params string[] orderByColumns)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(orderByColumns);
+
+        if (orderByColumns.Length == 0)
+        {
+            throw new ArgumentException("At least one ORDER BY column is required for ReplicatedAggregatingMergeTree.", nameof(orderByColumns));
+        }
+
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, "ReplicatedAggregatingMergeTree");
+        builder.HasAnnotation(ClickHouseAnnotationNames.OrderBy, orderByColumns);
+        builder.HasAnnotation(ClickHouseAnnotationNames.IsReplicated, true);
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Configures the entity to use a ReplicatedAggregatingMergeTree engine.
+    /// </summary>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="orderByExpression">Expression selecting the ORDER BY columns.</param>
+    /// <returns>A builder for configuring replicated engine options with fluent chaining.</returns>
+    public static ReplicatedEngineBuilder<TEntity> UseReplicatedAggregatingMergeTree<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        Expression<Func<TEntity, object>> orderByExpression)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(orderByExpression);
+        var columns = ExpressionExtensions.GetPropertyNames(orderByExpression);
+        ((EntityTypeBuilder)builder).UseReplicatedAggregatingMergeTree(columns);
+        return new ReplicatedEngineBuilder<TEntity>(builder);
+    }
+
+    /// <summary>
+    /// Configures the entity to use a ReplicatedCollapsingMergeTree engine.
+    /// </summary>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="signColumnExpression">Expression selecting the sign column (Int8/sbyte with +1 or -1).</param>
+    /// <param name="orderByExpression">Expression selecting the ORDER BY columns.</param>
+    /// <returns>A builder for configuring replicated engine options with fluent chaining.</returns>
+    public static ReplicatedEngineBuilder<TEntity> UseReplicatedCollapsingMergeTree<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        Expression<Func<TEntity, sbyte>> signColumnExpression,
+        Expression<Func<TEntity, object>> orderByExpression)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(signColumnExpression);
+        ArgumentNullException.ThrowIfNull(orderByExpression);
+
+        var signColumn = ExpressionExtensions.GetPropertyName(signColumnExpression);
+        var orderByColumns = ExpressionExtensions.GetPropertyNames(orderByExpression);
+
+        if (orderByColumns.Length == 0)
+        {
+            throw new ArgumentException("At least one ORDER BY column is required for ReplicatedCollapsingMergeTree.", nameof(orderByExpression));
+        }
+
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, "ReplicatedCollapsingMergeTree");
+        builder.HasAnnotation(ClickHouseAnnotationNames.SignColumn, signColumn);
+        builder.HasAnnotation(ClickHouseAnnotationNames.OrderBy, orderByColumns);
+        builder.HasAnnotation(ClickHouseAnnotationNames.IsReplicated, true);
+
+        return new ReplicatedEngineBuilder<TEntity>(builder);
+    }
+
+    /// <summary>
+    /// Configures the entity to use a ReplicatedVersionedCollapsingMergeTree engine.
+    /// </summary>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <typeparam name="TVersion">The version column type.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="signColumnExpression">Expression selecting the sign column (Int8/sbyte with +1 or -1).</param>
+    /// <param name="versionColumnExpression">Expression selecting the version column.</param>
+    /// <param name="orderByExpression">Expression selecting the ORDER BY columns.</param>
+    /// <returns>A builder for configuring replicated engine options with fluent chaining.</returns>
+    public static ReplicatedEngineBuilder<TEntity> UseReplicatedVersionedCollapsingMergeTree<TEntity, TVersion>(
+        this EntityTypeBuilder<TEntity> builder,
+        Expression<Func<TEntity, sbyte>> signColumnExpression,
+        Expression<Func<TEntity, TVersion>> versionColumnExpression,
+        Expression<Func<TEntity, object>> orderByExpression)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(signColumnExpression);
+        ArgumentNullException.ThrowIfNull(versionColumnExpression);
+        ArgumentNullException.ThrowIfNull(orderByExpression);
+
+        var signColumn = ExpressionExtensions.GetPropertyName(signColumnExpression);
+        var versionColumn = ExpressionExtensions.GetPropertyName(versionColumnExpression);
+        var orderByColumns = ExpressionExtensions.GetPropertyNames(orderByExpression);
+
+        if (orderByColumns.Length == 0)
+        {
+            throw new ArgumentException("At least one ORDER BY column is required for ReplicatedVersionedCollapsingMergeTree.", nameof(orderByExpression));
+        }
+
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, "ReplicatedVersionedCollapsingMergeTree");
+        builder.HasAnnotation(ClickHouseAnnotationNames.SignColumn, signColumn);
+        builder.HasAnnotation(ClickHouseAnnotationNames.VersionColumn, versionColumn);
+        builder.HasAnnotation(ClickHouseAnnotationNames.OrderBy, orderByColumns);
+        builder.HasAnnotation(ClickHouseAnnotationNames.IsReplicated, true);
+
+        return new ReplicatedEngineBuilder<TEntity>(builder);
+    }
+
+    #endregion
+
+    #region Cluster and Table Group Configuration
+
+    /// <summary>
+    /// Configures the cluster name for this entity's DDL operations (ON CLUSTER clause).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// When a cluster is specified, DDL statements (CREATE TABLE, ALTER TABLE, DROP TABLE)
+    /// will include an ON CLUSTER clause, causing them to execute on all cluster nodes.
+    /// </para>
+    /// <para>
+    /// This is typically used with replicated engines. If using table groups,
+    /// prefer <see cref="UseTableGroup"/> which handles cluster assignment automatically.
+    /// </para>
+    /// </remarks>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="clusterName">The cluster name as defined in ClickHouse server configuration.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    public static EntityTypeBuilder UseCluster(
+        this EntityTypeBuilder builder,
+        string clusterName)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(clusterName);
+
+        builder.HasAnnotation(ClickHouseAnnotationNames.EntityClusterName, clusterName);
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Configures the cluster name for this entity's DDL operations (ON CLUSTER clause).
+    /// </summary>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="clusterName">The cluster name as defined in ClickHouse server configuration.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    public static EntityTypeBuilder<TEntity> UseCluster<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        string clusterName)
+        where TEntity : class
+    {
+        ((EntityTypeBuilder)builder).UseCluster(clusterName);
+        return builder;
+    }
+
+    /// <summary>
+    /// Assigns this entity to a table group.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Table groups provide a way to organize entities with shared cluster, connection,
+    /// and replication settings. The group configuration is defined in <c>appsettings.json</c>
+    /// or via the fluent configuration API.
+    /// </para>
+    /// <para>
+    /// When an entity is assigned to a table group, it inherits:
+    /// - The cluster for ON CLUSTER DDL operations
+    /// - Connection routing (which endpoints to use for reads/writes)
+    /// - Replication settings (ZooKeeper path, replica name)
+    /// </para>
+    /// </remarks>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="tableGroupName">The table group name from configuration.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    /// <example>
+    /// <code>
+    /// // In OnModelCreating:
+    /// modelBuilder.Entity&lt;SessionCache&gt;(e =>
+    /// {
+    ///     e.UseMergeTree(x => x.SessionId);
+    ///     e.UseTableGroup("LocalCache");  // No cluster, no replication
+    /// });
+    ///
+    /// modelBuilder.Entity&lt;Order&gt;(e =>
+    /// {
+    ///     e.UseReplicatedReplacingMergeTree(x => x.Version, x => x.Id);
+    ///     e.UseTableGroup("Core");  // geo_cluster, replicated
+    /// });
+    /// </code>
+    /// </example>
+    public static EntityTypeBuilder UseTableGroup(
+        this EntityTypeBuilder builder,
+        string tableGroupName)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(tableGroupName);
+
+        builder.HasAnnotation(ClickHouseAnnotationNames.TableGroup, tableGroupName);
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Assigns this entity to a table group.
+    /// </summary>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="tableGroupName">The table group name from configuration.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    public static EntityTypeBuilder<TEntity> UseTableGroup<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        string tableGroupName)
+        where TEntity : class
+    {
+        ((EntityTypeBuilder)builder).UseTableGroup(tableGroupName);
+        return builder;
+    }
+
+    /// <summary>
+    /// Marks this entity as local-only, preventing ON CLUSTER DDL and replication.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Use this for tables that should only exist on the local node, such as:
+    /// - Session caches
+    /// - Temporary working tables
+    /// - Node-specific configuration
+    /// </para>
+    /// <para>
+    /// This takes precedence over any cluster or table group settings.
+    /// The entity will not have ON CLUSTER in its DDL and should not use
+    /// replicated engine variants.
+    /// </para>
+    /// </remarks>
+    /// <param name="builder">The entity type builder.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    public static EntityTypeBuilder IsLocalOnly(this EntityTypeBuilder builder)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        builder.HasAnnotation(ClickHouseAnnotationNames.IsLocalOnly, true);
+        return builder;
+    }
+
+    /// <summary>
+    /// Marks this entity as local-only, preventing ON CLUSTER DDL and replication.
+    /// </summary>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    public static EntityTypeBuilder<TEntity> IsLocalOnly<TEntity>(
+        this EntityTypeBuilder<TEntity> builder)
+        where TEntity : class
+    {
+        ((EntityTypeBuilder)builder).IsLocalOnly();
+        return builder;
+    }
+
+    /// <summary>
+    /// Configures replication settings for this entity.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is typically used in conjunction with replicated engines.
+    /// If using table groups, replication settings are usually inherited from
+    /// the cluster configuration.
+    /// </para>
+    /// <para>
+    /// The path supports placeholders: {database}, {table}, {uuid}
+    /// </para>
+    /// </remarks>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="zooKeeperPath">The ZooKeeper/Keeper path for replication metadata.</param>
+    /// <param name="replicaName">The replica name, usually "{replica}" for macro expansion.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    public static EntityTypeBuilder HasReplication(
+        this EntityTypeBuilder builder,
+        string zooKeeperPath,
+        string replicaName = "{replica}")
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(zooKeeperPath);
+
+        builder.HasAnnotation(ClickHouseAnnotationNames.ReplicatedPath, zooKeeperPath);
+        builder.HasAnnotation(ClickHouseAnnotationNames.ReplicaName, replicaName);
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Configures replication settings for this entity.
+    /// </summary>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="zooKeeperPath">The ZooKeeper/Keeper path for replication metadata.</param>
+    /// <param name="replicaName">The replica name, usually "{replica}" for macro expansion.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    public static EntityTypeBuilder<TEntity> HasReplication<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        string zooKeeperPath,
+        string replicaName = "{replica}")
+        where TEntity : class
+    {
+        ((EntityTypeBuilder)builder).HasReplication(zooKeeperPath, replicaName);
         return builder;
     }
 

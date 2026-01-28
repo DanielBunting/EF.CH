@@ -1,6 +1,8 @@
+using EF.CH.Configuration;
 using EF.CH.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.Extensions.Configuration;
 
 namespace EF.CH.Extensions;
 
@@ -219,7 +221,462 @@ public class ClickHouseDbContextOptionsBuilder
         return this;
     }
 
+    #region Multi-Datacenter Configuration
+
+    /// <summary>
+    /// Configures ClickHouse from an IConfiguration section.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Binds configuration from appsettings.json to <see cref="ClickHouseConfiguration"/>.
+    /// This enables multi-datacenter setups with connection routing and table groups.
+    /// </para>
+    /// </remarks>
+    /// <param name="configurationSection">The configuration section containing ClickHouse settings.</param>
+    /// <returns>The same builder instance for method chaining.</returns>
+    /// <example>
+    /// <code>
+    /// // In appsettings.json:
+    /// // {
+    /// //   "ClickHouse": {
+    /// //     "Connections": { "Primary": { "WriteEndpoint": "dc1:8123", ... } },
+    /// //     "Clusters": { "geo_cluster": { "Connection": "Primary" } },
+    /// //     "TableGroups": { "Core": { "Cluster": "geo_cluster", "Replicated": true } }
+    /// //   }
+    /// // }
+    ///
+    /// options.UseClickHouse("Host=localhost", o => o
+    ///     .FromConfiguration(config.GetSection("ClickHouse"))
+    ///     .UseConnectionRouting());
+    /// </code>
+    /// </example>
+    public virtual ClickHouseDbContextOptionsBuilder FromConfiguration(IConfigurationSection configurationSection)
+    {
+        ArgumentNullException.ThrowIfNull(configurationSection);
+
+        var configuration = new ClickHouseConfiguration();
+        configurationSection.Bind(configuration);
+
+        var extension = GetOrCreateExtension().WithConfiguration(configuration);
+        ((IDbContextOptionsBuilderInfrastructure)_optionsBuilder).AddOrUpdateExtension(extension);
+        return this;
+    }
+
+    /// <summary>
+    /// Configures ClickHouse with a pre-built configuration object.
+    /// </summary>
+    /// <param name="configuration">The cluster configuration.</param>
+    /// <returns>The same builder instance for method chaining.</returns>
+    public virtual ClickHouseDbContextOptionsBuilder WithConfiguration(ClickHouseConfiguration configuration)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+
+        var extension = GetOrCreateExtension().WithConfiguration(configuration);
+        ((IDbContextOptionsBuilderInfrastructure)_optionsBuilder).AddOrUpdateExtension(extension);
+        return this;
+    }
+
+    /// <summary>
+    /// Enables connection routing (read/write splitting) for multi-datacenter setups.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// When enabled, SELECT queries are routed to read endpoints while
+    /// INSERT/UPDATE/DELETE/ALTER operations go to write endpoints.
+    /// </para>
+    /// <para>
+    /// Requires <see cref="FromConfiguration"/> or programmatic endpoint configuration.
+    /// </para>
+    /// </remarks>
+    /// <param name="enabled">Whether to enable connection routing (default: true).</param>
+    /// <returns>The same builder instance for method chaining.</returns>
+    public virtual ClickHouseDbContextOptionsBuilder UseConnectionRouting(bool enabled = true)
+    {
+        var extension = GetOrCreateExtension().WithConnectionRouting(enabled);
+        ((IDbContextOptionsBuilderInfrastructure)_optionsBuilder).AddOrUpdateExtension(extension);
+        return this;
+    }
+
+    /// <summary>
+    /// Sets the default cluster name for DDL operations (ON CLUSTER clause).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// When a cluster is specified, DDL statements (CREATE TABLE, ALTER TABLE, DROP TABLE)
+    /// will include an ON CLUSTER clause, causing them to execute on all cluster nodes.
+    /// </para>
+    /// <para>
+    /// Entity-level <c>UseCluster()</c> or table group configuration takes precedence over this default.
+    /// </para>
+    /// </remarks>
+    /// <param name="clusterName">The cluster name as defined in ClickHouse server configuration.</param>
+    /// <returns>The same builder instance for method chaining.</returns>
+    public virtual ClickHouseDbContextOptionsBuilder UseCluster(string clusterName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(clusterName);
+
+        var extension = GetOrCreateExtension().WithClusterName(clusterName);
+        ((IDbContextOptionsBuilderInfrastructure)_optionsBuilder).AddOrUpdateExtension(extension);
+        return this;
+    }
+
+    /// <summary>
+    /// Adds a named connection configuration using a fluent builder.
+    /// </summary>
+    /// <param name="name">The connection name (e.g., "Primary", "Analytics").</param>
+    /// <param name="configure">Action to configure the connection.</param>
+    /// <returns>The same builder instance for method chaining.</returns>
+    /// <example>
+    /// <code>
+    /// options.UseClickHouse("Host=localhost", o => o
+    ///     .AddConnection("Primary", conn => conn
+    ///         .Database("production")
+    ///         .WriteEndpoint("dc1-clickhouse:8123")
+    ///         .ReadEndpoints("dc2-clickhouse:8123", "dc1-clickhouse:8123")
+    ///         .ReadStrategy(ReadStrategy.PreferFirst)));
+    /// </code>
+    /// </example>
+    public virtual ClickHouseDbContextOptionsBuilder AddConnection(
+        string name,
+        Action<ConnectionConfigBuilder> configure)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ArgumentNullException.ThrowIfNull(configure);
+
+        var extension = GetOrCreateExtension();
+        var configuration = extension.Configuration ?? new ClickHouseConfiguration();
+
+        var connectionBuilder = new ConnectionConfigBuilder();
+        configure(connectionBuilder);
+        configuration.Connections[name] = connectionBuilder.Build();
+
+        extension = extension.WithConfiguration(configuration);
+        ((IDbContextOptionsBuilderInfrastructure)_optionsBuilder).AddOrUpdateExtension(extension);
+        return this;
+    }
+
+    /// <summary>
+    /// Adds a named cluster configuration using a fluent builder.
+    /// </summary>
+    /// <param name="name">The cluster name (e.g., "geo_cluster").</param>
+    /// <param name="configure">Action to configure the cluster.</param>
+    /// <returns>The same builder instance for method chaining.</returns>
+    /// <example>
+    /// <code>
+    /// options.UseClickHouse("Host=localhost", o => o
+    ///     .AddCluster("geo_cluster", cluster => cluster
+    ///         .UseConnection("Primary")
+    ///         .WithReplication(r => r
+    ///             .ZooKeeperBasePath("/clickhouse/geo/{database}"))));
+    /// </code>
+    /// </example>
+    public virtual ClickHouseDbContextOptionsBuilder AddCluster(
+        string name,
+        Action<ClusterConfigBuilder> configure)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ArgumentNullException.ThrowIfNull(configure);
+
+        var extension = GetOrCreateExtension();
+        var configuration = extension.Configuration ?? new ClickHouseConfiguration();
+
+        var clusterBuilder = new ClusterConfigBuilder();
+        configure(clusterBuilder);
+        configuration.Clusters[name] = clusterBuilder.Build();
+
+        extension = extension.WithConfiguration(configuration);
+        ((IDbContextOptionsBuilderInfrastructure)_optionsBuilder).AddOrUpdateExtension(extension);
+        return this;
+    }
+
+    /// <summary>
+    /// Adds a named table group configuration using a fluent builder.
+    /// </summary>
+    /// <param name="name">The table group name (e.g., "Core", "LocalCache").</param>
+    /// <param name="configure">Action to configure the table group.</param>
+    /// <returns>The same builder instance for method chaining.</returns>
+    /// <example>
+    /// <code>
+    /// options.UseClickHouse("Host=localhost", o => o
+    ///     .AddTableGroup("Core", group => group
+    ///         .UseCluster("geo_cluster")
+    ///         .Replicated())
+    ///     .AddTableGroup("LocalCache", group => group
+    ///         .NoCluster()
+    ///         .NotReplicated()));
+    /// </code>
+    /// </example>
+    public virtual ClickHouseDbContextOptionsBuilder AddTableGroup(
+        string name,
+        Action<TableGroupConfigBuilder> configure)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ArgumentNullException.ThrowIfNull(configure);
+
+        var extension = GetOrCreateExtension();
+        var configuration = extension.Configuration ?? new ClickHouseConfiguration();
+
+        var groupBuilder = new TableGroupConfigBuilder();
+        configure(groupBuilder);
+        configuration.TableGroups[name] = groupBuilder.Build();
+
+        extension = extension.WithConfiguration(configuration);
+        ((IDbContextOptionsBuilderInfrastructure)_optionsBuilder).AddOrUpdateExtension(extension);
+        return this;
+    }
+
+    /// <summary>
+    /// Sets the default table group for entities that don't specify one explicitly.
+    /// </summary>
+    /// <param name="tableGroupName">The default table group name.</param>
+    /// <returns>The same builder instance for method chaining.</returns>
+    public virtual ClickHouseDbContextOptionsBuilder DefaultTableGroup(string tableGroupName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tableGroupName);
+
+        var extension = GetOrCreateExtension();
+        var configuration = extension.Configuration ?? new ClickHouseConfiguration();
+        configuration.Defaults.TableGroup = tableGroupName;
+
+        extension = extension.WithConfiguration(configuration);
+        ((IDbContextOptionsBuilderInfrastructure)_optionsBuilder).AddOrUpdateExtension(extension);
+        return this;
+    }
+
+    #endregion
+
     private ClickHouseOptionsExtension GetOrCreateExtension()
         => _optionsBuilder.Options.FindExtension<ClickHouseOptionsExtension>()
            ?? new ClickHouseOptionsExtension();
 }
+
+#region Fluent Builders
+
+/// <summary>
+/// Builder for configuring a connection.
+/// </summary>
+public class ConnectionConfigBuilder
+{
+    private readonly ConnectionConfig _config = new();
+
+    /// <summary>
+    /// Sets the database name.
+    /// </summary>
+    public ConnectionConfigBuilder Database(string database)
+    {
+        _config.Database = database;
+        return this;
+    }
+
+    /// <summary>
+    /// Sets the write endpoint (host:port).
+    /// </summary>
+    public ConnectionConfigBuilder WriteEndpoint(string endpoint)
+    {
+        _config.WriteEndpoint = endpoint;
+        return this;
+    }
+
+    /// <summary>
+    /// Sets the read endpoints (host:port).
+    /// </summary>
+    public ConnectionConfigBuilder ReadEndpoints(params string[] endpoints)
+    {
+        _config.ReadEndpoints = [.. endpoints];
+        return this;
+    }
+
+    /// <summary>
+    /// Sets the read strategy.
+    /// </summary>
+    public ConnectionConfigBuilder ReadStrategy(ReadStrategy strategy)
+    {
+        _config.ReadStrategy = strategy;
+        return this;
+    }
+
+    /// <summary>
+    /// Configures failover settings.
+    /// </summary>
+    public ConnectionConfigBuilder WithFailover(Action<FailoverConfigBuilder> configure)
+    {
+        var builder = new FailoverConfigBuilder();
+        configure(builder);
+        _config.Failover = builder.Build();
+        return this;
+    }
+
+    /// <summary>
+    /// Sets authentication credentials.
+    /// </summary>
+    public ConnectionConfigBuilder Credentials(string username, string password)
+    {
+        _config.Username = username;
+        _config.Password = password;
+        return this;
+    }
+
+    internal ConnectionConfig Build() => _config;
+}
+
+/// <summary>
+/// Builder for configuring failover settings.
+/// </summary>
+public class FailoverConfigBuilder
+{
+    private readonly FailoverConfig _config = new();
+
+    /// <summary>
+    /// Enables or disables failover.
+    /// </summary>
+    public FailoverConfigBuilder Enabled(bool enabled = true)
+    {
+        _config.Enabled = enabled;
+        return this;
+    }
+
+    /// <summary>
+    /// Sets the maximum retry attempts.
+    /// </summary>
+    public FailoverConfigBuilder MaxRetries(int retries)
+    {
+        _config.MaxRetries = retries;
+        return this;
+    }
+
+    /// <summary>
+    /// Sets the retry delay in milliseconds.
+    /// </summary>
+    public FailoverConfigBuilder RetryDelayMs(int delayMs)
+    {
+        _config.RetryDelayMs = delayMs;
+        return this;
+    }
+
+    /// <summary>
+    /// Sets the health check interval in milliseconds.
+    /// </summary>
+    public FailoverConfigBuilder HealthCheckIntervalMs(int intervalMs)
+    {
+        _config.HealthCheckIntervalMs = intervalMs;
+        return this;
+    }
+
+    internal FailoverConfig Build() => _config;
+}
+
+/// <summary>
+/// Builder for configuring a cluster.
+/// </summary>
+public class ClusterConfigBuilder
+{
+    private readonly ClusterConfig _config = new();
+
+    /// <summary>
+    /// Sets the connection name for this cluster.
+    /// </summary>
+    public ClusterConfigBuilder UseConnection(string connectionName)
+    {
+        _config.Connection = connectionName;
+        return this;
+    }
+
+    /// <summary>
+    /// Configures replication settings.
+    /// </summary>
+    public ClusterConfigBuilder WithReplication(Action<ReplicationConfigBuilder> configure)
+    {
+        var builder = new ReplicationConfigBuilder();
+        configure(builder);
+        _config.Replication = builder.Build();
+        return this;
+    }
+
+    internal ClusterConfig Build() => _config;
+}
+
+/// <summary>
+/// Builder for configuring replication settings.
+/// </summary>
+public class ReplicationConfigBuilder
+{
+    private readonly ReplicationConfig _config = new();
+
+    /// <summary>
+    /// Sets the ZooKeeper/Keeper base path.
+    /// Supports placeholders: {database}, {table}, {uuid}
+    /// </summary>
+    public ReplicationConfigBuilder ZooKeeperBasePath(string path)
+    {
+        _config.ZooKeeperBasePath = path;
+        return this;
+    }
+
+    /// <summary>
+    /// Sets the replica name macro (default: "{replica}").
+    /// </summary>
+    public ReplicationConfigBuilder ReplicaNameMacro(string macro)
+    {
+        _config.ReplicaNameMacro = macro;
+        return this;
+    }
+
+    internal ReplicationConfig Build() => _config;
+}
+
+/// <summary>
+/// Builder for configuring a table group.
+/// </summary>
+public class TableGroupConfigBuilder
+{
+    private readonly TableGroupConfig _config = new();
+
+    /// <summary>
+    /// Sets the cluster for this table group.
+    /// </summary>
+    public TableGroupConfigBuilder UseCluster(string clusterName)
+    {
+        _config.Cluster = clusterName;
+        return this;
+    }
+
+    /// <summary>
+    /// Marks tables in this group as not using any cluster (local only).
+    /// </summary>
+    public TableGroupConfigBuilder NoCluster()
+    {
+        _config.Cluster = null;
+        return this;
+    }
+
+    /// <summary>
+    /// Marks tables in this group as using replicated engines.
+    /// </summary>
+    public TableGroupConfigBuilder Replicated()
+    {
+        _config.Replicated = true;
+        return this;
+    }
+
+    /// <summary>
+    /// Marks tables in this group as not using replicated engines.
+    /// </summary>
+    public TableGroupConfigBuilder NotReplicated()
+    {
+        _config.Replicated = false;
+        return this;
+    }
+
+    /// <summary>
+    /// Sets a description for the table group.
+    /// </summary>
+    public TableGroupConfigBuilder Description(string description)
+    {
+        _config.Description = description;
+        return this;
+    }
+
+    internal TableGroupConfig Build() => _config;
+}
+
+#endregion
