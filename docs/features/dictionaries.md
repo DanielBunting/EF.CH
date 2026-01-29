@@ -296,6 +296,118 @@ LAYOUT(HASHED())
 LIFETIME(300)
 ```
 
+## Config-Based Dictionaries
+
+For production deployments, you may want to define dictionaries in ClickHouse XML config instead of via SQL DDL. This keeps database credentials in server config rather than application code or SQL logs.
+
+### When to Use Each Approach
+
+| Aspect | DDL-Based | Config-Based |
+|--------|-----------|--------------|
+| Definition location | SQL migrations / app startup | ClickHouse XML config |
+| Credential storage | Environment vars / app config | ClickHouse server config |
+| Credential exposure | May appear in SQL logs | Never in SQL logs |
+| Creation timing | `EnsureDictionariesAsync()` at runtime | ClickHouse startup |
+| Best for | Development, dynamic dictionaries | Production, secure deployments |
+
+### ClickHouse XML Config
+
+Define dictionaries in a file like `/etc/clickhouse-server/external_dictionary.xml`:
+
+```xml
+<clickhouse>
+    <dictionary>
+        <name>countries</name>
+        <source>
+            <postgresql>
+                <host>postgres-server</host>
+                <port>5432</port>
+                <user>readonly_user</user>
+                <password>secret</password>
+                <db>reference_data</db>
+                <table>countries</table>
+            </postgresql>
+        </source>
+        <lifetime>
+            <min>60</min>
+            <max>300</max>
+        </lifetime>
+        <layout>
+            <hashed />
+        </layout>
+        <structure>
+            <id>
+                <name>id</name>
+            </id>
+            <attribute>
+                <name>Name</name>
+                <expression>name</expression>
+                <type>String</type>
+                <null_value>Unknown</null_value>
+            </attribute>
+            <attribute>
+                <name>IsoCode</name>
+                <expression>iso_code</expression>
+                <type>String</type>
+                <null_value>XX</null_value>
+            </attribute>
+        </structure>
+    </dictionary>
+</clickhouse>
+```
+
+### EF.CH Setup with Explicit Metadata
+
+For config-based dictionaries, use the `ClickHouseDictionary` constructor with explicit metadata:
+
+```csharp
+public class MyDbContext : DbContext
+{
+    private ClickHouseDictionary<Countries, ulong>? _countryDict;
+
+    // Use explicit metadata - no AsDictionary() configuration needed
+    public ClickHouseDictionary<Countries, ulong> CountryDict
+        => _countryDict ??= new ClickHouseDictionary<Countries, ulong>(
+            this,
+            new DictionaryMetadata<Countries, ulong>(
+                name: "countries",       // Must match XML config
+                keyType: typeof(ulong),
+                entityType: typeof(Countries),
+                keyPropertyName: "Id"));
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        // Entity needs dictionary annotations for LINQ translation
+        modelBuilder.Entity<Countries>(entity =>
+        {
+            entity.HasNoKey();
+            entity.ToTable("countries");  // Must match dictionary name
+            entity.HasAnnotation(ClickHouseAnnotationNames.Dictionary, true);
+            entity.HasAnnotation(ClickHouseAnnotationNames.DictionaryKeyColumns, new[] { "Id" });
+        });
+    }
+}
+
+// Entity class - name determines dictGet dictionary name (snake_case)
+public class Countries
+{
+    public ulong Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string IsoCode { get; set; } = string.Empty;
+}
+```
+
+LINQ queries work identically to DDL-based dictionaries:
+
+```csharp
+var orders = db.Orders
+    .Select(o => new {
+        o.Id,
+        CountryName = db.CountryDict.Get(o.CountryId, c => c.Name)
+    });
+// → dictGet('countries', 'Name', CountryId)
+```
+
 ## Best Practices
 
 1. **Use Hashed layout for most cases** - Good balance of memory and performance
@@ -314,4 +426,5 @@ LIFETIME(300)
 
 - [DictionarySample](../../samples/DictionarySample/) - Basic dictionary usage
 - [DictionaryJoinSample](../../samples/DictionaryJoinSample/) - Dictionary as JOIN replacement
+- [ConfigBasedDictionarySample](../../samples/ConfigBasedDictionarySample/) - Config-based dictionaries with external sources
 - [ClickHouse Dictionary Documentation](https://clickhouse.com/docs/en/sql-reference/dictionaries)
