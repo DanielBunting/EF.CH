@@ -363,8 +363,7 @@ public class ClickHouseIntegrationTests : IAsyncLifetime
         Assert.Equal(2, finalResult[0].Version);
     }
 
-    [Fact(Skip = "EF Core parameterizes method arguments before our translator processes them. " +
-                   "The feature works but requires constants that can't be extracted from ParameterExpression.")]
+    [Fact]
     public async Task Sample_ReturnsSubsetOfData()
     {
         await using var context = CreateContext<EventsDbContext>();
@@ -409,9 +408,7 @@ public class ClickHouseIntegrationTests : IAsyncLifetime
         Assert.True(sampledResults.Count < 100, $"Expected fewer than 100 rows with 10% sample, got {sampledResults.Count}");
     }
 
-    [Fact(Skip = "EF Core parameterizes method arguments before our translator processes them. " +
-                   "The feature works but requires constants that can't be extracted from ParameterExpression. " +
-                   "Use raw SQL for SETTINGS in tests.")]
+    [Fact]
     public async Task WithSetting_AppliesQuerySettings()
     {
         await using var context = CreateContext<EventsDbContext>();
@@ -448,9 +445,7 @@ public class ClickHouseIntegrationTests : IAsyncLifetime
         Assert.Equal("test", results[0].EventType);
     }
 
-    [Fact(Skip = "EF Core parameterizes method arguments before our translator processes them. " +
-                   "The feature works but requires constants that can't be extracted from ParameterExpression. " +
-                   "Use raw SQL for SETTINGS in tests.")]
+    [Fact]
     public async Task WithSettings_AppliesMultipleQuerySettings()
     {
         await using var context = CreateContext<EventsDbContext>();

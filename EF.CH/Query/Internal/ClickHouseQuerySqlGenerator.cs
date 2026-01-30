@@ -32,6 +32,16 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     [ThreadStatic]
     private static SqlExpression? _currentPreWhereExpression;
 
+    // Thread-local storage for LIMIT BY options
+    [ThreadStatic]
+    private static int? _currentLimitByLimit;
+
+    [ThreadStatic]
+    private static int? _currentLimitByOffset;
+
+    [ThreadStatic]
+    private static List<SqlExpression>? _currentLimitByExpressions;
+
     public ClickHouseQuerySqlGenerator(
         QuerySqlGeneratorDependencies dependencies,
         IRelationalTypeMappingSource typeMappingSource)
@@ -65,6 +75,17 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     internal static void SetPreWhereExpression(SqlExpression expression)
     {
         _currentPreWhereExpression = expression;
+    }
+
+    /// <summary>
+    /// Sets LIMIT BY options for SQL generation.
+    /// LIMIT BY generates: LIMIT [offset,] limit BY column1[, column2, ...]
+    /// </summary>
+    internal static void SetLimitBy(int limit, int? offset, List<SqlExpression> expressions)
+    {
+        _currentLimitByLimit = limit;
+        _currentLimitByOffset = offset;
+        _currentLimitByExpressions = expressions;
     }
 
     /// <summary>
@@ -122,16 +143,21 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     /// <summary>
     /// Generates LIMIT/OFFSET clauses using ClickHouse's syntax.
     /// ClickHouse uses: LIMIT [offset,] count
-    /// Also generates INTERPOLATE and SETTINGS clauses if present.
+    /// Also generates INTERPOLATE, LIMIT BY, and SETTINGS clauses if present.
+    /// Clause order: INTERPOLATE -> LIMIT BY -> LIMIT -> SETTINGS
     /// </summary>
     protected override void GenerateLimitOffset(SelectExpression selectExpression)
     {
         ArgumentNullException.ThrowIfNull(selectExpression);
 
-        // Generate INTERPOLATE clause after ORDER BY but before LIMIT
+        // Generate INTERPOLATE clause after ORDER BY but before LIMIT BY
         // (INTERPOLATE is consumed and cleared here to prevent state leakage)
         GenerateInterpolateClause();
 
+        // Generate LIMIT BY clause (for top-N per group queries)
+        GenerateLimitBy();
+
+        // Generate global LIMIT clause
         if (selectExpression.Limit is not null)
         {
             Sql.AppendLine()
@@ -634,6 +660,49 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
         }
 
         Sql.Append(")");
+    }
+
+    /// <summary>
+    /// Generates the LIMIT BY clause for top-N per group queries.
+    /// ClickHouse syntax: LIMIT [offset,] limit BY column1[, column2, ...]
+    /// </summary>
+    private void GenerateLimitBy()
+    {
+        // Capture and clear atomically to prevent leakage
+        // Note: Interlocked.Exchange doesn't support nullable value types, so we capture and clear manually
+        var limit = _currentLimitByLimit;
+        var offset = _currentLimitByOffset;
+        var expressions = Interlocked.Exchange(ref _currentLimitByExpressions, null);
+
+        // Clear the value types after capture
+        _currentLimitByLimit = null;
+        _currentLimitByOffset = null;
+
+        if (limit == null || expressions == null || expressions.Count == 0)
+        {
+            return;
+        }
+
+        Sql.AppendLine();
+        Sql.Append("LIMIT ");
+
+        if (offset.HasValue && offset.Value > 0)
+        {
+            Sql.Append(offset.Value.ToString(CultureInfo.InvariantCulture));
+            Sql.Append(", ");
+        }
+
+        Sql.Append(limit.Value.ToString(CultureInfo.InvariantCulture));
+        Sql.Append(" BY ");
+
+        for (var i = 0; i < expressions.Count; i++)
+        {
+            if (i > 0)
+            {
+                Sql.Append(", ");
+            }
+            Visit(expressions[i]);
+        }
     }
 
     /// <summary>
