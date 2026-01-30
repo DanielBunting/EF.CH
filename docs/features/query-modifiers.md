@@ -1,6 +1,6 @@
 # Query Modifiers
 
-EF.CH provides LINQ extension methods for ClickHouse-specific query modifiers: `Final()`, `Sample()`, `PreWhere()`, and `WithSettings()`.
+EF.CH provides LINQ extension methods for ClickHouse-specific query modifiers: `Final()`, `Sample()`, `PreWhere()`, `LimitBy()`, and `WithSettings()`.
 
 ## Final()
 
@@ -160,6 +160,120 @@ var lesEfficient = await context.LargeTable
 - Best performance on primary key columns (ORDER BY columns)
 - ClickHouse may auto-optimize simple WHERE to PREWHERE in some cases
 
+## LimitBy()
+
+Returns the top N rows per group based on a key, using ClickHouse's `LIMIT BY` clause. This is more efficient than window functions for "top N per category" queries.
+
+### Basic Usage
+
+```csharp
+// Top 5 events per category
+var topEvents = await context.Events
+    .OrderByDescending(e => e.Score)
+    .LimitBy(5, e => e.Category)
+    .ToListAsync();
+```
+
+Generates:
+```sql
+SELECT ... FROM "Events" ORDER BY "Score" DESC LIMIT 5 BY "Category"
+```
+
+### Compound Keys
+
+Use anonymous types for multi-column grouping:
+
+```csharp
+// Top 3 per category AND region
+var results = await context.Events
+    .OrderByDescending(e => e.Score)
+    .LimitBy(3, e => new { e.Category, e.Region })
+    .ToListAsync();
+```
+
+Generates:
+```sql
+SELECT ... FROM "Events" ORDER BY "Score" DESC LIMIT 3 BY "Category", "Region"
+```
+
+### With Offset
+
+Skip rows within each group before taking the limit:
+
+```csharp
+// Skip first 2, take next 5 per user (rows 3-7 per user)
+var results = await context.Events
+    .OrderByDescending(e => e.CreatedAt)
+    .LimitBy(2, 5, e => e.UserId)
+    .ToListAsync();
+```
+
+Generates:
+```sql
+SELECT ... FROM "Events" ORDER BY "CreatedAt" DESC LIMIT 2, 5 BY "UserId"
+```
+
+### When to Use
+
+**Ideal for:**
+- "Top N per category" queries (top products per category, recent posts per user)
+- Pagination within groups
+- Sampling a fixed number from each partition
+
+**Compared to Window Functions:**
+
+```csharp
+// Using LimitBy - simpler and often faster
+var top3 = await context.Products
+    .OrderByDescending(p => p.Sales)
+    .LimitBy(3, p => p.Category)
+    .ToListAsync();
+
+// Equivalent using window functions - more complex
+var top3Window = await context.Products
+    .Select(p => new
+    {
+        Product = p,
+        Rank = EF.Functions.RowNumber(
+            EF.Functions.Over()
+                .PartitionBy(p.Category)
+                .OrderByDescending(p.Sales))
+    })
+    .Where(x => x.Rank <= 3)
+    .Select(x => x.Product)
+    .ToListAsync();
+```
+
+### Requirements
+
+- **Requires ORDER BY**: Always use `OrderBy()` or `OrderByDescending()` before `LimitBy()` to control which rows are kept
+- **Limit must be positive**: The limit parameter must be greater than 0
+- **Offset must be non-negative**: When using offset, it must be >= 0
+
+### Example: Recent Activity Per User
+
+```csharp
+public class UserActivity
+{
+    public Guid Id { get; set; }
+    public Guid UserId { get; set; }
+    public DateTime Timestamp { get; set; }
+    public string Action { get; set; } = string.Empty;
+}
+
+// Get last 10 activities per user
+var recentActivity = await context.UserActivities
+    .OrderByDescending(a => a.Timestamp)
+    .LimitBy(10, a => a.UserId)
+    .ToListAsync();
+
+// Paginate: skip first 10, take next 10 per user
+var page2Activity = await context.UserActivities
+    .OrderByDescending(a => a.Timestamp)
+    .LimitBy(10, 10, a => a.UserId)
+    .ToListAsync();
+```
+
 ## WithSettings()
 
 Applies ClickHouse query settings to control execution behavior.
@@ -229,7 +343,8 @@ var result = await context.Users
     .Where(u => u.Country == "US")        // Additional filter
     .WithSetting("max_threads", 8)        // Control resources
     .OrderByDescending(u => u.CreatedAt)
-    .Take(100)
+    .LimitBy(5, u => u.Department)        // Top 5 per department
+    .Take(100)                            // Overall limit
     .ToListAsync();
 ```
 
@@ -272,15 +387,17 @@ var recentEvents = await context.AnalyticsEvents
 
 ## Modifier Placement
 
-Modifiers should generally come early in the query:
+Modifiers should generally come early in the query, except `LimitBy()` which should come after `OrderBy()`:
 
 ```csharp
-// Good: Modifiers before filters
+// Good: Modifiers before filters, LimitBy after OrderBy
 context.Users
     .Final()
     .Sample(0.1)
     .PreWhere(u => u.CreatedAt > cutoff)
     .Where(u => u.IsActive)
+    .OrderByDescending(u => u.Score)
+    .LimitBy(5, u => u.Department)
     .Select(u => new { u.Id, u.Name });
 
 // Avoid: Modifiers after complex operations
@@ -295,6 +412,7 @@ context.Users
 - **Sample requires SAMPLE BY**: Table must be configured with `HasSampleBy()`
 - **Final overhead**: Merges rows in memory, impacting performance
 - **PreWhere single call**: Only one `PreWhere()` per query - combine conditions in one call
+- **LimitBy requires OrderBy**: Always call `OrderBy()` before `LimitBy()` to control row selection
 - **Settings scope**: Applied per-query, not connection-wide
 
 ## See Also
@@ -304,4 +422,5 @@ context.Users
 - [ClickHouse FINAL Docs](https://clickhouse.com/docs/en/sql-reference/statements/select/from#final-modifier)
 - [ClickHouse SAMPLE Docs](https://clickhouse.com/docs/en/sql-reference/statements/select/sample)
 - [ClickHouse PREWHERE Docs](https://clickhouse.com/docs/en/sql-reference/statements/select/prewhere)
+- [ClickHouse LIMIT BY Docs](https://clickhouse.com/docs/en/sql-reference/statements/select/limit-by)
 - [ClickHouse SETTINGS Docs](https://clickhouse.com/docs/en/sql-reference/statements/select#settings-in-select-query)

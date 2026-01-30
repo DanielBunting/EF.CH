@@ -126,6 +126,16 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
             {
                 return TranslatePreWhere(methodCallExpression);
             }
+
+            // Handle LimitBy extension methods
+            if (genericDef == ClickHouseQueryableExtensions.LimitByMethodInfo)
+            {
+                return TranslateLimitBy(methodCallExpression, hasOffset: false);
+            }
+            if (genericDef == ClickHouseQueryableExtensions.LimitByWithOffsetMethodInfo)
+            {
+                return TranslateLimitBy(methodCallExpression, hasOffset: true);
+            }
         }
 
         return base.VisitMethodCall(methodCallExpression);
@@ -403,6 +413,96 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
     }
 
     /// <summary>
+    /// Translates the LimitBy() extension method.
+    /// Extracts limit, optional offset, and key selector columns for LIMIT BY clause.
+    /// </summary>
+    private Expression TranslateLimitBy(MethodCallExpression methodCallExpression, bool hasOffset)
+    {
+        // Visit the source to get the translated query
+        var source = Visit(methodCallExpression.Arguments[0]);
+
+        if (source is not ShapedQueryExpression shapedQuery)
+        {
+            throw new InvalidOperationException("LimitBy can only be applied to a query source.");
+        }
+
+        int argIndex = 1;
+
+        // Extract offset if present
+        if (hasOffset)
+        {
+            if (!TryGetConstantValue<int>(methodCallExpression.Arguments[argIndex], out var offset))
+            {
+                throw new InvalidOperationException("LimitBy offset must be a constant value.");
+            }
+            _options.LimitByOffset = offset;
+            argIndex++;
+        }
+
+        // Extract limit
+        if (!TryGetConstantValue<int>(methodCallExpression.Arguments[argIndex], out var limit))
+        {
+            throw new InvalidOperationException("LimitBy limit must be a constant value.");
+        }
+        _options.LimitByLimit = limit;
+        argIndex++;
+
+        // Extract key selector lambda
+        var keySelectorLambda = UnwrapLambda(methodCallExpression.Arguments[argIndex]);
+
+        // Translate the key selector to SQL expressions
+        var keyExpressions = TranslateLimitByKeySelector(shapedQuery, keySelectorLambda);
+
+        if (keyExpressions == null || keyExpressions.Count == 0)
+        {
+            throw new InvalidOperationException(
+                "Could not translate LIMIT BY key selector to SQL. " +
+                "Ensure the expression references entity properties.");
+        }
+
+        _options.LimitByExpressions = keyExpressions;
+
+        return source;
+    }
+
+    /// <summary>
+    /// Translates the key selector lambda for LIMIT BY clause.
+    /// Handles single column selectors and anonymous type selectors (compound keys).
+    /// </summary>
+    private List<SqlExpression>? TranslateLimitByKeySelector(
+        ShapedQueryExpression shapedQuery,
+        LambdaExpression keySelector)
+    {
+        var body = keySelector.Body;
+
+        // Handle anonymous type (compound key): e => new { e.A, e.B }
+        if (body is NewExpression newExpr)
+        {
+            var expressions = new List<SqlExpression>();
+            foreach (var arg in newExpr.Arguments)
+            {
+                // Create a lambda for each member
+                var memberLambda = Expression.Lambda(arg, keySelector.Parameters);
+                var translated = TranslateLambdaExpression(shapedQuery, memberLambda);
+                if (translated == null)
+                {
+                    return null;
+                }
+                expressions.Add(translated);
+            }
+            return expressions;
+        }
+
+        // Handle single column selector: e => e.Category
+        var singleTranslated = TranslateLambdaExpression(shapedQuery, keySelector);
+        if (singleTranslated == null)
+        {
+            return null;
+        }
+        return new List<SqlExpression> { singleTranslated };
+    }
+
+    /// <summary>
     /// Unwraps a lambda expression from Quote wrapping.
     /// </summary>
     private static LambdaExpression UnwrapLambda(Expression expression)
@@ -618,6 +718,26 @@ public class ClickHouseQueryCompilationContextOptions
     /// The translated PREWHERE predicate expression.
     /// </summary>
     public SqlExpression? PreWhereExpression { get; set; }
+
+    /// <summary>
+    /// The LIMIT BY limit (rows per group), or null if no LIMIT BY.
+    /// </summary>
+    public int? LimitByLimit { get; set; }
+
+    /// <summary>
+    /// The LIMIT BY offset (rows to skip per group), or null if no offset.
+    /// </summary>
+    public int? LimitByOffset { get; set; }
+
+    /// <summary>
+    /// The LIMIT BY column expressions for grouping.
+    /// </summary>
+    public List<SqlExpression>? LimitByExpressions { get; set; }
+
+    /// <summary>
+    /// Whether any LIMIT BY clause has been specified.
+    /// </summary>
+    public bool HasLimitBy => LimitByLimit.HasValue && LimitByExpressions?.Count > 0;
 }
 
 /// <summary>

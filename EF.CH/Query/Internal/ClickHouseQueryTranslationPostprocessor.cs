@@ -75,6 +75,15 @@ public class ClickHouseQueryTranslationPostprocessor : RelationalQueryTranslatio
             ClickHouseQuerySqlGenerator.SetPreWhereExpression(options.PreWhereExpression);
         }
 
+        // Pass LIMIT BY options via thread-local to SQL generator
+        if (options.HasLimitBy)
+        {
+            ClickHouseQuerySqlGenerator.SetLimitBy(
+                options.LimitByLimit!.Value,
+                options.LimitByOffset,
+                options.LimitByExpressions!);
+        }
+
         return query;
     }
 }
