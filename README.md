@@ -599,6 +599,44 @@ public class Order
 
 See [docs/types/json.md](docs/types/json.md) for full documentation.
 
+## Clustering & Replication
+
+EF.CH supports multi-datacenter ClickHouse deployments with full replication:
+
+- **Replicated Engines** - ReplicatedMergeTree variants with fluent configuration
+- **ON CLUSTER DDL** - Automatic cluster-aware schema management
+- **Connection Routing** - Read/write endpoint splitting with failover
+- **Table Groups** - Logical grouping with inherited cluster settings
+
+```csharp
+// Fluent cluster configuration
+modelBuilder.Entity<Order>(entity =>
+{
+    entity.UseReplicatedReplacingMergeTree(x => x.Version, x => new { x.OrderDate, x.Id })
+          .WithCluster("geo_cluster")
+          .WithReplication("/clickhouse/tables/{database}/{table}");
+});
+```
+
+Configure connections with read/write separation:
+
+```csharp
+options.UseClickHouse("Host=primary;Database=myapp", ch =>
+{
+    ch.AddConnection("Primary", conn => conn
+        .WriteEndpoint("dc1-clickhouse:8123")
+        .ReadEndpoints("dc1-clickhouse:8123", "dc2-clickhouse:8123")
+        .ReadStrategy(ReadStrategy.RoundRobin));
+
+    ch.AddCluster("geo_cluster", cluster => cluster
+        .UseConnection("Primary"));
+
+    ch.UseConnectionRouting();  // Enable read/write splitting
+});
+```
+
+See [Clustering Documentation](docs/features/clustering.md) and [ClusterSample](samples/ClusterSample/) for details.
+
 ## Dictionaries
 
 ClickHouse dictionaries are in-memory key-value stores for fast lookups:
@@ -690,6 +728,9 @@ See [docs/features/external-entities.md](docs/features/external-entities.md) for
 | [Query Modifiers](docs/features/query-modifiers.md) | FINAL, SAMPLE, PREWHERE, SETTINGS query hints |
 | [Computed Columns](docs/features/computed-columns.md) | MATERIALIZED, ALIAS, DEFAULT expression columns |
 | [Aggregate Combinators](docs/features/aggregate-combinators.md) | State, Merge, If, Array combinators for pre-aggregation |
+| [Clustering](docs/features/clustering.md) | Multi-datacenter deployments with replication |
+| [Replicated Engines](docs/features/replicated-engines.md) | ReplicatedMergeTree variants with fluent API |
+| [Connection Routing](docs/features/connection-routing.md) | Read/write splitting and failover |
 | [External Entities](docs/features/external-entities.md) | Query remote PostgreSQL, MySQL, Redis, ODBC |
 | [Migrations](docs/migrations.md) | EF Core migrations with ClickHouse |
 | [Scaffolding](docs/scaffolding.md) | Reverse engineering |
@@ -718,6 +759,7 @@ See [docs/features/external-entities.md](docs/features/external-entities.md) for
 | [ExternalPostgresSample](samples/ExternalPostgresSample/) | Query PostgreSQL from ClickHouse |
 | [ExternalRedisSample](samples/ExternalRedisSample/) | Redis key-value integration |
 | [JsonTypeSample](samples/JsonTypeSample/) | Native JSON with subcolumn queries |
+| [ClusterSample](samples/ClusterSample/) | Multi-node cluster with replication |
 
 ## License
 

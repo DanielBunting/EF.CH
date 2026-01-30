@@ -13,7 +13,7 @@ namespace EF.CH.Tests.Features;
 /// </summary>
 public class InterpolateTests
 {
-    [Fact(Skip = "EF Core parameterizes constants before translation. Interpolate works at query execution time but not with ToQueryString().")]
+    [Fact]
     public void Interpolate_TimeSpanStep_GeneratesWithFillClause()
     {
         using var context = CreateContext();
@@ -30,7 +30,7 @@ public class InterpolateTests
         Assert.Contains("STEP INTERVAL 1 HOUR", sql);
     }
 
-    [Fact(Skip = "EF Core parameterizes constants before translation. Interpolate works at query execution time but not with ToQueryString().")]
+    [Fact]
     public void Interpolate_TimeSpanStepMinutes_GeneratesWithFillClause()
     {
         using var context = CreateContext();
@@ -46,7 +46,7 @@ public class InterpolateTests
         Assert.Contains("STEP INTERVAL 15 MINUTE", sql);
     }
 
-    [Fact(Skip = "EF Core parameterizes constants before translation. Interpolate works at query execution time but not with ToQueryString().")]
+    [Fact]
     public void Interpolate_ClickHouseIntervalStep_GeneratesWithFillClause()
     {
         using var context = CreateContext();
@@ -62,7 +62,7 @@ public class InterpolateTests
         Assert.Contains("STEP INTERVAL 1 DAY", sql);
     }
 
-    [Fact(Skip = "EF Core parameterizes constants before translation. Interpolate works at query execution time but not with ToQueryString().")]
+    [Fact]
     public void Interpolate_ClickHouseIntervalMonths_GeneratesWithFillClause()
     {
         using var context = CreateContext();
@@ -78,7 +78,7 @@ public class InterpolateTests
         Assert.Contains("STEP INTERVAL 1 MONTH", sql);
     }
 
-    [Fact(Skip = "EF Core parameterizes constants before translation. Interpolate works at query execution time but not with ToQueryString().")]
+    [Fact]
     public void Interpolate_NumericStep_GeneratesWithFillClause()
     {
         using var context = CreateContext();
@@ -94,7 +94,7 @@ public class InterpolateTests
         Assert.Contains("STEP 10", sql);
     }
 
-    [Fact(Skip = "EF Core parameterizes constants before translation. Interpolate works at query execution time but not with ToQueryString().")]
+    [Fact]
     public void Interpolate_WithFromTo_GeneratesWithFillClause()
     {
         using var context = CreateContext();
@@ -114,7 +114,7 @@ public class InterpolateTests
         Assert.Contains("STEP INTERVAL 1 DAY", sql);
     }
 
-    [Fact(Skip = "EF Core parameterizes constants before translation. Interpolate works at query execution time but not with ToQueryString().")]
+    [Fact]
     public void Interpolate_ClickHouseIntervalWithFromTo_GeneratesWithFillClause()
     {
         using var context = CreateContext();
@@ -134,7 +134,7 @@ public class InterpolateTests
         Assert.Contains("STEP INTERVAL 7 DAY", sql);
     }
 
-    [Fact(Skip = "EF Core parameterizes constants before translation. Interpolate works at query execution time but not with ToQueryString().")]
+    [Fact]
     public void Interpolate_SingleColumnWithPrevMode_GeneratesInterpolateClause()
     {
         using var context = CreateContext();
@@ -151,7 +151,7 @@ public class InterpolateTests
         Assert.Contains("\"Value\" AS \"Value\"", sql);
     }
 
-    [Fact(Skip = "EF Core parameterizes constants before translation. Interpolate works at query execution time but not with ToQueryString().")]
+    [Fact]
     public void Interpolate_SingleColumnWithConstant_GeneratesInterpolateClause()
     {
         using var context = CreateContext();
@@ -168,7 +168,7 @@ public class InterpolateTests
         Assert.Contains("\"Value\" AS 0", sql);
     }
 
-    [Fact(Skip = "EF Core parameterizes constants before translation. Interpolate works at query execution time but not with ToQueryString().")]
+    [Fact]
     public void Interpolate_MultipleColumnsViaBuilder_GeneratesInterpolateClause()
     {
         using var context = CreateContext();
@@ -187,7 +187,7 @@ public class InterpolateTests
         Assert.Contains("\"Count\" AS 0", sql);
     }
 
-    [Fact(Skip = "EF Core parameterizes constants before translation. Interpolate works at query execution time but not with ToQueryString().")]
+    [Fact]
     public void Interpolate_CombinedWithOrderByDesc_GeneratesCorrectSql()
     {
         using var context = CreateContext();
@@ -204,7 +204,7 @@ public class InterpolateTests
         Assert.Contains("WITH FILL", sql);
     }
 
-    [Fact(Skip = "EF Core parameterizes constants before translation. Interpolate works at query execution time but not with ToQueryString().")]
+    [Fact(Skip = "Chaining Take() after Interpolate() requires NavigationExpandingExpressionVisitor support for custom methods.")]
     public void Interpolate_WithLimit_GeneratesCorrectOrder()
     {
         using var context = CreateContext();
@@ -225,7 +225,7 @@ public class InterpolateTests
         Assert.True(limitIndex > withFillIndex, "LIMIT should come after WITH FILL");
     }
 
-    [Fact(Skip = "EF Core parameterizes constants before translation. Interpolate works at query execution time but not with ToQueryString().")]
+    [Fact(Skip = "Chaining Take() after Interpolate() requires NavigationExpandingExpressionVisitor support for custom methods.")]
     public void Interpolate_SingleColumnWithLimit_GeneratesCorrectOrder()
     {
         using var context = CreateContext();

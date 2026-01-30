@@ -9,6 +9,18 @@ namespace EF.CH.Extensions;
 public static class ClickHouseQueryableExtensions
 {
     /// <summary>
+    /// Wraps a constant value in an EF.Constant() call to prevent EF Core from parameterizing it.
+    /// The ClickHouseEvaluatableExpressionFilterPlugin will prevent evaluation of EF.Constant() calls,
+    /// and the translator will unwrap them to get the actual value.
+    /// </summary>
+    private static Expression WrapInEfConstant<T>(T value)
+    {
+        return Expression.Call(
+            typeof(Microsoft.EntityFrameworkCore.EF).GetMethod(nameof(Microsoft.EntityFrameworkCore.EF.Constant))!.MakeGenericMethod(typeof(T)),
+            Expression.Constant(value, typeof(T)));
+    }
+
+    /// <summary>
     /// Applies the FINAL modifier to force deduplication for ReplacingMergeTree tables.
     /// </summary>
     /// <remarks>
@@ -34,14 +46,8 @@ public static class ClickHouseQueryableExtensions
     /// Applies probabilistic SAMPLE to the query for approximate results on large datasets.
     /// </summary>
     /// <remarks>
-    /// <para>
     /// SAMPLE provides fast approximate results by reading only a fraction of the data.
     /// Useful for exploratory analytics on very large tables.
-    /// </para>
-    /// <para>
-    /// Note: Due to EF Core's parameterization, ToQueryString() may not show the SAMPLE clause correctly.
-    /// The feature works correctly when the query is actually executed against ClickHouse.
-    /// </para>
     /// </remarks>
     /// <typeparam name="TEntity">The entity type.</typeparam>
     /// <param name="source">The source queryable.</param>
@@ -62,18 +68,12 @@ public static class ClickHouseQueryableExtensions
                 null,
                 SampleMethodInfo.MakeGenericMethod(typeof(TEntity)),
                 source.Expression,
-                Expression.Constant(fraction)));
+                WrapInEfConstant(fraction)));
     }
 
     /// <summary>
     /// Applies probabilistic SAMPLE with a seed offset for reproducible sampling.
     /// </summary>
-    /// <remarks>
-    /// <para>
-    /// Note: Due to EF Core's parameterization, ToQueryString() may not show the SAMPLE clause correctly.
-    /// The feature works correctly when the query is actually executed against ClickHouse.
-    /// </para>
-    /// </remarks>
     /// <typeparam name="TEntity">The entity type.</typeparam>
     /// <param name="source">The source queryable.</param>
     /// <param name="fraction">The fraction of rows to sample (0.0 to 1.0).</param>
@@ -94,8 +94,8 @@ public static class ClickHouseQueryableExtensions
                 null,
                 SampleWithOffsetMethodInfo.MakeGenericMethod(typeof(TEntity)),
                 source.Expression,
-                Expression.Constant(fraction),
-                Expression.Constant(offset)));
+                WrapInEfConstant(fraction),
+                WrapInEfConstant(offset)));
     }
 
     internal static readonly MethodInfo FinalMethodInfo =
@@ -152,7 +152,7 @@ public static class ClickHouseQueryableExtensions
                 null,
                 WithSettingsMethodInfo.MakeGenericMethod(typeof(TEntity)),
                 source.Expression,
-                Expression.Constant(settingsCopy)));
+                WrapInEfConstant(settingsCopy)));
     }
 
     /// <summary>
@@ -176,8 +176,8 @@ public static class ClickHouseQueryableExtensions
                 null,
                 WithSettingMethodInfo.MakeGenericMethod(typeof(TEntity)),
                 source.Expression,
-                Expression.Constant(name),
-                Expression.Constant(value, typeof(object))));
+                WrapInEfConstant(name),
+                WrapInEfConstant(value)));
     }
 
     internal static readonly MethodInfo WithSettingsMethodInfo =
@@ -224,4 +224,123 @@ public static class ClickHouseQueryableExtensions
     internal static readonly MethodInfo PreWhereMethodInfo =
         typeof(ClickHouseQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
             .First(m => m.Name == nameof(PreWhere) && m.GetParameters().Length == 2);
+
+    /// <summary>
+    /// Applies LIMIT BY clause to return top N rows per group based on the specified key.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// LIMIT BY is a ClickHouse-specific clause that limits the number of rows per group.
+    /// This is useful for "top N per category" queries without needing window functions.
+    /// </para>
+    /// <para>
+    /// The key selector defines the grouping columns. Use OrderBy/OrderByDescending before
+    /// LimitBy to control which rows are kept within each group.
+    /// </para>
+    /// </remarks>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <typeparam name="TKey">The key type (single column or anonymous type for compound keys).</typeparam>
+    /// <param name="source">The source queryable.</param>
+    /// <param name="limit">The maximum number of rows to return per group.</param>
+    /// <param name="keySelector">Expression selecting the grouping key column(s).</param>
+    /// <returns>A queryable with LIMIT BY applied.</returns>
+    /// <example>
+    /// <code>
+    /// // Top 5 events per category
+    /// var results = context.Events
+    ///     .OrderByDescending(e => e.Score)
+    ///     .LimitBy(5, e => e.Category)
+    ///     .ToList();
+    ///
+    /// // Compound key: top 3 per category and region
+    /// var results = context.Events
+    ///     .OrderByDescending(e => e.Score)
+    ///     .LimitBy(3, e => new { e.Category, e.Region })
+    ///     .ToList();
+    /// </code>
+    /// </example>
+    public static IQueryable<TEntity> LimitBy<TEntity, TKey>(
+        this IQueryable<TEntity> source,
+        int limit,
+        Expression<Func<TEntity, TKey>> keySelector)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(keySelector);
+
+        if (limit <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(limit),
+                "Limit must be a positive integer.");
+        }
+
+        return source.Provider.CreateQuery<TEntity>(
+            Expression.Call(
+                null,
+                LimitByMethodInfo.MakeGenericMethod(typeof(TEntity), typeof(TKey)),
+                source.Expression,
+                WrapInEfConstant(limit),
+                Expression.Quote(keySelector)));
+    }
+
+    /// <summary>
+    /// Applies LIMIT BY clause with an offset to skip rows before taking top N per group.
+    /// </summary>
+    /// <remarks>
+    /// LIMIT BY with offset skips the first N rows in each group before returning the limit.
+    /// This is useful for pagination within groups.
+    /// </remarks>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <typeparam name="TKey">The key type (single column or anonymous type for compound keys).</typeparam>
+    /// <param name="source">The source queryable.</param>
+    /// <param name="offset">The number of rows to skip per group.</param>
+    /// <param name="limit">The maximum number of rows to return per group after skipping.</param>
+    /// <param name="keySelector">Expression selecting the grouping key column(s).</param>
+    /// <returns>A queryable with LIMIT offset, limit BY applied.</returns>
+    /// <example>
+    /// <code>
+    /// // Skip 2, take 5 per user (rows 3-7 per user)
+    /// var results = context.Events
+    ///     .OrderByDescending(e => e.CreatedAt)
+    ///     .LimitBy(2, 5, e => e.UserId)
+    ///     .ToList();
+    /// </code>
+    /// </example>
+    public static IQueryable<TEntity> LimitBy<TEntity, TKey>(
+        this IQueryable<TEntity> source,
+        int offset,
+        int limit,
+        Expression<Func<TEntity, TKey>> keySelector)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(keySelector);
+
+        if (offset < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(offset),
+                "Offset must be non-negative.");
+        }
+
+        if (limit <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(limit),
+                "Limit must be a positive integer.");
+        }
+
+        return source.Provider.CreateQuery<TEntity>(
+            Expression.Call(
+                null,
+                LimitByWithOffsetMethodInfo.MakeGenericMethod(typeof(TEntity), typeof(TKey)),
+                source.Expression,
+                WrapInEfConstant(offset),
+                WrapInEfConstant(limit),
+                Expression.Quote(keySelector)));
+    }
+
+    internal static readonly MethodInfo LimitByMethodInfo =
+        typeof(ClickHouseQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .First(m => m.Name == nameof(LimitBy) && m.GetParameters().Length == 3);
+
+    internal static readonly MethodInfo LimitByWithOffsetMethodInfo =
+        typeof(ClickHouseQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .First(m => m.Name == nameof(LimitBy) && m.GetParameters().Length == 4);
 }

@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Linq.Expressions;
 using EF.CH.Metadata;
 using Microsoft.EntityFrameworkCore;
@@ -141,10 +140,11 @@ public sealed class ClickHouseDictionary<TDictionary, TKey>
         ArgumentNullException.ThrowIfNull(attribute);
 
         var propertyName = GetPropertyName(attribute);
-        var sql = $"SELECT dictGet('{EscapeSqlString(_metadata.Name)}', '{EscapeSqlString(propertyName)}', {{0}})";
+        var keyLiteral = FormatValueForSql(key);
+        var sql = $"SELECT dictGet('{EscapeSqlString(_metadata.Name)}', '{EscapeSqlString(propertyName)}', {keyLiteral}) AS Value";
 
         var result = await _context.Database
-            .SqlQueryRaw<TAttribute>(sql, key!)
+            .SqlQueryRaw<TAttribute>(sql)
             .FirstOrDefaultAsync(cancellationToken);
 
         return result!;
@@ -168,10 +168,12 @@ public sealed class ClickHouseDictionary<TDictionary, TKey>
         ArgumentNullException.ThrowIfNull(attribute);
 
         var propertyName = GetPropertyName(attribute);
-        var sql = $"SELECT dictGetOrDefault('{EscapeSqlString(_metadata.Name)}', '{EscapeSqlString(propertyName)}', {{0}}, {{1}})";
+        var keyLiteral = FormatValueForSql(key);
+        var defaultLiteral = FormatValueForSql(defaultValue);
+        var sql = $"SELECT dictGetOrDefault('{EscapeSqlString(_metadata.Name)}', '{EscapeSqlString(propertyName)}', {keyLiteral}, {defaultLiteral}) AS Value";
 
         var result = await _context.Database
-            .SqlQueryRaw<TAttribute>(sql, key!, defaultValue!)
+            .SqlQueryRaw<TAttribute>(sql)
             .FirstOrDefaultAsync(cancellationToken);
 
         return result!;
@@ -185,10 +187,11 @@ public sealed class ClickHouseDictionary<TDictionary, TKey>
     /// <returns>True if the key exists.</returns>
     public async Task<bool> ContainsKeyAsync(TKey key, CancellationToken cancellationToken = default)
     {
-        var sql = $"SELECT dictHas('{EscapeSqlString(_metadata.Name)}', {{0}})";
+        var keyLiteral = FormatValueForSql(key);
+        var sql = $"SELECT dictHas('{EscapeSqlString(_metadata.Name)}', {keyLiteral}) AS Value";
 
         var result = await _context.Database
-            .SqlQueryRaw<byte>(sql, key!)
+            .SqlQueryRaw<byte>(sql)
             .FirstOrDefaultAsync(cancellationToken);
 
         return result == 1;
@@ -211,20 +214,20 @@ public sealed class ClickHouseDictionary<TDictionary, TKey>
     /// <returns>The dictionary status information.</returns>
     public async Task<DictionaryStatus?> GetStatusAsync(CancellationToken cancellationToken = default)
     {
-        var sql = """
+        var sql = $"""
             SELECT
-                status,
-                element_count,
-                bytes_allocated,
-                last_successful_update_time,
-                last_exception
+                status AS Status,
+                element_count AS ElementCount,
+                bytes_allocated AS BytesAllocated,
+                last_successful_update_time AS LastSuccessfulUpdateTime,
+                last_exception AS LastException
             FROM system.dictionaries
-            WHERE name = {0}
+            WHERE name = '{EscapeSqlString(_metadata.Name)}'
             LIMIT 1
             """;
 
         return await _context.Database
-            .SqlQueryRaw<DictionaryStatus>(sql, _metadata.Name)
+            .SqlQueryRaw<DictionaryStatus>(sql)
             .FirstOrDefaultAsync(cancellationToken);
     }
 
@@ -353,6 +356,40 @@ public sealed class ClickHouseDictionary<TDictionary, TKey>
             return value;
 
         return value.Replace("'", "''");
+    }
+
+    /// <summary>
+    /// Formats a value for use in a ClickHouse SQL literal.
+    /// </summary>
+    private static string FormatValueForSql<T>(T value)
+    {
+        return value switch
+        {
+            null => "NULL",
+            string s => $"'{EscapeSqlString(s)}'",
+            bool b => b ? "1" : "0",
+            DateTime dt => $"'{dt:yyyy-MM-dd HH:mm:ss}'",
+            DateTimeOffset dto => $"'{dto:yyyy-MM-dd HH:mm:ss}'",
+            DateOnly d => $"'{d:yyyy-MM-dd}'",
+            Guid g => $"'{g}'",
+            byte or sbyte or short or ushort or int or uint or long or ulong
+                or float or double or decimal => value.ToString()!,
+            System.Runtime.CompilerServices.ITuple tuple => FormatTupleForSql(tuple),
+            _ => $"'{EscapeSqlString(value.ToString() ?? string.Empty)}'"
+        };
+    }
+
+    /// <summary>
+    /// Formats a tuple for use in a ClickHouse SQL literal.
+    /// </summary>
+    private static string FormatTupleForSql(System.Runtime.CompilerServices.ITuple tuple)
+    {
+        var parts = new string[tuple.Length];
+        for (var i = 0; i < tuple.Length; i++)
+        {
+            parts[i] = FormatValueForSql(tuple[i]);
+        }
+        return $"({string.Join(", ", parts)})";
     }
 
     /// <summary>

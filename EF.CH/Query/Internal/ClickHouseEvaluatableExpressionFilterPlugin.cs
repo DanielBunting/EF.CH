@@ -75,15 +75,25 @@ public class ClickHouseEvaluatableExpressionFilterPlugin : IEvaluatableExpressio
                 return false;
             }
 
+            // Never evaluate EF.Constant() calls - these are used to prevent parameterization
+            // of literal values that must appear as constants in generated SQL (e.g., SAMPLE, LIMIT BY)
+            if (declaringType?.FullName == "Microsoft.EntityFrameworkCore.EF" &&
+                method.Name == "Constant")
+            {
+                return false;
+            }
+
             if (method.IsGenericMethod)
             {
                 var genericDef = method.GetGenericMethodDefinition();
 
-                // Don't parameterize calls to Sample, WithSetting, or WithSettings
+                // Don't parameterize calls to Sample, WithSetting, WithSettings, or LimitBy
                 if (genericDef == ClickHouseQueryableExtensions.SampleMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.SampleWithOffsetMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.WithSettingMethodInfo ||
-                    genericDef == ClickHouseQueryableExtensions.WithSettingsMethodInfo)
+                    genericDef == ClickHouseQueryableExtensions.WithSettingsMethodInfo ||
+                    genericDef == ClickHouseQueryableExtensions.LimitByMethodInfo ||
+                    genericDef == ClickHouseQueryableExtensions.LimitByWithOffsetMethodInfo)
                 {
                     return false;
                 }

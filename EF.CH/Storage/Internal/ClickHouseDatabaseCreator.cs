@@ -1,5 +1,8 @@
 using System.Data.Common;
 using ClickHouse.Driver.ADO;
+using EF.CH.Infrastructure;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Storage;
 
 namespace EF.CH.Storage.Internal;
@@ -12,13 +15,34 @@ namespace EF.CH.Storage.Internal;
 public class ClickHouseDatabaseCreator : RelationalDatabaseCreator
 {
     private readonly IRelationalConnection _connection;
+    private readonly IDbContextOptions _contextOptions;
 
     public ClickHouseDatabaseCreator(
         RelationalDatabaseCreatorDependencies dependencies,
-        IRelationalConnection connection)
+        IRelationalConnection connection,
+        IDbContextOptions contextOptions)
         : base(dependencies)
     {
         _connection = connection;
+        _contextOptions = contextOptions;
+    }
+
+    /// <summary>
+    /// Gets the cluster name if configured for ON CLUSTER operations.
+    /// </summary>
+    private string? GetClusterName()
+    {
+        var extension = _contextOptions.FindExtension<ClickHouseOptionsExtension>();
+        return extension?.ClusterName;
+    }
+
+    /// <summary>
+    /// Gets the ON CLUSTER clause if a cluster is configured.
+    /// </summary>
+    private string GetOnClusterClause()
+    {
+        var clusterName = GetClusterName();
+        return string.IsNullOrEmpty(clusterName) ? "" : $" ON CLUSTER {clusterName}";
     }
 
     /// <summary>
@@ -113,7 +137,8 @@ public class ClickHouseDatabaseCreator : RelationalDatabaseCreator
         // Use a master connection (connected to 'system' database) to create the target database
         using var masterConnection = CreateMasterConnection();
         using var command = masterConnection.CreateCommand();
-        command.CommandText = $"CREATE DATABASE IF NOT EXISTS \"{database}\"";
+        var onCluster = GetOnClusterClause();
+        command.CommandText = $"CREATE DATABASE IF NOT EXISTS \"{database}\"{onCluster}";
 
         masterConnection.Open();
         try
@@ -135,7 +160,8 @@ public class ClickHouseDatabaseCreator : RelationalDatabaseCreator
         // Use a master connection (connected to 'system' database) to create the target database
         await using var masterConnection = CreateMasterConnection();
         await using var command = masterConnection.CreateCommand();
-        command.CommandText = $"CREATE DATABASE IF NOT EXISTS \"{database}\"";
+        var onCluster = GetOnClusterClause();
+        command.CommandText = $"CREATE DATABASE IF NOT EXISTS \"{database}\"{onCluster}";
 
         await masterConnection.OpenAsync(cancellationToken);
         try
@@ -157,7 +183,8 @@ public class ClickHouseDatabaseCreator : RelationalDatabaseCreator
         // Use a master connection (connected to 'system' database) to drop the target database
         using var masterConnection = CreateMasterConnection();
         using var command = masterConnection.CreateCommand();
-        command.CommandText = $"DROP DATABASE IF EXISTS \"{database}\"";
+        var onCluster = GetOnClusterClause();
+        command.CommandText = $"DROP DATABASE IF EXISTS \"{database}\"{onCluster}";
 
         masterConnection.Open();
         try
@@ -179,7 +206,8 @@ public class ClickHouseDatabaseCreator : RelationalDatabaseCreator
         // Use a master connection (connected to 'system' database) to drop the target database
         await using var masterConnection = CreateMasterConnection();
         await using var command = masterConnection.CreateCommand();
-        command.CommandText = $"DROP DATABASE IF EXISTS \"{database}\"";
+        var onCluster = GetOnClusterClause();
+        command.CommandText = $"DROP DATABASE IF EXISTS \"{database}\"{onCluster}";
 
         await masterConnection.OpenAsync(cancellationToken);
         try

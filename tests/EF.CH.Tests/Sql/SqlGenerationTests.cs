@@ -227,7 +227,7 @@ public class SqlGenerationTests
         Assert.Contains("FINAL", sql);
     }
 
-    [Fact(Skip = "EF Core parameterizes constants before translation. SAMPLE works at query execution time but not with ToQueryString().")]
+    [Fact]
     public void Sample_GeneratesSampleClause()
     {
         using var context = CreateContext();
@@ -236,7 +236,7 @@ public class SqlGenerationTests
         Assert.Contains("SAMPLE", sql);
     }
 
-    [Fact(Skip = "EF Core parameterizes constants before translation. SAMPLE works at query execution time but not with ToQueryString().")]
+    [Fact]
     public void SampleWithOffset_GeneratesSampleWithOffsetClause()
     {
         using var context = CreateContext();
@@ -246,7 +246,7 @@ public class SqlGenerationTests
         Assert.Contains("OFFSET", sql);
     }
 
-    [Fact(Skip = "SETTINGS requires full query execution, not available via ToQueryString")]
+    [Fact]
     public void WithSetting_GeneratesSettingsClause()
     {
         using var context = CreateContext();
@@ -258,7 +258,7 @@ public class SqlGenerationTests
         Assert.Contains("max_threads = 4", sql);
     }
 
-    [Fact(Skip = "SETTINGS requires full query execution, not available via ToQueryString")]
+    [Fact]
     public void WithSettings_GeneratesMultipleSettingsClause()
     {
         using var context = CreateContext();
@@ -276,7 +276,7 @@ public class SqlGenerationTests
         Assert.Contains("optimize_read_in_order = 1", sql);
     }
 
-    [Fact(Skip = "SETTINGS requires full query execution, not available via ToQueryString")]
+    [Fact]
     public void WithSetting_ChainedSettings_GeneratesAllSettings()
     {
         using var context = CreateContext();
@@ -290,7 +290,7 @@ public class SqlGenerationTests
         Assert.Contains("max_execution_time = 30", sql);
     }
 
-    [Fact(Skip = "SETTINGS requires full query execution, not available via ToQueryString")]
+    [Fact]
     public void WithSetting_BoolValue_GeneratesCorrectly()
     {
         using var context = CreateContext();
@@ -302,7 +302,7 @@ public class SqlGenerationTests
         Assert.Contains("optimize_read_in_order = 1", sql);
     }
 
-    [Fact(Skip = "FINAL and SETTINGS require full query execution")]
+    [Fact]
     public void FinalAndSettings_GeneratesBothClauses()
     {
         using var context = CreateContext();

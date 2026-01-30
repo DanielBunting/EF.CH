@@ -35,6 +35,18 @@ namespace EF.CH.Extensions;
 /// </remarks>
 public static class InterpolateExtensions
 {
+    /// <summary>
+    /// Wraps a constant value in an EF.Constant() call to prevent EF Core from parameterizing it.
+    /// The ClickHouseEvaluatableExpressionFilterPlugin will prevent evaluation of EF.Constant() calls,
+    /// and the translator will unwrap them to get the actual value.
+    /// </summary>
+    private static Expression WrapInEfConstant<T>(T value)
+    {
+        return Expression.Call(
+            typeof(Microsoft.EntityFrameworkCore.EF).GetMethod(nameof(Microsoft.EntityFrameworkCore.EF.Constant))!.MakeGenericMethod(typeof(T)),
+            Expression.Constant(value, typeof(T)));
+    }
+
     #region TimeSpan step overloads
 
     /// <summary>
@@ -54,7 +66,7 @@ public static class InterpolateExtensions
                 InterpolateTimeSpanMethodInfo.MakeGenericMethod(typeof(T), typeof(TFill)),
                 source.Expression,
                 Expression.Quote(fill),
-                Expression.Constant(step)));
+                WrapInEfConstant(step)));
     }
 
     /// <summary>
@@ -76,9 +88,9 @@ public static class InterpolateExtensions
                 InterpolateTimeSpanFromToMethodInfo.MakeGenericMethod(typeof(T), typeof(TFill)),
                 source.Expression,
                 Expression.Quote(fill),
-                Expression.Constant(step),
-                Expression.Constant(from, typeof(TFill)),
-                Expression.Constant(to, typeof(TFill))));
+                WrapInEfConstant(step),
+                WrapInEfConstant(from),
+                WrapInEfConstant(to)));
     }
 
     /// <summary>
@@ -101,9 +113,9 @@ public static class InterpolateExtensions
                 InterpolateTimeSpanColumnModeMethodInfo.MakeGenericMethod(typeof(T), typeof(TFill), typeof(TValue)),
                 source.Expression,
                 Expression.Quote(fill),
-                Expression.Constant(step),
+                WrapInEfConstant(step),
                 Expression.Quote(column),
-                Expression.Constant(mode)));
+                WrapInEfConstant(mode)));
     }
 
     /// <summary>
@@ -126,9 +138,9 @@ public static class InterpolateExtensions
                 InterpolateTimeSpanColumnConstantMethodInfo.MakeGenericMethod(typeof(T), typeof(TFill), typeof(TValue)),
                 source.Expression,
                 Expression.Quote(fill),
-                Expression.Constant(step),
+                WrapInEfConstant(step),
                 Expression.Quote(column),
-                Expression.Constant(constant, typeof(TValue))));
+                WrapInEfConstant(constant)));
     }
 
     /// <summary>
@@ -165,8 +177,8 @@ public static class InterpolateExtensions
                 InterpolateTimeSpanBuilderMethodInfo.MakeGenericMethod(typeof(T), typeof(TFill)),
                 source.Expression,
                 Expression.Quote(fill),
-                Expression.Constant(step),
-                Expression.Constant(builder)));
+                WrapInEfConstant(step),
+                WrapInEfConstant(builder)));
     }
 
     #endregion
@@ -190,7 +202,7 @@ public static class InterpolateExtensions
                 InterpolateIntervalMethodInfo.MakeGenericMethod(typeof(T), typeof(TFill)),
                 source.Expression,
                 Expression.Quote(fill),
-                Expression.Constant(step)));
+                WrapInEfConstant(step)));
     }
 
     /// <summary>
@@ -212,9 +224,9 @@ public static class InterpolateExtensions
                 InterpolateIntervalFromToMethodInfo.MakeGenericMethod(typeof(T), typeof(TFill)),
                 source.Expression,
                 Expression.Quote(fill),
-                Expression.Constant(step),
-                Expression.Constant(from, typeof(TFill)),
-                Expression.Constant(to, typeof(TFill))));
+                WrapInEfConstant(step),
+                WrapInEfConstant(from),
+                WrapInEfConstant(to)));
     }
 
     /// <summary>
@@ -237,9 +249,9 @@ public static class InterpolateExtensions
                 InterpolateIntervalColumnModeMethodInfo.MakeGenericMethod(typeof(T), typeof(TFill), typeof(TValue)),
                 source.Expression,
                 Expression.Quote(fill),
-                Expression.Constant(step),
+                WrapInEfConstant(step),
                 Expression.Quote(column),
-                Expression.Constant(mode)));
+                WrapInEfConstant(mode)));
     }
 
     /// <summary>
@@ -262,9 +274,9 @@ public static class InterpolateExtensions
                 InterpolateIntervalColumnConstantMethodInfo.MakeGenericMethod(typeof(T), typeof(TFill), typeof(TValue)),
                 source.Expression,
                 Expression.Quote(fill),
-                Expression.Constant(step),
+                WrapInEfConstant(step),
                 Expression.Quote(column),
-                Expression.Constant(constant, typeof(TValue))));
+                WrapInEfConstant(constant)));
     }
 
     /// <summary>
@@ -301,8 +313,8 @@ public static class InterpolateExtensions
                 InterpolateIntervalBuilderMethodInfo.MakeGenericMethod(typeof(T), typeof(TFill)),
                 source.Expression,
                 Expression.Quote(fill),
-                Expression.Constant(step),
-                Expression.Constant(builder)));
+                WrapInEfConstant(step),
+                WrapInEfConstant(builder)));
     }
 
     #endregion
@@ -326,7 +338,7 @@ public static class InterpolateExtensions
                 InterpolateNumericMethodInfo.MakeGenericMethod(typeof(T), typeof(TFill)),
                 source.Expression,
                 Expression.Quote(fill),
-                Expression.Constant(step)));
+                WrapInEfConstant(step)));
     }
 
     /// <summary>
@@ -348,9 +360,9 @@ public static class InterpolateExtensions
                 InterpolateNumericFromToMethodInfo.MakeGenericMethod(typeof(T), typeof(TFill)),
                 source.Expression,
                 Expression.Quote(fill),
-                Expression.Constant(step),
-                Expression.Constant(from, typeof(TFill)),
-                Expression.Constant(to, typeof(TFill))));
+                WrapInEfConstant(step),
+                WrapInEfConstant(from),
+                WrapInEfConstant(to)));
     }
 
     /// <summary>
@@ -373,9 +385,9 @@ public static class InterpolateExtensions
                 InterpolateNumericColumnModeMethodInfo.MakeGenericMethod(typeof(T), typeof(TFill), typeof(TValue)),
                 source.Expression,
                 Expression.Quote(fill),
-                Expression.Constant(step),
+                WrapInEfConstant(step),
                 Expression.Quote(column),
-                Expression.Constant(mode)));
+                WrapInEfConstant(mode)));
     }
 
     /// <summary>
@@ -398,9 +410,9 @@ public static class InterpolateExtensions
                 InterpolateNumericColumnConstantMethodInfo.MakeGenericMethod(typeof(T), typeof(TFill), typeof(TValue)),
                 source.Expression,
                 Expression.Quote(fill),
-                Expression.Constant(step),
+                WrapInEfConstant(step),
                 Expression.Quote(column),
-                Expression.Constant(constant, typeof(TValue))));
+                WrapInEfConstant(constant)));
     }
 
     /// <summary>
@@ -437,8 +449,8 @@ public static class InterpolateExtensions
                 InterpolateNumericBuilderMethodInfo.MakeGenericMethod(typeof(T), typeof(TFill)),
                 source.Expression,
                 Expression.Quote(fill),
-                Expression.Constant(step),
-                Expression.Constant(builder)));
+                WrapInEfConstant(step),
+                WrapInEfConstant(builder)));
     }
 
     #endregion
