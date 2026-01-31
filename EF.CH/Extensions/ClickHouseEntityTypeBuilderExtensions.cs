@@ -100,6 +100,99 @@ public class ReplicatedEngineBuilder<TEntity> where TEntity : class
 }
 
 /// <summary>
+/// A builder that provides fluent chaining for configuring Distributed engine options.
+/// </summary>
+/// <remarks>
+/// <para>
+/// This builder is returned from <c>UseDistributed</c> methods
+/// and allows chaining sharding key and policy configuration in a fluent manner.
+/// </para>
+/// <para>
+/// The builder supports implicit conversion back to <see cref="EntityTypeBuilder{TEntity}"/>,
+/// ensuring backward compatibility with existing code that chains other entity configuration methods.
+/// </para>
+/// </remarks>
+/// <typeparam name="TEntity">The entity type being configured.</typeparam>
+/// <example>
+/// <code>
+/// // Fluent chain pattern
+/// entity.UseDistributed("my_cluster", "events_local")
+///       .WithShardingKey(x => x.UserId);
+///
+/// // With expression-based sharding
+/// entity.UseDistributed("my_cluster", "events_local")
+///       .WithShardingKey("cityHash64(UserId)")
+///       .WithPolicy("ssd_policy");
+/// </code>
+/// </example>
+public class DistributedEngineBuilder<TEntity> where TEntity : class
+{
+    private readonly EntityTypeBuilder<TEntity> _builder;
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="DistributedEngineBuilder{TEntity}"/> class.
+    /// </summary>
+    /// <param name="builder">The underlying entity type builder.</param>
+    internal DistributedEngineBuilder(EntityTypeBuilder<TEntity> builder)
+    {
+        _builder = builder;
+    }
+
+    /// <summary>
+    /// Configures the sharding key using a property selector expression.
+    /// </summary>
+    /// <typeparam name="TProperty">The property type.</typeparam>
+    /// <param name="shardingKeySelector">Expression selecting the property to use as sharding key.</param>
+    /// <returns>This builder for continued chaining.</returns>
+    public DistributedEngineBuilder<TEntity> WithShardingKey<TProperty>(
+        Expression<Func<TEntity, TProperty>> shardingKeySelector)
+    {
+        ArgumentNullException.ThrowIfNull(shardingKeySelector);
+        var propertyName = ExpressionExtensions.GetPropertyName(shardingKeySelector);
+        _builder.HasAnnotation(ClickHouseAnnotationNames.DistributedShardingKey, propertyName);
+        return this;
+    }
+
+    /// <summary>
+    /// Configures the sharding key using a raw SQL expression.
+    /// </summary>
+    /// <param name="shardingKeyExpression">The sharding key expression (e.g., "cityHash64(UserId)").</param>
+    /// <returns>This builder for continued chaining.</returns>
+    public DistributedEngineBuilder<TEntity> WithShardingKey(string shardingKeyExpression)
+    {
+        ArgumentNullException.ThrowIfNull(shardingKeyExpression);
+        _builder.HasAnnotation(ClickHouseAnnotationNames.DistributedShardingKey, shardingKeyExpression);
+        return this;
+    }
+
+    /// <summary>
+    /// Configures the storage policy for the Distributed engine.
+    /// </summary>
+    /// <param name="policyName">The storage policy name as defined in ClickHouse server configuration.</param>
+    /// <returns>This builder for continued chaining.</returns>
+    public DistributedEngineBuilder<TEntity> WithPolicy(string policyName)
+    {
+        ArgumentNullException.ThrowIfNull(policyName);
+        _builder.HasAnnotation(ClickHouseAnnotationNames.DistributedPolicyName, policyName);
+        return this;
+    }
+
+    /// <summary>
+    /// Returns the underlying entity type builder for continued configuration.
+    /// </summary>
+    /// <returns>The underlying <see cref="EntityTypeBuilder{TEntity}"/>.</returns>
+    public EntityTypeBuilder<TEntity> And() => _builder;
+
+    /// <summary>
+    /// Implicitly converts the builder back to <see cref="EntityTypeBuilder{TEntity}"/>
+    /// for seamless integration with existing configuration patterns.
+    /// </summary>
+    /// <param name="builder">The distributed engine builder to convert.</param>
+    public static implicit operator EntityTypeBuilder<TEntity>(
+        DistributedEngineBuilder<TEntity> builder) => builder._builder;
+}
+
+/// <summary>
 /// Extension methods for configuring ClickHouse-specific entity type options.
 /// </summary>
 public static class ClickHouseEntityTypeBuilderExtensions
@@ -1194,6 +1287,141 @@ public static class ClickHouseEntityTypeBuilderExtensions
     {
         ((EntityTypeBuilder)builder).UseNullEngine();
         return builder;
+    }
+
+    #endregion
+
+    #region Distributed Engine
+
+    /// <summary>
+    /// Configures the entity to use a Distributed engine that queries across a cluster.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The Distributed engine provides a unified view over sharded data spread across multiple servers.
+    /// It does not store data itself but acts as a proxy to the underlying local tables.
+    /// </para>
+    /// <para>
+    /// The underlying local table must exist on each node of the cluster before creating the distributed table.
+    /// </para>
+    /// </remarks>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="cluster">The cluster name as defined in ClickHouse server configuration.</param>
+    /// <param name="database">The database name on the cluster nodes (use "currentDatabase()" for current database).</param>
+    /// <param name="table">The underlying local table name on each node.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    public static EntityTypeBuilder UseDistributed(
+        this EntityTypeBuilder builder,
+        string cluster,
+        string database,
+        string table)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(cluster);
+        ArgumentException.ThrowIfNullOrWhiteSpace(database);
+        ArgumentException.ThrowIfNullOrWhiteSpace(table);
+
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, "Distributed");
+        builder.HasAnnotation(ClickHouseAnnotationNames.DistributedCluster, cluster);
+        builder.HasAnnotation(ClickHouseAnnotationNames.DistributedDatabase, database);
+        builder.HasAnnotation(ClickHouseAnnotationNames.DistributedTable, table);
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Configures the entity to use a Distributed engine that queries across a cluster.
+    /// Uses currentDatabase() for the database parameter.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The Distributed engine provides a unified view over sharded data spread across multiple servers.
+    /// It does not store data itself but acts as a proxy to the underlying local tables.
+    /// </para>
+    /// <para>
+    /// The underlying local table must exist on each node of the cluster before creating the distributed table.
+    /// </para>
+    /// </remarks>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="cluster">The cluster name as defined in ClickHouse server configuration.</param>
+    /// <param name="table">The underlying local table name on each node.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    public static EntityTypeBuilder UseDistributed(
+        this EntityTypeBuilder builder,
+        string cluster,
+        string table)
+    {
+        return builder.UseDistributed(cluster, "currentDatabase()", table);
+    }
+
+    /// <summary>
+    /// Configures the entity to use a Distributed engine that queries across a cluster.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The Distributed engine provides a unified view over sharded data spread across multiple servers.
+    /// It does not store data itself but acts as a proxy to the underlying local tables.
+    /// </para>
+    /// <para>
+    /// The underlying local table must exist on each node of the cluster before creating the distributed table.
+    /// </para>
+    /// </remarks>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="cluster">The cluster name as defined in ClickHouse server configuration.</param>
+    /// <param name="database">The database name on the cluster nodes (use "currentDatabase()" for current database).</param>
+    /// <param name="table">The underlying local table name on each node.</param>
+    /// <returns>A builder for configuring distributed engine options with fluent chaining.</returns>
+    /// <example>
+    /// <code>
+    /// entity.UseDistributed("my_cluster", "default", "events_local")
+    ///       .WithShardingKey(x => x.UserId);
+    /// </code>
+    /// </example>
+    public static DistributedEngineBuilder<TEntity> UseDistributed<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        string cluster,
+        string database,
+        string table)
+        where TEntity : class
+    {
+        ((EntityTypeBuilder)builder).UseDistributed(cluster, database, table);
+        return new DistributedEngineBuilder<TEntity>(builder);
+    }
+
+    /// <summary>
+    /// Configures the entity to use a Distributed engine that queries across a cluster.
+    /// Uses currentDatabase() for the database parameter.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The Distributed engine provides a unified view over sharded data spread across multiple servers.
+    /// It does not store data itself but acts as a proxy to the underlying local tables.
+    /// </para>
+    /// <para>
+    /// The underlying local table must exist on each node of the cluster before creating the distributed table.
+    /// </para>
+    /// </remarks>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="cluster">The cluster name as defined in ClickHouse server configuration.</param>
+    /// <param name="table">The underlying local table name on each node.</param>
+    /// <returns>A builder for configuring distributed engine options with fluent chaining.</returns>
+    /// <example>
+    /// <code>
+    /// entity.UseDistributed("my_cluster", "events_local")
+    ///       .WithShardingKey("cityHash64(UserId)")
+    ///       .WithPolicy("ssd_policy");
+    /// </code>
+    /// </example>
+    public static DistributedEngineBuilder<TEntity> UseDistributed<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        string cluster,
+        string table)
+        where TEntity : class
+    {
+        ((EntityTypeBuilder)builder).UseDistributed(cluster, table);
+        return new DistributedEngineBuilder<TEntity>(builder);
     }
 
     #endregion

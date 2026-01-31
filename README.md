@@ -601,20 +601,28 @@ See [docs/types/json.md](docs/types/json.md) for full documentation.
 
 ## Clustering & Replication
 
-EF.CH supports multi-datacenter ClickHouse deployments with full replication:
+EF.CH supports multi-datacenter ClickHouse deployments with full replication and sharding:
 
 - **Replicated Engines** - ReplicatedMergeTree variants with fluent configuration
+- **Distributed Tables** - Unified view across sharded data with routing
 - **ON CLUSTER DDL** - Automatic cluster-aware schema management
 - **Connection Routing** - Read/write endpoint splitting with failover
 - **Table Groups** - Logical grouping with inherited cluster settings
 
 ```csharp
-// Fluent cluster configuration
+// Replicated engine for high availability (same data on all nodes)
 modelBuilder.Entity<Order>(entity =>
 {
     entity.UseReplicatedReplacingMergeTree(x => x.Version, x => new { x.OrderDate, x.Id })
           .WithCluster("geo_cluster")
           .WithReplication("/clickhouse/tables/{database}/{table}");
+});
+
+// Distributed table for horizontal scaling (data split across shards)
+modelBuilder.Entity<Event>(entity =>
+{
+    entity.UseDistributed("shard_cluster", "events_local")
+          .WithShardingKey("cityHash64(UserId)");
 });
 ```
 
@@ -635,7 +643,12 @@ options.UseClickHouse("Host=primary;Database=myapp", ch =>
 });
 ```
 
-See [Clustering Documentation](docs/features/clustering.md) and [ClusterSample](samples/ClusterSample/) for details.
+| Pattern | Use Case | Sample |
+|---------|----------|--------|
+| **Replication** | High availability, read scaling | [ClusterSample](samples/ClusterSample/) |
+| **Sharding** | Horizontal scaling, large datasets | [DistributedSample](samples/DistributedSample/) |
+
+See [Clustering Documentation](docs/features/clustering.md) for details.
 
 ## Dictionaries
 
@@ -760,6 +773,7 @@ See [docs/features/external-entities.md](docs/features/external-entities.md) for
 | [ExternalRedisSample](samples/ExternalRedisSample/) | Redis key-value integration |
 | [JsonTypeSample](samples/JsonTypeSample/) | Native JSON with subcolumn queries |
 | [ClusterSample](samples/ClusterSample/) | Multi-node cluster with replication |
+| [DistributedSample](samples/DistributedSample/) | Sharding with Distributed tables |
 
 ## License
 

@@ -481,6 +481,37 @@ public static class ClickHouseAnnotationNames
 
     #endregion
 
+    #region Distributed Engine
+
+    /// <summary>
+    /// The cluster name for the Distributed engine.
+    /// </summary>
+    public const string DistributedCluster = Prefix + "DistributedCluster";
+
+    /// <summary>
+    /// The database name for the Distributed engine.
+    /// Use "currentDatabase()" to reference the current database dynamically.
+    /// </summary>
+    public const string DistributedDatabase = Prefix + "DistributedDatabase";
+
+    /// <summary>
+    /// The underlying table name for the Distributed engine.
+    /// </summary>
+    public const string DistributedTable = Prefix + "DistributedTable";
+
+    /// <summary>
+    /// The sharding key expression for the Distributed engine.
+    /// Can be a column name or an expression like "cityHash64(UserId)".
+    /// </summary>
+    public const string DistributedShardingKey = Prefix + "DistributedShardingKey";
+
+    /// <summary>
+    /// The storage policy name for the Distributed engine.
+    /// </summary>
+    public const string DistributedPolicyName = Prefix + "DistributedPolicyName";
+
+    #endregion
+
     #region Replication and Clustering
 
     /// <summary>
