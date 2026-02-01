@@ -343,4 +343,130 @@ public static class ClickHouseQueryableExtensions
     internal static readonly MethodInfo LimitByWithOffsetMethodInfo =
         typeof(ClickHouseQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
             .First(m => m.Name == nameof(LimitBy) && m.GetParameters().Length == 4);
+
+    /// <summary>
+    /// Adds WITH ROLLUP modifier to the GROUP BY clause, generating hierarchical subtotals.
+    /// Must be called after GroupBy() and Select().
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// WITH ROLLUP generates hierarchical subtotals from right to left. For example,
+    /// with GROUP BY a, b, c WITH ROLLUP, you get subtotals for (a,b,c), (a,b), (a), and ().
+    /// </para>
+    /// <para>
+    /// Subtotal rows have NULL values in the rolled-up columns. Consider using nullable
+    /// types in your result projection to properly handle these rows.
+    /// </para>
+    /// </remarks>
+    /// <typeparam name="TResult">The result type.</typeparam>
+    /// <param name="source">The source queryable (must be after GroupBy/Select).</param>
+    /// <returns>A queryable with WITH ROLLUP applied to GROUP BY.</returns>
+    /// <example>
+    /// <code>
+    /// var salesReport = context.Sales
+    ///     .GroupBy(s => new { s.Region, s.Category })
+    ///     .Select(g => new { g.Key.Region, g.Key.Category, Total = g.Sum(s => s.Amount) })
+    ///     .WithRollup()
+    ///     .ToList();
+    /// // Returns: Region+Category totals, Region totals, and Grand total
+    /// </code>
+    /// </example>
+    public static IQueryable<TResult> WithRollup<TResult>(this IQueryable<TResult> source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+
+        return source.Provider.CreateQuery<TResult>(
+            Expression.Call(
+                null,
+                WithRollupMethodInfo.MakeGenericMethod(typeof(TResult)),
+                source.Expression));
+    }
+
+    /// <summary>
+    /// Adds WITH CUBE modifier to the GROUP BY clause, generating all subtotal combinations.
+    /// Must be called after GroupBy() and Select().
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// WITH CUBE generates subtotals for all combinations of grouping columns. For example,
+    /// with GROUP BY a, b WITH CUBE, you get subtotals for (a,b), (a), (b), and ().
+    /// </para>
+    /// <para>
+    /// Subtotal rows have NULL values in the aggregated columns. Consider using nullable
+    /// types in your result projection to properly handle these rows.
+    /// </para>
+    /// </remarks>
+    /// <typeparam name="TResult">The result type.</typeparam>
+    /// <param name="source">The source queryable (must be after GroupBy/Select).</param>
+    /// <returns>A queryable with WITH CUBE applied to GROUP BY.</returns>
+    /// <example>
+    /// <code>
+    /// var analysis = context.Sales
+    ///     .GroupBy(s => new { s.Region, s.Category })
+    ///     .Select(g => new { g.Key.Region, g.Key.Category, Count = g.Count() })
+    ///     .WithCube()
+    ///     .ToList();
+    /// // Returns: Region+Category, Region-only, Category-only, and Grand total
+    /// </code>
+    /// </example>
+    public static IQueryable<TResult> WithCube<TResult>(this IQueryable<TResult> source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+
+        return source.Provider.CreateQuery<TResult>(
+            Expression.Call(
+                null,
+                WithCubeMethodInfo.MakeGenericMethod(typeof(TResult)),
+                source.Expression));
+    }
+
+    /// <summary>
+    /// Adds WITH TOTALS modifier to the GROUP BY clause, adding a grand total row.
+    /// Must be called after GroupBy() and Select().
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// WITH TOTALS adds a single additional row at the end containing the grand total
+    /// across all groups. The grouping columns will be NULL or default values in this row.
+    /// </para>
+    /// <para>
+    /// Consider using nullable types in your result projection to properly handle
+    /// the totals row.
+    /// </para>
+    /// </remarks>
+    /// <typeparam name="TResult">The result type.</typeparam>
+    /// <param name="source">The source queryable (must be after GroupBy/Select).</param>
+    /// <returns>A queryable with WITH TOTALS applied to GROUP BY.</returns>
+    /// <example>
+    /// <code>
+    /// var summary = context.Events
+    ///     .GroupBy(e => e.Category)
+    ///     .Select(g => new { Category = g.Key, Count = g.Count() })
+    ///     .WithTotals()
+    ///     .ToList();
+    /// // Returns: Each category's count + one row with the total count
+    /// </code>
+    /// </example>
+    public static IQueryable<TResult> WithTotals<TResult>(this IQueryable<TResult> source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+
+        return source.Provider.CreateQuery<TResult>(
+            Expression.Call(
+                null,
+                WithTotalsMethodInfo.MakeGenericMethod(typeof(TResult)),
+                source.Expression));
+    }
+
+    internal static readonly MethodInfo WithRollupMethodInfo =
+        typeof(ClickHouseQueryableExtensions).GetMethod(
+            nameof(WithRollup), BindingFlags.Public | BindingFlags.Static)!;
+
+    internal static readonly MethodInfo WithCubeMethodInfo =
+        typeof(ClickHouseQueryableExtensions).GetMethod(
+            nameof(WithCube), BindingFlags.Public | BindingFlags.Static)!;
+
+    internal static readonly MethodInfo WithTotalsMethodInfo =
+        typeof(ClickHouseQueryableExtensions).GetMethod(
+            nameof(WithTotals), BindingFlags.Public | BindingFlags.Static)!;
 }
