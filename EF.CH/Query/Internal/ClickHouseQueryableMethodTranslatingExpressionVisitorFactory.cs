@@ -1,6 +1,7 @@
 using System.Linq.Expressions;
 using System.Reflection;
 using EF.CH.Extensions;
+using EF.CH.Query.Internal.Expressions;
 using EF.CH.Query.Internal.WithFill;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Query.SqlExpressions;
@@ -160,6 +161,26 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
             if (genericDef == ClickHouseQueryableExtensions.WithTotalsMethodInfo)
             {
                 return TranslateGroupByModifier(methodCallExpression, GroupByModifier.Totals);
+            }
+
+            // Handle ASOF JOIN extension methods
+            if (genericDef == ClickHouseAsofJoinExtensions.AsofJoinMethodInfo)
+            {
+                return TranslateAsofJoin(methodCallExpression, isLeftJoin: false);
+            }
+            if (genericDef == ClickHouseAsofJoinExtensions.AsofLeftJoinMethodInfo)
+            {
+                return TranslateAsofJoin(methodCallExpression, isLeftJoin: true);
+            }
+
+            // Handle ARRAY JOIN extension methods
+            if (genericDef == ClickHouseArrayJoinExtensions.ArrayJoinMethodInfo)
+            {
+                return TranslateArrayJoin(methodCallExpression, isLeftJoin: false);
+            }
+            if (genericDef == ClickHouseArrayJoinExtensions.LeftArrayJoinMethodInfo)
+            {
+                return TranslateArrayJoin(methodCallExpression, isLeftJoin: true);
             }
         }
 
@@ -548,6 +569,110 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
     }
 
     /// <summary>
+    /// Translates AsofJoin/AsofLeftJoin extension methods to ClickHouse ASOF JOIN.
+    /// Stores the join specification in query options for SQL generation.
+    /// </summary>
+    private Expression TranslateAsofJoin(MethodCallExpression methodCallExpression, bool isLeftJoin)
+    {
+        // Arguments: outer, inner, outerKeySelector, innerKeySelector, outerAsofSelector, innerAsofSelector, asofType, resultSelector
+        var outer = Visit(methodCallExpression.Arguments[0]);
+        var inner = Visit(methodCallExpression.Arguments[1]);
+
+        if (outer is not ShapedQueryExpression outerShaped)
+        {
+            throw new InvalidOperationException("ASOF JOIN outer source must be a queryable.");
+        }
+
+        if (inner is not ShapedQueryExpression innerShaped)
+        {
+            throw new InvalidOperationException("ASOF JOIN inner source must be a queryable.");
+        }
+
+        // Extract and translate key selectors
+        var outerKeySelector = UnwrapLambda(methodCallExpression.Arguments[2]);
+        var innerKeySelector = UnwrapLambda(methodCallExpression.Arguments[3]);
+        var outerAsofSelector = UnwrapLambda(methodCallExpression.Arguments[4]);
+        var innerAsofSelector = UnwrapLambda(methodCallExpression.Arguments[5]);
+
+        // Get ASOF type
+        if (!TryGetConstantValue<AsofJoinType>(methodCallExpression.Arguments[6], out var asofType))
+        {
+            throw new InvalidOperationException("ASOF JOIN type must be a constant value.");
+        }
+
+        var resultSelector = UnwrapLambda(methodCallExpression.Arguments[7]);
+
+        // Translate key selectors to SQL expressions
+        var outerKey = TranslateLambdaExpression(outerShaped, outerKeySelector);
+        var innerKey = TranslateLambdaExpression(innerShaped, innerKeySelector);
+        var outerAsof = TranslateLambdaExpression(outerShaped, outerAsofSelector);
+        var innerAsof = TranslateLambdaExpression(innerShaped, innerAsofSelector);
+
+        if (outerKey == null || innerKey == null || outerAsof == null || innerAsof == null)
+        {
+            throw new InvalidOperationException(
+                "Could not translate ASOF JOIN key selectors to SQL. " +
+                "Ensure all expressions reference entity properties.");
+        }
+
+        // Store ASOF JOIN specification in options for SQL generation
+        _options.AsofJoinSpec = new AsofJoinSpec
+        {
+            OuterKeyColumn = outerKey,
+            InnerKeyColumn = innerKey,
+            OuterAsofColumn = outerAsof,
+            InnerAsofColumn = innerAsof,
+            AsofType = asofType,
+            IsLeftJoin = isLeftJoin
+        };
+
+        // For now, return outer - the actual join will be handled during SQL generation
+        // Note: Full implementation would require modifying the SelectExpression to include the join
+        return outer;
+    }
+
+    /// <summary>
+    /// Translates ArrayJoin/LeftArrayJoin extension methods to ClickHouse ARRAY JOIN.
+    /// Stores the array join specification in query options for SQL generation.
+    /// </summary>
+    private Expression TranslateArrayJoin(MethodCallExpression methodCallExpression, bool isLeftJoin)
+    {
+        // Arguments: source, arraySelector, resultSelector
+        var source = Visit(methodCallExpression.Arguments[0]);
+
+        if (source is not ShapedQueryExpression shapedQuery)
+        {
+            throw new InvalidOperationException("ARRAY JOIN source must be a queryable.");
+        }
+
+        // Extract array selector
+        var arraySelector = UnwrapLambda(methodCallExpression.Arguments[1]);
+
+        // Get the array column name
+        var arrayColumnName = ExtractMemberName(arraySelector);
+
+        // Translate array selector to SQL
+        var arrayColumn = TranslateLambdaExpression(shapedQuery, arraySelector);
+
+        if (arrayColumn == null)
+        {
+            throw new InvalidOperationException(
+                "Could not translate ARRAY JOIN selector to SQL. " +
+                "Ensure the expression references an array property.");
+        }
+
+        // Store ARRAY JOIN specification in options for SQL generation
+        _options.ArrayJoinSpec = new ArrayJoinSpec
+        {
+            ArrayColumn = arrayColumn,
+            ArrayColumnName = arrayColumnName,
+            IsLeftJoin = isLeftJoin
+        };
+
+        return source;
+    }
+
+    /// <summary>
     /// Unwraps a lambda expression from Quote wrapping.
     /// </summary>
     private static LambdaExpression UnwrapLambda(Expression expression)
@@ -788,6 +913,83 @@ public class ClickHouseQueryCompilationContextOptions
     /// GROUP BY modifier (ROLLUP, CUBE, or TOTALS).
     /// </summary>
     public GroupByModifier GroupByModifier { get; set; } = GroupByModifier.None;
+
+    /// <summary>
+    /// ASOF JOIN specification, or null if no ASOF JOIN.
+    /// </summary>
+    public AsofJoinSpec? AsofJoinSpec { get; set; }
+
+    /// <summary>
+    /// Whether an ASOF JOIN has been specified.
+    /// </summary>
+    public bool HasAsofJoin => AsofJoinSpec != null;
+
+    /// <summary>
+    /// ARRAY JOIN specification, or null if no ARRAY JOIN.
+    /// </summary>
+    public ArrayJoinSpec? ArrayJoinSpec { get; set; }
+
+    /// <summary>
+    /// Whether an ARRAY JOIN has been specified.
+    /// </summary>
+    public bool HasArrayJoin => ArrayJoinSpec != null;
+}
+
+/// <summary>
+/// Specification for ASOF JOIN.
+/// </summary>
+public class AsofJoinSpec
+{
+    /// <summary>
+    /// The outer (left) equality key column.
+    /// </summary>
+    public SqlExpression OuterKeyColumn { get; set; } = null!;
+
+    /// <summary>
+    /// The inner (right) equality key column.
+    /// </summary>
+    public SqlExpression InnerKeyColumn { get; set; } = null!;
+
+    /// <summary>
+    /// The outer (left) ASOF timestamp/value column.
+    /// </summary>
+    public SqlExpression OuterAsofColumn { get; set; } = null!;
+
+    /// <summary>
+    /// The inner (right) ASOF timestamp/value column.
+    /// </summary>
+    public SqlExpression InnerAsofColumn { get; set; } = null!;
+
+    /// <summary>
+    /// The ASOF comparison type.
+    /// </summary>
+    public AsofJoinType AsofType { get; set; }
+
+    /// <summary>
+    /// Whether this is a LEFT JOIN (preserves unmatched outer rows).
+    /// </summary>
+    public bool IsLeftJoin { get; set; }
+}
+
+/// <summary>
+/// Specification for ARRAY JOIN.
+/// </summary>
+public class ArrayJoinSpec
+{
+    /// <summary>
+    /// The array column to explode.
+    /// </summary>
+    public SqlExpression ArrayColumn { get; set; } = null!;
+
+    /// <summary>
+    /// The name of the array column (for alias generation).
+    /// </summary>
+    public string ArrayColumnName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Whether this is a LEFT ARRAY JOIN (preserves rows with empty arrays).
+    /// </summary>
+    public bool IsLeftJoin { get; set; }
 }
 
 /// <summary>

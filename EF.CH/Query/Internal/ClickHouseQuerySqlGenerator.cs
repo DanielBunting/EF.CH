@@ -46,6 +46,14 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     [ThreadStatic]
     private static int _currentGroupByModifierValue;
 
+    // Thread-local storage for ASOF JOIN specification
+    [ThreadStatic]
+    private static AsofJoinSpec? _currentAsofJoinSpec;
+
+    // Thread-local storage for ARRAY JOIN specification
+    [ThreadStatic]
+    private static ArrayJoinSpec? _currentArrayJoinSpec;
+
     public ClickHouseQuerySqlGenerator(
         QuerySqlGeneratorDependencies dependencies,
         IRelationalTypeMappingSource typeMappingSource)
@@ -98,6 +106,22 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     internal static void SetGroupByModifier(GroupByModifier modifier)
     {
         _currentGroupByModifierValue = (int)modifier;
+    }
+
+    /// <summary>
+    /// Sets ASOF JOIN specification for SQL generation.
+    /// </summary>
+    internal static void SetAsofJoin(AsofJoinSpec spec)
+    {
+        _currentAsofJoinSpec = spec;
+    }
+
+    /// <summary>
+    /// Sets ARRAY JOIN specification for SQL generation.
+    /// </summary>
+    internal static void SetArrayJoin(ArrayJoinSpec spec)
+    {
+        _currentArrayJoinSpec = spec;
     }
 
     /// <summary>
@@ -260,6 +284,8 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
             ClickHouseFinalExpression finalExpression => VisitFinal(finalExpression),
             ClickHouseSampleExpression sampleExpression => VisitSample(sampleExpression),
             ClickHouseJsonPathExpression jsonPathExpression => VisitJsonPath(jsonPathExpression),
+            ClickHouseAsofJoinExpression asofJoinExpression => VisitAsofJoin(asofJoinExpression),
+            ClickHouseArrayJoinExpression arrayJoinExpression => VisitArrayJoin(arrayJoinExpression),
             _ => base.VisitExtension(extensionExpression)
         };
     }
@@ -369,6 +395,63 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
                 Sql.Append((expression.ArrayIndices[i]!.Value + 1).ToString(CultureInfo.InvariantCulture));
                 Sql.Append("]");
             }
+        }
+
+        return expression;
+    }
+
+    /// <summary>
+    /// Generates SQL for an ASOF JOIN expression.
+    /// E.g., ASOF [LEFT] JOIN table ON equality_condition AND asof_condition
+    /// </summary>
+    private Expression VisitAsofJoin(ClickHouseAsofJoinExpression expression)
+    {
+        // Visit the left table
+        Visit(expression.Left);
+
+        // Generate ASOF [LEFT] JOIN
+        Sql.AppendLine();
+        Sql.Append(expression.IsLeftJoin ? "ASOF LEFT JOIN " : "ASOF JOIN ");
+
+        // Visit the right table
+        Visit(expression.Right);
+
+        // Generate ON clause with equality and ASOF conditions
+        Sql.Append(" ON ");
+        Visit(expression.EqualityPredicate);
+        Sql.Append(" AND ");
+        Visit(expression.LeftAsofColumn);
+        Sql.Append(expression.GetAsofOperator());
+        Visit(expression.RightAsofColumn);
+
+        return expression;
+    }
+
+    /// <summary>
+    /// Generates SQL for an ARRAY JOIN expression.
+    /// E.g., [LEFT] ARRAY JOIN array_column AS alias
+    /// </summary>
+    private Expression VisitArrayJoin(ClickHouseArrayJoinExpression expression)
+    {
+        // Visit the source table
+        Visit(expression.Source);
+
+        // Generate [LEFT] ARRAY JOIN
+        Sql.AppendLine();
+        Sql.Append(expression.IsLeftJoin ? "LEFT ARRAY JOIN " : "ARRAY JOIN ");
+
+        // Visit the array column
+        Visit(expression.ArrayColumn);
+        Sql.Append(" AS ");
+        Sql.Append(_sqlGenerationHelper.DelimitIdentifier(expression.ElementAlias));
+
+        // Add index alias if present
+        if (!string.IsNullOrEmpty(expression.IndexAlias))
+        {
+            Sql.Append(", arrayEnumerate(");
+            Visit(expression.ArrayColumn);
+            Sql.Append(") AS ");
+            Sql.Append(_sqlGenerationHelper.DelimitIdentifier(expression.IndexAlias));
         }
 
         return expression;

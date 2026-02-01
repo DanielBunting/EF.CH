@@ -90,6 +90,18 @@ public class ClickHouseQueryTranslationPostprocessor : RelationalQueryTranslatio
             ClickHouseQuerySqlGenerator.SetGroupByModifier(options.GroupByModifier);
         }
 
+        // Pass ASOF JOIN specification via thread-local to SQL generator
+        if (options.HasAsofJoin)
+        {
+            ClickHouseQuerySqlGenerator.SetAsofJoin(options.AsofJoinSpec!);
+        }
+
+        // Pass ARRAY JOIN specification via thread-local to SQL generator
+        if (options.HasArrayJoin)
+        {
+            ClickHouseQuerySqlGenerator.SetArrayJoin(options.ArrayJoinSpec!);
+        }
+
         return query;
     }
 }
