@@ -1,6 +1,7 @@
 using System.Data.Common;
 using System.Globalization;
 using System.Text;
+using EF.CH.BulkInsert;
 using EF.CH.Configuration;
 using EF.CH.Diagnostics;
 using EF.CH.Dictionaries;
@@ -398,6 +399,9 @@ public static class ClickHouseServiceCollectionExtensions
             var configuration = sp.GetService<IConfiguration>();
             return new DictionaryConfigResolver(configuration);
         });
+
+        // Register bulk inserter for high-performance bulk insert operations.
+        services.TryAddScoped<IClickHouseBulkInserter, ClickHouseBulkInserter>();
 
         return services;
     }
