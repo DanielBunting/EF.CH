@@ -42,6 +42,10 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     [ThreadStatic]
     private static List<SqlExpression>? _currentLimitByExpressions;
 
+    // Thread-local storage for GROUP BY modifier (stored as int for Interlocked.Exchange compatibility)
+    [ThreadStatic]
+    private static int _currentGroupByModifierValue;
+
     public ClickHouseQuerySqlGenerator(
         QuerySqlGeneratorDependencies dependencies,
         IRelationalTypeMappingSource typeMappingSource)
@@ -86,6 +90,14 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
         _currentLimitByLimit = limit;
         _currentLimitByOffset = offset;
         _currentLimitByExpressions = expressions;
+    }
+
+    /// <summary>
+    /// Sets GROUP BY modifier (ROLLUP, CUBE, or TOTALS) for SQL generation.
+    /// </summary>
+    internal static void SetGroupByModifier(GroupByModifier modifier)
+    {
+        _currentGroupByModifierValue = (int)modifier;
     }
 
     /// <summary>
@@ -663,6 +675,29 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     }
 
     /// <summary>
+    /// Generates the GROUP BY modifier (WITH ROLLUP/CUBE/TOTALS) if set.
+    /// </summary>
+    private void GenerateGroupByModifier()
+    {
+        // Capture and clear the modifier (atomic exchange for int, then cast)
+        var modifierValue = Interlocked.Exchange(ref _currentGroupByModifierValue, 0);
+        var modifier = (GroupByModifier)modifierValue;
+
+        switch (modifier)
+        {
+            case GroupByModifier.Rollup:
+                Sql.Append(" WITH ROLLUP");
+                break;
+            case GroupByModifier.Cube:
+                Sql.Append(" WITH CUBE");
+                break;
+            case GroupByModifier.Totals:
+                Sql.Append(" WITH TOTALS");
+                break;
+        }
+    }
+
+    /// <summary>
     /// Generates the LIMIT BY clause for top-N per group queries.
     /// ClickHouse syntax: LIMIT [offset,] limit BY column1[, column2, ...]
     /// </summary>
@@ -755,18 +790,28 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     }
 
     /// <summary>
-    /// Generates SELECT statement with optional PREWHERE clause.
+    /// Generates SELECT statement with optional PREWHERE clause and GROUP BY modifiers.
     /// PREWHERE is injected between FROM and WHERE.
+    /// GROUP BY modifiers (ROLLUP, CUBE, TOTALS) are appended after GROUP BY.
     /// </summary>
     protected override Expression VisitSelect(SelectExpression selectExpression)
     {
         // Capture and clear PREWHERE expression atomically
         var preWhereExpr = Interlocked.Exchange(ref _currentPreWhereExpression, null);
 
-        if (preWhereExpr == null)
+        // Check if we have a GROUP BY modifier - we need to handle this specially
+        var hasGroupByModifier = _currentGroupByModifierValue != 0;
+
+        if (preWhereExpr == null && !hasGroupByModifier)
         {
-            // No PREWHERE - use base implementation
+            // No PREWHERE and no GROUP BY modifier - use base implementation
             return base.VisitSelect(selectExpression);
+        }
+
+        if (preWhereExpr == null && hasGroupByModifier)
+        {
+            // No PREWHERE but has GROUP BY modifier - need custom implementation
+            return VisitSelectWithGroupByModifier(selectExpression);
         }
 
         // Generate SELECT with PREWHERE injection
@@ -832,6 +877,103 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
                 if (i > 0) Sql.Append(", ");
                 Visit(selectExpression.GroupBy[i]);
             }
+
+            // Append GROUP BY modifier if set
+            GenerateGroupByModifier();
+        }
+
+        // Generate HAVING
+        if (selectExpression.Having != null)
+        {
+            Sql.AppendLine().Append("HAVING ");
+            Visit(selectExpression.Having);
+        }
+
+        // Generate ORDER BY (base method handles WITH FILL via VisitOrdering override)
+        GenerateOrderings(selectExpression);
+
+        // Generate LIMIT/OFFSET (includes INTERPOLATE and SETTINGS)
+        GenerateLimitOffset(selectExpression);
+
+        subQueryIndent?.Dispose();
+
+        if (selectExpression.Alias != null)
+        {
+            Sql.AppendLine().Append(")");
+            Sql.Append(AliasSeparator);
+            Sql.Append(_sqlGenerationHelper.DelimitIdentifier(selectExpression.Alias));
+        }
+
+        return selectExpression;
+    }
+
+    /// <summary>
+    /// Generates SELECT statement with GROUP BY modifier but no PREWHERE.
+    /// This is used when we need to add ROLLUP, CUBE, or TOTALS to GROUP BY.
+    /// </summary>
+    private Expression VisitSelectWithGroupByModifier(SelectExpression selectExpression)
+    {
+        IDisposable? subQueryIndent = null;
+
+        if (selectExpression.Alias != null)
+        {
+            Sql.AppendLine("(");
+            subQueryIndent = Sql.Indent();
+        }
+
+        Sql.Append("SELECT ");
+
+        if (selectExpression.IsDistinct)
+        {
+            Sql.Append("DISTINCT ");
+        }
+
+        GenerateTop(selectExpression);
+
+        // Generate projection
+        if (selectExpression.Projection.Count > 0)
+        {
+            for (var i = 0; i < selectExpression.Projection.Count; i++)
+            {
+                if (i > 0) Sql.Append(", ");
+                Visit(selectExpression.Projection[i]);
+            }
+        }
+        else
+        {
+            Sql.Append("1");
+        }
+
+        // Generate FROM clause
+        if (selectExpression.Tables.Count > 0)
+        {
+            Sql.AppendLine().Append("FROM ");
+            for (var i = 0; i < selectExpression.Tables.Count; i++)
+            {
+                if (i > 0) Sql.AppendLine();
+                Visit(selectExpression.Tables[i]);
+            }
+        }
+
+        // Generate WHERE
+        if (selectExpression.Predicate != null)
+        {
+            Sql.AppendLine().Append("WHERE ");
+            Visit(selectExpression.Predicate);
+        }
+
+        // Generate GROUP BY with modifier
+        if (selectExpression.GroupBy.Count > 0)
+        {
+            Sql.AppendLine().Append("GROUP BY ");
+            for (var i = 0; i < selectExpression.GroupBy.Count; i++)
+            {
+                if (i > 0) Sql.Append(", ");
+                Visit(selectExpression.GroupBy[i]);
+            }
+
+            // Append GROUP BY modifier
+            GenerateGroupByModifier();
         }
 
         // Generate HAVING

@@ -8,6 +8,17 @@ using Microsoft.EntityFrameworkCore.Query.SqlExpressions;
 namespace EF.CH.Query.Internal;
 
 /// <summary>
+/// GROUP BY modifier types for ClickHouse.
+/// </summary>
+public enum GroupByModifier
+{
+    None = 0,
+    Rollup,
+    Cube,
+    Totals
+}
+
+/// <summary>
 /// Factory for creating ClickHouse queryable method translating expression visitors.
 /// </summary>
 public class ClickHouseQueryableMethodTranslatingExpressionVisitorFactory
@@ -135,6 +146,20 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
             if (genericDef == ClickHouseQueryableExtensions.LimitByWithOffsetMethodInfo)
             {
                 return TranslateLimitBy(methodCallExpression, hasOffset: true);
+            }
+
+            // Handle GROUP BY modifiers
+            if (genericDef == ClickHouseQueryableExtensions.WithRollupMethodInfo)
+            {
+                return TranslateGroupByModifier(methodCallExpression, GroupByModifier.Rollup);
+            }
+            if (genericDef == ClickHouseQueryableExtensions.WithCubeMethodInfo)
+            {
+                return TranslateGroupByModifier(methodCallExpression, GroupByModifier.Cube);
+            }
+            if (genericDef == ClickHouseQueryableExtensions.WithTotalsMethodInfo)
+            {
+                return TranslateGroupByModifier(methodCallExpression, GroupByModifier.Totals);
             }
         }
 
@@ -408,6 +433,26 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
         }
 
         _options.PreWhereExpression = translatedPredicate;
+
+        return source;
+    }
+
+    /// <summary>
+    /// Translates GROUP BY modifier extension methods (WithRollup, WithCube, WithTotals).
+    /// </summary>
+    private Expression TranslateGroupByModifier(
+        MethodCallExpression methodCallExpression,
+        GroupByModifier modifier)
+    {
+        var source = Visit(methodCallExpression.Arguments[0]);
+
+        if (_options.GroupByModifier != GroupByModifier.None)
+        {
+            throw new InvalidOperationException(
+                $"Cannot combine multiple GROUP BY modifiers. Already using {_options.GroupByModifier}.");
+        }
+
+        _options.GroupByModifier = modifier;
 
         return source;
     }
@@ -738,6 +783,11 @@ public class ClickHouseQueryCompilationContextOptions
     /// Whether any LIMIT BY clause has been specified.
     /// </summary>
     public bool HasLimitBy => LimitByLimit.HasValue && LimitByExpressions?.Count > 0;
+
+    /// <summary>
+    /// GROUP BY modifier (ROLLUP, CUBE, or TOTALS).
+    /// </summary>
+    public GroupByModifier GroupByModifier { get; set; } = GroupByModifier.None;
 }
 
 /// <summary>

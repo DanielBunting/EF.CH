@@ -84,6 +84,12 @@ public class ClickHouseQueryTranslationPostprocessor : RelationalQueryTranslatio
                 options.LimitByExpressions!);
         }
 
+        // Pass GROUP BY modifier via thread-local to SQL generator
+        if (options.GroupByModifier != GroupByModifier.None)
+        {
+            ClickHouseQuerySqlGenerator.SetGroupByModifier(options.GroupByModifier);
+        }
+
         return query;
     }
 }
