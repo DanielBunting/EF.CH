@@ -60,10 +60,10 @@ internal sealed class EntityPropertyCache
                 continue;
             }
 
-            // Skip computed columns (MATERIALIZED/ALIAS) - they have ValueGenerated set
-            // and have a ComputedColumnSql defined
-            if (property.ValueGenerated != ValueGenerated.Never &&
-                !string.IsNullOrEmpty(property.GetComputedColumnSql()))
+            // Skip computed columns (MATERIALIZED/ALIAS) - they have ComputedColumnSql defined
+            // Note: In some providers, ValueGenerated may not be set correctly for computed columns,
+            // so we check ComputedColumnSql directly.
+            if (!string.IsNullOrEmpty(property.GetComputedColumnSql()))
             {
                 continue;
             }
