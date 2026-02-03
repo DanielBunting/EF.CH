@@ -250,4 +250,98 @@ public static class ClickHouseDatabaseExtensions
     }
 
     #endregion
+
+    #region Parameterized Views
+
+    /// <summary>
+    /// Creates a parameterized view in ClickHouse.
+    /// </summary>
+    /// <param name="database">The database facade.</param>
+    /// <param name="viewName">The name of the view to create.</param>
+    /// <param name="selectSql">
+    /// The SELECT SQL for the view, including parameter placeholders.
+    /// Use ClickHouse syntax: <c>{parameter_name:Type}</c> for parameters.
+    /// </param>
+    /// <param name="ifNotExists">Whether to include IF NOT EXISTS clause (default: false).</param>
+    /// <param name="cancellationToken">A cancellation token.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    /// <example>
+    /// <code>
+    /// await context.Database.CreateParameterizedViewAsync(
+    ///     "user_events_view",
+    ///     @"SELECT event_id, event_type, user_id, timestamp
+    ///       FROM events
+    ///       WHERE user_id = {user_id:UInt64}
+    ///         AND timestamp >= {start_date:DateTime}");
+    /// </code>
+    /// </example>
+    public static Task<int> CreateParameterizedViewAsync(
+        this DatabaseFacade database,
+        string viewName,
+        string selectSql,
+        bool ifNotExists = false,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(database);
+        ArgumentException.ThrowIfNullOrWhiteSpace(viewName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(selectSql);
+
+        var sql = BuildCreateViewSql(database, viewName, selectSql, ifNotExists);
+        return database.ExecuteSqlRawAsync(sql, cancellationToken);
+    }
+
+    /// <summary>
+    /// Drops a parameterized view from ClickHouse.
+    /// </summary>
+    /// <param name="database">The database facade.</param>
+    /// <param name="viewName">The name of the view to drop.</param>
+    /// <param name="ifExists">Whether to include IF EXISTS clause (default: true).</param>
+    /// <param name="cancellationToken">A cancellation token.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    /// <example>
+    /// <code>
+    /// await context.Database.DropParameterizedViewAsync("user_events_view");
+    /// </code>
+    /// </example>
+    public static Task<int> DropParameterizedViewAsync(
+        this DatabaseFacade database,
+        string viewName,
+        bool ifExists = true,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(database);
+        ArgumentException.ThrowIfNullOrWhiteSpace(viewName);
+
+        var sql = BuildDropViewSql(database, viewName, ifExists);
+        return database.ExecuteSqlRawAsync(sql, cancellationToken);
+    }
+
+    private static string BuildCreateViewSql(
+        DatabaseFacade database,
+        string viewName,
+        string selectSql,
+        bool ifNotExists)
+    {
+        var sqlHelper = database.GetService<ISqlGenerationHelper>();
+        var quotedName = sqlHelper.DelimitIdentifier(viewName);
+
+        var ifNotExistsClause = ifNotExists ? "IF NOT EXISTS " : "";
+        // Escape curly braces to prevent ExecuteSqlRawAsync from interpreting them as format specifiers
+        var escapedSql = selectSql.Trim().Replace("{", "{{").Replace("}", "}}");
+        return $"CREATE VIEW {ifNotExistsClause}{quotedName} AS\n{escapedSql}";
+    }
+
+    private static string BuildDropViewSql(
+        DatabaseFacade database,
+        string viewName,
+        bool ifExists)
+    {
+        var sqlHelper = database.GetService<ISqlGenerationHelper>();
+        var quotedName = sqlHelper.DelimitIdentifier(viewName);
+
+        var ifExistsClause = ifExists ? "IF EXISTS " : "";
+        return $"DROP VIEW {ifExistsClause}{quotedName}";
+    }
+
+    #endregion
 }

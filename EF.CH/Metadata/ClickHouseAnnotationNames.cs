@@ -512,6 +512,22 @@ public static class ClickHouseAnnotationNames
 
     #endregion
 
+    #region Parameterized Views
+
+    /// <summary>
+    /// Marks this entity as a parameterized view.
+    /// Value type: bool
+    /// </summary>
+    public const string ParameterizedView = Prefix + "ParameterizedView";
+
+    /// <summary>
+    /// The parameterized view name.
+    /// Value type: string
+    /// </summary>
+    public const string ParameterizedViewName = Prefix + "ParameterizedViewName";
+
+    #endregion
+
     #region Replication and Clustering
 
     /// <summary>

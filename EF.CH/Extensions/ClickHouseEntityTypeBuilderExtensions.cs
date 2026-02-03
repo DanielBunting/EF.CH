@@ -2249,4 +2249,84 @@ public static class ClickHouseEntityTypeBuilderExtensions
     }
 
     #endregion
+
+    #region Parameterized Views
+
+    /// <summary>
+    /// Configures the entity as a result type for a ClickHouse parameterized view.
+    /// </summary>
+    /// <typeparam name="TEntity">The entity type representing the view's output schema.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="viewName">The name of the parameterized view.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    /// <remarks>
+    /// <para>
+    /// This method configures the entity as keyless and marks it as a parameterized view result type.
+    /// The entity can then be queried using <see cref="ClickHouseParameterizedViewExtensions.FromParameterizedView{TResult}"/>.
+    /// </para>
+    /// <para>
+    /// Parameterized views in ClickHouse use the syntax <c>{name:Type}</c> in the view definition
+    /// and are queried with <c>SELECT * FROM view_name(param=value, ...)</c>.
+    /// </para>
+    /// <para>
+    /// Note: This method does not create the view itself. Use <see cref="ClickHouseMigrationBuilderExtensions.CreateParameterizedView"/>
+    /// in a migration or raw SQL to create the view.
+    /// </para>
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// // Configure the result entity
+    /// modelBuilder.Entity&lt;UserEventView&gt;(entity =>
+    /// {
+    ///     entity.HasParameterizedView("user_events_view");
+    /// });
+    ///
+    /// // Query the view
+    /// var events = context.FromParameterizedView&lt;UserEventView&gt;(
+    ///     "user_events_view",
+    ///     new { user_id = 123UL, start_date = DateTime.Today })
+    ///     .Where(e => e.EventType == "click")
+    ///     .ToListAsync();
+    /// </code>
+    /// </example>
+    public static EntityTypeBuilder<TEntity> HasParameterizedView<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        string viewName)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(viewName);
+
+        // Mark as keyless since views don't have keys
+        builder.HasNoKey();
+
+        // Store view configuration as annotations
+        builder.HasAnnotation(ClickHouseAnnotationNames.ParameterizedView, true);
+        builder.HasAnnotation(ClickHouseAnnotationNames.ParameterizedViewName, viewName);
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Configures the entity as a result type for a ClickHouse parameterized view.
+    /// Non-generic overload.
+    /// </summary>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="viewName">The name of the parameterized view.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    public static EntityTypeBuilder HasParameterizedView(
+        this EntityTypeBuilder builder,
+        string viewName)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(viewName);
+
+        builder.HasNoKey();
+        builder.HasAnnotation(ClickHouseAnnotationNames.ParameterizedView, true);
+        builder.HasAnnotation(ClickHouseAnnotationNames.ParameterizedViewName, viewName);
+
+        return builder;
+    }
+
+    #endregion
 }
