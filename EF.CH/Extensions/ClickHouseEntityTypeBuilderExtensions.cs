@@ -2328,5 +2328,99 @@ public static class ClickHouseEntityTypeBuilderExtensions
         return builder;
     }
 
+    /// <summary>
+    /// Configures the entity as a parameterized view using a fluent builder pattern.
+    /// </summary>
+    /// <typeparam name="TView">The view result entity type.</typeparam>
+    /// <typeparam name="TSource">The source entity type.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="configure">Action to configure the parameterized view.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    /// <remarks>
+    /// <para>
+    /// This method provides a type-safe way to configure parameterized views
+    /// instead of writing raw SQL. The configuration is stored as annotations
+    /// and can be used to generate CREATE VIEW DDL.
+    /// </para>
+    /// <para>
+    /// Use <see cref="ClickHouseDatabaseExtensions.EnsureParameterizedViewsAsync"/> to create
+    /// all configured views at runtime.
+    /// </para>
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// modelBuilder.Entity&lt;UserEventView&gt;(entity =>
+    /// {
+    ///     entity.AsParameterizedView&lt;UserEventView, Event&gt;(cfg => cfg
+    ///         .FromTable()
+    ///         .Select(e => new UserEventView
+    ///         {
+    ///             EventId = e.EventId,
+    ///             EventType = e.EventType,
+    ///             UserId = e.UserId,
+    ///             Timestamp = e.Timestamp
+    ///         })
+    ///         .Parameter&lt;ulong&gt;("user_id")
+    ///         .Parameter&lt;DateTime&gt;("start_date")
+    ///         .Where((e, p) => e.UserId == p.Get&lt;ulong&gt;("user_id"))
+    ///         .Where((e, p) => e.Timestamp >= p.Get&lt;DateTime&gt;("start_date")));
+    /// });
+    /// </code>
+    /// </example>
+    public static EntityTypeBuilder<TView> AsParameterizedView<TView, TSource>(
+        this EntityTypeBuilder<TView> builder,
+        Action<ParameterizedViews.ParameterizedViewConfiguration<TView, TSource>> configure)
+        where TView : class
+        where TSource : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(configure);
+
+        var configuration = new ParameterizedViews.ParameterizedViewConfiguration<TView, TSource>();
+        configure(configuration);
+
+        // Get or generate view name
+        var viewName = configuration.ViewName ?? ConvertToSnakeCase(typeof(TView).Name);
+
+        // Mark as keyless (views don't have keys)
+        builder.HasNoKey();
+
+        // Store basic annotations
+        builder.HasAnnotation(ClickHouseAnnotationNames.ParameterizedView, true);
+        builder.HasAnnotation(ClickHouseAnnotationNames.ParameterizedViewName, viewName);
+
+        // Build and store the full metadata
+        var metadata = configuration.BuildMetadata(viewName);
+        builder.HasAnnotation(ClickHouseAnnotationNames.ParameterizedViewMetadata, metadata);
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Converts PascalCase to snake_case.
+    /// </summary>
+    private static string ConvertToSnakeCase(string name)
+    {
+        if (string.IsNullOrEmpty(name))
+            return name;
+
+        var result = new System.Text.StringBuilder();
+        for (var i = 0; i < name.Length; i++)
+        {
+            var c = name[i];
+            if (char.IsUpper(c))
+            {
+                if (i > 0)
+                    result.Append('_');
+                result.Append(char.ToLowerInvariant(c));
+            }
+            else
+            {
+                result.Append(c);
+            }
+        }
+        return result.ToString();
+    }
+
     #endregion
 }

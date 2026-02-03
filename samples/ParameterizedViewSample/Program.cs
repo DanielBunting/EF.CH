@@ -1,4 +1,5 @@
 using EF.CH.Extensions;
+using EF.CH.ParameterizedViews;
 using Microsoft.EntityFrameworkCore;
 
 // ============================================================
@@ -30,8 +31,8 @@ await context.Database.ExecuteSqlRawAsync(@"
     PARTITION BY toYYYYMM(timestamp)
 ");
 
-// Create the parameterized view using fluent API
-Console.WriteLine("Creating parameterized view...");
+// Create the parameterized view using raw SQL (traditional approach)
+Console.WriteLine("Creating parameterized view (raw SQL)...");
 await context.Database.CreateParameterizedViewAsync(
     "user_events_view",
     @"SELECT event_id AS ""EventId"",
@@ -65,9 +66,9 @@ await context.Database.ExecuteSqlRawAsync(@"
 ");
 
 // ============================================================
-// Example 1: Basic Query with Parameters
+// Example 1: Basic Query with Parameters (Traditional)
 // ============================================================
-Console.WriteLine("--- Example 1: Basic Query ---");
+Console.WriteLine("--- Example 1: Basic Query (Traditional) ---");
 Console.WriteLine("Getting all events for user 100 in Jan 15-17:\n");
 
 var basicResults = await context.FromParameterizedView<UserEventView>(
@@ -87,9 +88,32 @@ foreach (var evt in basicResults)
 }
 
 // ============================================================
-// Example 2: LINQ Composition - Where + OrderBy + Take
+// Example 2: Strongly-Typed View Access (NEW!)
 // ============================================================
-Console.WriteLine("\n--- Example 2: LINQ Composition ---");
+Console.WriteLine("\n--- Example 2: Strongly-Typed View Access (NEW!) ---");
+Console.WriteLine("Using ClickHouseParameterizedView<T> for type-safe access:\n");
+
+// Access the view through the strongly-typed accessor
+var recentPurchases = await context.UserEventsView
+    .Query(new { user_id = 100UL, start_date = new DateTime(2024, 1, 1), end_date = new DateTime(2024, 2, 1) })
+    .Where(e => e.EventType == "purchase")
+    .OrderByDescending(e => e.Timestamp)
+    .ToListAsync();
+
+foreach (var evt in recentPurchases)
+{
+    Console.WriteLine($"  {evt.Timestamp:yyyy-MM-dd HH:mm:ss} | Purchase: ${evt.Value:F2}");
+}
+
+// Convenience methods
+var purchaseCount = await context.UserEventsView.CountAsync(
+    new { user_id = 100UL, start_date = new DateTime(2024, 1, 1), end_date = new DateTime(2024, 2, 1) });
+Console.WriteLine($"\n  Total events for user 100: {purchaseCount}");
+
+// ============================================================
+// Example 3: LINQ Composition - Where + OrderBy + Take
+// ============================================================
+Console.WriteLine("\n--- Example 3: LINQ Composition ---");
 Console.WriteLine("Getting last 3 purchase events for user 100:\n");
 
 var purchaseEvents = await context.FromParameterizedView<UserEventView>(
@@ -111,9 +135,9 @@ foreach (var evt in purchaseEvents)
 }
 
 // ============================================================
-// Example 3: Aggregation with GroupBy
+// Example 4: Aggregation with GroupBy
 // ============================================================
-Console.WriteLine("\n--- Example 3: Aggregation ---");
+Console.WriteLine("\n--- Example 4: Aggregation ---");
 Console.WriteLine("Event type summary for user 100 in January:\n");
 
 var summary = await context.FromParameterizedView<UserEventView>(
@@ -140,9 +164,9 @@ foreach (var item in summary)
 }
 
 // ============================================================
-// Example 4: Different User Query
+// Example 5: Different User Query
 // ============================================================
-Console.WriteLine("\n--- Example 4: Different User ---");
+Console.WriteLine("\n--- Example 5: Different User ---");
 Console.WriteLine("Events for user 200:\n");
 
 var user200Events = await context.FromParameterizedView<UserEventView>(
@@ -162,9 +186,9 @@ foreach (var evt in user200Events)
 }
 
 // ============================================================
-// Example 5: Using Dictionary Parameters
+// Example 6: Using Dictionary Parameters
 // ============================================================
-Console.WriteLine("\n--- Example 5: Dictionary Parameters ---");
+Console.WriteLine("\n--- Example 6: Dictionary Parameters ---");
 Console.WriteLine("Dynamic parameter query for user 300:\n");
 
 var dynamicParams = new Dictionary<string, object?>
@@ -191,6 +215,18 @@ Console.WriteLine("\nDone!");
 // ============================================================
 
 /// <summary>
+/// Source entity representing the events table.
+/// </summary>
+public class Event
+{
+    public ulong EventId { get; set; }
+    public string EventType { get; set; } = string.Empty;
+    public ulong UserId { get; set; }
+    public DateTime Timestamp { get; set; }
+    public decimal Value { get; set; }
+}
+
+/// <summary>
 /// Result entity for the parameterized view.
 /// </summary>
 public class UserEventView
@@ -209,6 +245,11 @@ public class UserEventView
 public class AnalyticsDbContext : DbContext
 {
     public DbSet<UserEventView> UserEventViews => Set<UserEventView>();
+
+    // Strongly-typed view accessor (NEW!)
+    private ClickHouseParameterizedView<UserEventView>? _userEventsView;
+    public ClickHouseParameterizedView<UserEventView> UserEventsView
+        => _userEventsView ??= new ClickHouseParameterizedView<UserEventView>(this);
 
     protected override void OnConfiguring(DbContextOptionsBuilder options)
     {

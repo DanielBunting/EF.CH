@@ -1,4 +1,6 @@
 using EF.CH.Extensions;
+using EF.CH.Metadata;
+using EF.CH.ParameterizedViews;
 using Microsoft.EntityFrameworkCore;
 using Testcontainers.ClickHouse;
 using Xunit;
@@ -520,6 +522,293 @@ public class ParameterizedViewTests : IAsyncLifetime
 
     #endregion
 
+    #region Strongly-Typed Access Tests
+
+    [Fact]
+    public async Task ClickHouseParameterizedView_Query_ReturnsIQueryable()
+    {
+        await using var context = CreateContext();
+
+        // Create source table and view
+        await context.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS typed_events (
+                event_id UInt64,
+                event_type String,
+                user_id UInt64,
+                timestamp DateTime,
+                value Decimal(18, 4)
+            ) ENGINE = MergeTree()
+            ORDER BY (user_id, timestamp)
+        ");
+
+        await context.Database.CreateParameterizedViewAsync(
+            "typed_user_events_view",
+            @"SELECT event_id AS ""EventId"",
+                     event_type AS ""EventType"",
+                     user_id AS ""UserId"",
+                     timestamp AS ""Timestamp"",
+                     value AS ""Value""
+              FROM typed_events
+              WHERE user_id = {user_id:UInt64}",
+            ifNotExists: true);
+
+        // Insert test data
+        await context.Database.ExecuteSqlRawAsync(@"
+            INSERT INTO typed_events (event_id, event_type, user_id, timestamp, value) VALUES
+            (1, 'click', 100, '2024-01-15 10:00:00', 1.0),
+            (2, 'view', 100, '2024-01-15 11:00:00', 2.0),
+            (3, 'click', 200, '2024-01-15 12:00:00', 3.0)
+        ");
+
+        // Use strongly-typed accessor
+        var view = new ClickHouseParameterizedView<TypedEventView>(context);
+        Assert.Equal("typed_user_events_view", view.ViewName);
+
+        var results = await view.Query(new { user_id = 100UL })
+            .OrderBy(e => e.Timestamp)
+            .ToListAsync();
+
+        Assert.Equal(2, results.Count);
+        Assert.All(results, r => Assert.Equal(100UL, r.UserId));
+    }
+
+    [Fact]
+    public async Task ClickHouseParameterizedView_ToListAsync_ConvenienceMethod()
+    {
+        await using var context = CreateContext();
+
+        // Create source table and view
+        await context.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS conv_events (
+                event_id UInt64,
+                event_type String,
+                user_id UInt64,
+                timestamp DateTime,
+                value Decimal(18, 4)
+            ) ENGINE = MergeTree()
+            ORDER BY (user_id, timestamp)
+        ");
+
+        await context.Database.CreateParameterizedViewAsync(
+            "conv_user_events_view",
+            @"SELECT event_id AS ""EventId"",
+                     event_type AS ""EventType"",
+                     user_id AS ""UserId"",
+                     timestamp AS ""Timestamp"",
+                     value AS ""Value""
+              FROM conv_events
+              WHERE user_id = {user_id:UInt64}",
+            ifNotExists: true);
+
+        // Insert test data
+        await context.Database.ExecuteSqlRawAsync(@"
+            INSERT INTO conv_events (event_id, event_type, user_id, timestamp, value) VALUES
+            (1, 'click', 100, '2024-01-15 10:00:00', 1.0)
+        ");
+
+        var view = new ClickHouseParameterizedView<ConvEventView>(context);
+
+        // Test convenience methods
+        var list = await view.ToListAsync(new { user_id = 100UL });
+        Assert.Single(list);
+
+        var first = await view.FirstOrDefaultAsync(new { user_id = 100UL });
+        Assert.NotNull(first);
+
+        var count = await view.CountAsync(new { user_id = 100UL });
+        Assert.Equal(1, count);
+
+        var any = await view.AnyAsync(new { user_id = 100UL });
+        Assert.True(any);
+
+        var anyEmpty = await view.AnyAsync(new { user_id = 999UL });
+        Assert.False(anyEmpty);
+    }
+
+    [Fact]
+    public void ClickHouseParameterizedView_ThrowsWhenNotConfigured()
+    {
+        using var context = CreateContext();
+
+        // UnconfiguredView is not configured in OnModelCreating
+        Assert.Throws<InvalidOperationException>(() =>
+            new ClickHouseParameterizedView<UnconfiguredView>(context));
+    }
+
+    #endregion
+
+    #region Fluent Builder Tests
+
+    [Fact]
+    public void AsParameterizedView_SetsAnnotationsCorrectly()
+    {
+        using var context = CreateFluentContext();
+        var entityType = context.Model.FindEntityType(typeof(FluentEventView));
+
+        Assert.NotNull(entityType);
+        Assert.True((bool?)entityType.FindAnnotation(ClickHouseAnnotationNames.ParameterizedView)?.Value);
+        Assert.Equal("fluent_events_view", entityType.FindAnnotation(ClickHouseAnnotationNames.ParameterizedViewName)?.Value);
+
+        var metadata = entityType.FindAnnotation(ClickHouseAnnotationNames.ParameterizedViewMetadata)?.Value as ParameterizedViewMetadataBase;
+        Assert.NotNull(metadata);
+        Assert.Equal("fluent_events_view", metadata.ViewName);
+        Assert.Equal(typeof(FluentEventView), metadata.ResultType);
+        Assert.Equal(typeof(FluentEvent), metadata.SourceType);
+        Assert.NotNull(metadata.ProjectionExpression);
+        Assert.NotNull(metadata.Parameters);
+        Assert.Equal(2, metadata.Parameters.Count);
+        Assert.True(metadata.Parameters.ContainsKey("user_id"));
+        Assert.True(metadata.Parameters.ContainsKey("start_date"));
+    }
+
+    [Fact]
+    public void GetParameterizedViewSql_GeneratesCorrectSql()
+    {
+        using var context = CreateFluentContext();
+
+        var sql = context.Database.GetParameterizedViewSql<FluentEventView>();
+
+        Assert.Contains("CREATE VIEW", sql);
+        Assert.Contains("\"fluent_events_view\"", sql);
+        Assert.Contains("AS \"EventId\"", sql);
+        Assert.Contains("AS \"EventType\"", sql);
+        Assert.Contains("{user_id:UInt64}", sql);
+        Assert.Contains("{start_date:DateTime}", sql);
+        Assert.Contains("FROM \"fluent_events\"", sql);
+    }
+
+    [Fact]
+    public async Task EnsureParameterizedViewAsync_CreatesView()
+    {
+        await using var context = CreateFluentContext();
+
+        // Create source table first
+        await context.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS fluent_events (
+                event_id UInt64,
+                event_type String,
+                user_id UInt64,
+                timestamp DateTime,
+                value Decimal(18, 4)
+            ) ENGINE = MergeTree()
+            ORDER BY (user_id, timestamp)
+        ");
+
+        // Ensure view is created
+        await context.Database.EnsureParameterizedViewAsync<FluentEventView>(ifNotExists: true);
+
+        // Insert test data
+        await context.Database.ExecuteSqlRawAsync(@"
+            INSERT INTO fluent_events (event_id, event_type, user_id, timestamp, value) VALUES
+            (1, 'click', 100, '2024-01-15 10:00:00', 1.0),
+            (2, 'view', 100, '2024-01-16 11:00:00', 2.0),
+            (3, 'click', 200, '2024-01-15 12:00:00', 3.0)
+        ");
+
+        // Query using the view
+        var results = await context.FromParameterizedView<FluentEventView>(
+            "fluent_events_view",
+            new { user_id = 100UL, start_date = new DateTime(2024, 1, 15) })
+            .ToListAsync();
+
+        Assert.Equal(2, results.Count);
+        Assert.All(results, r => Assert.Equal(100UL, r.UserId));
+    }
+
+    [Fact]
+    public async Task EnsureParameterizedViewsAsync_CreatesAllViews()
+    {
+        await using var context = CreateFluentContext();
+
+        // Create source tables first
+        await context.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS fluent_events (
+                event_id UInt64,
+                event_type String,
+                user_id UInt64,
+                timestamp DateTime,
+                value Decimal(18, 4)
+            ) ENGINE = MergeTree()
+            ORDER BY (user_id, timestamp)
+        ");
+
+        await context.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS fluent_products (
+                product_id UInt64,
+                category String,
+                price Decimal(18, 4)
+            ) ENGINE = MergeTree()
+            ORDER BY product_id
+        ");
+
+        // Create all views
+        var viewsCreated = await context.Database.EnsureParameterizedViewsAsync();
+
+        Assert.Equal(2, viewsCreated);
+    }
+
+    [Fact]
+    public void ParameterizedViewConfiguration_ValidatesParameters()
+    {
+        var config = new ParameterizedViewConfiguration<FluentEventView, FluentEvent>();
+
+        // Without Select(), validation should fail
+        var errors = config.Validate().ToList();
+        Assert.Contains(errors, e => e.Contains("Select()"));
+
+        // Without parameters, validation should fail
+        config.Select(e => new FluentEventView
+        {
+            EventId = e.EventId,
+            EventType = e.EventType,
+            UserId = e.UserId,
+            Timestamp = e.Timestamp,
+            Value = e.Value
+        });
+
+        errors = config.Validate().ToList();
+        Assert.Contains(errors, e => e.Contains("Parameter()"));
+    }
+
+    [Fact]
+    public void ParameterizedViewConfiguration_ValidatesWhereParameterReferences()
+    {
+        var config = new ParameterizedViewConfiguration<FluentEventView, FluentEvent>();
+
+        config.Select(e => new FluentEventView
+        {
+            EventId = e.EventId,
+            EventType = e.EventType,
+            UserId = e.UserId,
+            Timestamp = e.Timestamp,
+            Value = e.Value
+        });
+
+        config.Parameter<ulong>("user_id");
+
+        // Reference undefined parameter
+        config.Where((e, p) => e.Timestamp >= p.Get<DateTime>("undefined_param"));
+
+        var errors = config.Validate().ToList();
+        Assert.Contains(errors, e => e.Contains("undefined_param"));
+    }
+
+    [Fact]
+    public void ParameterizedViewSqlGenerator_GeneratesCorrectWhereClause()
+    {
+        using var context = CreateFluentContext();
+
+        var sql = context.Database.GetParameterizedViewSql<FluentEventView>();
+
+        // Should contain WHERE clause with parameters
+        // Column names come from EF Core model (snake_case configured via HasColumnName)
+        Assert.Contains("WHERE", sql);
+        Assert.Contains("{user_id:UInt64}", sql);
+        Assert.Contains("{start_date:DateTime}", sql);
+    }
+
+    #endregion
+
     private ParameterizedViewTestContext CreateContext()
     {
         var options = new DbContextOptionsBuilder<ParameterizedViewTestContext>()
@@ -527,6 +816,15 @@ public class ParameterizedViewTests : IAsyncLifetime
             .Options;
 
         return new ParameterizedViewTestContext(options);
+    }
+
+    private FluentTestContext CreateFluentContext()
+    {
+        var options = new DbContextOptionsBuilder<FluentTestContext>()
+            .UseClickHouse(GetConnectionString())
+            .Options;
+
+        return new FluentTestContext(options);
     }
 }
 
@@ -573,6 +871,63 @@ public class LogView
     public DateTime Timestamp { get; set; }
 }
 
+// For strongly-typed access tests
+public class TypedEventView
+{
+    public ulong EventId { get; set; }
+    public string EventType { get; set; } = string.Empty;
+    public ulong UserId { get; set; }
+    public DateTime Timestamp { get; set; }
+    public decimal Value { get; set; }
+}
+
+public class ConvEventView
+{
+    public ulong EventId { get; set; }
+    public string EventType { get; set; } = string.Empty;
+    public ulong UserId { get; set; }
+    public DateTime Timestamp { get; set; }
+    public decimal Value { get; set; }
+}
+
+public class UnconfiguredView
+{
+    public ulong Id { get; set; }
+}
+
+// For fluent builder tests
+public class FluentEvent
+{
+    public ulong EventId { get; set; }
+    public string EventType { get; set; } = string.Empty;
+    public ulong UserId { get; set; }
+    public DateTime Timestamp { get; set; }
+    public decimal Value { get; set; }
+}
+
+public class FluentEventView
+{
+    public ulong EventId { get; set; }
+    public string EventType { get; set; } = string.Empty;
+    public ulong UserId { get; set; }
+    public DateTime Timestamp { get; set; }
+    public decimal Value { get; set; }
+}
+
+public class FluentProduct
+{
+    public ulong ProductId { get; set; }
+    public string Category { get; set; } = string.Empty;
+    public decimal Price { get; set; }
+}
+
+public class FluentProductView
+{
+    public ulong ProductId { get; set; }
+    public string Category { get; set; } = string.Empty;
+    public decimal Price { get; set; }
+}
+
 #endregion
 
 #region Test Context
@@ -613,6 +968,89 @@ public class ParameterizedViewTestContext : DbContext
         modelBuilder.Entity<LogView>(entity =>
         {
             entity.HasParameterizedView("logs_view");
+        });
+
+        // For strongly-typed access tests
+        modelBuilder.Entity<TypedEventView>(entity =>
+        {
+            entity.HasParameterizedView("typed_user_events_view");
+        });
+
+        modelBuilder.Entity<ConvEventView>(entity =>
+        {
+            entity.HasParameterizedView("conv_user_events_view");
+        });
+    }
+}
+
+public class FluentTestContext : DbContext
+{
+    public FluentTestContext(DbContextOptions<FluentTestContext> options)
+        : base(options) { }
+
+    public DbSet<FluentEvent> FluentEvents => Set<FluentEvent>();
+    public DbSet<FluentEventView> FluentEventViews => Set<FluentEventView>();
+    public DbSet<FluentProduct> FluentProducts => Set<FluentProduct>();
+    public DbSet<FluentProductView> FluentProductViews => Set<FluentProductView>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        // Source entity with explicit column names (to match snake_case table columns)
+        modelBuilder.Entity<FluentEvent>(entity =>
+        {
+            entity.ToTable("fluent_events");
+            entity.HasKey(e => e.EventId);
+            entity.UseMergeTree(e => new { e.UserId, e.Timestamp });
+            entity.Property(e => e.EventId).HasColumnName("event_id");
+            entity.Property(e => e.EventType).HasColumnName("event_type");
+            entity.Property(e => e.UserId).HasColumnName("user_id");
+            entity.Property(e => e.Timestamp).HasColumnName("timestamp");
+            entity.Property(e => e.Value).HasColumnName("value");
+        });
+
+        modelBuilder.Entity<FluentProduct>(entity =>
+        {
+            entity.ToTable("fluent_products");
+            entity.HasKey(e => e.ProductId);
+            entity.UseMergeTree(e => e.ProductId);
+            entity.Property(e => e.ProductId).HasColumnName("product_id");
+            entity.Property(e => e.Category).HasColumnName("category");
+            entity.Property(e => e.Price).HasColumnName("price");
+        });
+
+        // View with fluent configuration
+        modelBuilder.Entity<FluentEventView>(entity =>
+        {
+            entity.AsParameterizedView<FluentEventView, FluentEvent>(cfg => cfg
+                .HasName("fluent_events_view")
+                .FromTable()
+                .Select(e => new FluentEventView
+                {
+                    EventId = e.EventId,
+                    EventType = e.EventType,
+                    UserId = e.UserId,
+                    Timestamp = e.Timestamp,
+                    Value = e.Value
+                })
+                .Parameter<ulong>("user_id")
+                .Parameter<DateTime>("start_date")
+                .Where((e, p) => e.UserId == p.Get<ulong>("user_id"))
+                .Where((e, p) => e.Timestamp >= p.Get<DateTime>("start_date")));
+        });
+
+        modelBuilder.Entity<FluentProductView>(entity =>
+        {
+            entity.AsParameterizedView<FluentProductView, FluentProduct>(cfg => cfg
+                .HasName("fluent_products_view")
+                .FromTable()
+                .Select(p => new FluentProductView
+                {
+                    ProductId = p.ProductId,
+                    Category = p.Category,
+                    Price = p.Price
+                })
+                .Parameter<string>("category")
+                .Where((p, a) => p.Category == a.Get<string>("category")));
         });
     }
 }

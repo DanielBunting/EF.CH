@@ -10,11 +10,11 @@ Parameterized views in ClickHouse allow you to create views with parameters that
 
 ```
 View Definition                          Query Call
-     │                                        │
-     │  {user_id:UInt64}                     │  user_id = 123
-     │  {start_date:DateTime}                │  start_date = '2024-01-01'
-     └──────────────────────────────────────►│
-                                              │
+     |                                        |
+     |  {user_id:UInt64}                     |  user_id = 123
+     |  {start_date:DateTime}                |  start_date = '2024-01-01'
+     └──────────────────────────────────────►|
+                                              |
                                SELECT * FROM view(user_id = 123, start_date = '...')
 ```
 
@@ -122,6 +122,42 @@ var events = await context.FromParameterizedView<UserEventView>(
     .ToListAsync();
 ```
 
+### Strongly-Typed View Access (Recommended)
+
+For type-safe access, use `ClickHouseParameterizedView<T>` in your DbContext:
+
+```csharp
+using EF.CH.ParameterizedViews;
+
+public class AnalyticsDbContext : DbContext
+{
+    // Strongly-typed view accessor
+    private ClickHouseParameterizedView<UserEventView>? _userEventsView;
+    public ClickHouseParameterizedView<UserEventView> UserEventsView
+        => _userEventsView ??= new ClickHouseParameterizedView<UserEventView>(this);
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<UserEventView>(entity =>
+        {
+            entity.HasParameterizedView("user_events_view");
+        });
+    }
+}
+
+// Usage
+var events = await context.UserEventsView
+    .Query(new { user_id = 123UL, start_date = DateTime.Today.AddDays(-7) })
+    .Where(e => e.EventType == "purchase")
+    .OrderByDescending(e => e.Timestamp)
+    .ToListAsync();
+
+// Convenience methods
+var count = await context.UserEventsView.CountAsync(new { user_id = 123UL, ... });
+var first = await context.UserEventsView.FirstOrDefaultAsync(new { user_id = 123UL, ... });
+var exists = await context.UserEventsView.AnyAsync(new { user_id = 123UL, ... });
+```
+
 ### With LINQ Composition
 
 You can chain LINQ operations after binding parameters:
@@ -167,6 +203,86 @@ var dailyCounts = await context.FromParameterizedView<UserEventView>(
     .ToListAsync();
 ```
 
+## Fluent View Configuration
+
+For a fully type-safe approach, you can configure parameterized views with a fluent builder that generates the CREATE VIEW DDL automatically:
+
+### Configuration
+
+```csharp
+public class AnalyticsDbContext : DbContext
+{
+    public DbSet<Event> Events => Set<Event>();
+    public DbSet<UserEventView> UserEventViews => Set<UserEventView>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        // Source entity (with explicit column names)
+        modelBuilder.Entity<Event>(entity =>
+        {
+            entity.ToTable("events");
+            entity.HasKey(e => e.EventId);
+            entity.UseMergeTree(e => new { e.UserId, e.Timestamp });
+            entity.Property(e => e.EventId).HasColumnName("event_id");
+            entity.Property(e => e.EventType).HasColumnName("event_type");
+            entity.Property(e => e.UserId).HasColumnName("user_id");
+            entity.Property(e => e.Timestamp).HasColumnName("timestamp");
+            entity.Property(e => e.Value).HasColumnName("value");
+        });
+
+        // Fluent view configuration
+        modelBuilder.Entity<UserEventView>(entity =>
+        {
+            entity.AsParameterizedView<UserEventView, Event>(cfg => cfg
+                .HasName("user_events_view")
+                .FromTable()
+                .Select(e => new UserEventView
+                {
+                    EventId = e.EventId,
+                    EventType = e.EventType,
+                    UserId = e.UserId,
+                    Timestamp = e.Timestamp,
+                    Value = e.Value
+                })
+                .Parameter<ulong>("user_id")
+                .Parameter<DateTime>("start_date")
+                .Where((e, p) => e.UserId == p.Get<ulong>("user_id"))
+                .Where((e, p) => e.Timestamp >= p.Get<DateTime>("start_date")));
+        });
+    }
+}
+```
+
+### Creating Views at Runtime
+
+Use `EnsureParameterizedViewsAsync` to create all configured views:
+
+```csharp
+// On application startup
+await context.Database.EnsureCreatedAsync();  // Create tables
+await context.Database.EnsureParameterizedViewsAsync();  // Create views
+
+// Or create a specific view
+await context.Database.EnsureParameterizedViewAsync<UserEventView>();
+```
+
+### Inspecting Generated SQL
+
+```csharp
+var sql = context.Database.GetParameterizedViewSql<UserEventView>();
+Console.WriteLine(sql);
+// Output:
+// CREATE VIEW "user_events_view" AS
+// SELECT "event_id" AS "EventId",
+//        "event_type" AS "EventType",
+//        "user_id" AS "UserId",
+//        "timestamp" AS "Timestamp",
+//        "value" AS "Value"
+// FROM "events"
+// WHERE ("user_id" = {user_id:UInt64})
+//   AND ("timestamp" >= {start_date:DateTime})
+```
+
 ## Type Mappings
 
 ### CLR to ClickHouse Parameter Types
@@ -184,7 +300,7 @@ var dailyCounts = await context.FromParameterizedView<UserEventView>(
 | `ulong` | `UInt64` | |
 | `float` | `Float32` | |
 | `double` | `Float64` | |
-| `decimal` | `Decimal` | Invariant culture |
+| `decimal` | `Decimal(18, 4)` | Invariant culture |
 | `string` | `String` | Escaped with backslash |
 | `DateTime` | `DateTime` | Format: yyyy-MM-dd HH:mm:ss |
 | `DateTimeOffset` | `DateTime` | UTC converted |
@@ -232,13 +348,20 @@ public class UserEventView
 }
 ```
 
-### DbContext
+### DbContext with Strongly-Typed Access
 
 ```csharp
+using EF.CH.ParameterizedViews;
+
 public class AnalyticsDbContext : DbContext
 {
     public DbSet<Event> Events => Set<Event>();
     public DbSet<UserEventView> UserEventViews => Set<UserEventView>();
+
+    // Strongly-typed view accessor
+    private ClickHouseParameterizedView<UserEventView>? _userEventsView;
+    public ClickHouseParameterizedView<UserEventView> UserEventsView
+        => _userEventsView ??= new ClickHouseParameterizedView<UserEventView>(this);
 
     protected override void OnConfiguring(DbContextOptionsBuilder options)
     {
@@ -304,10 +427,9 @@ public partial class CreateUserEventsView : Migration
 ```csharp
 await using var context = new AnalyticsDbContext();
 
-// Get last week's events for a user
-var events = await context.FromParameterizedView<UserEventView>(
-    "user_events_view",
-    new
+// Get last week's events for a user using strongly-typed accessor
+var events = await context.UserEventsView
+    .Query(new
     {
         user_id = 12345UL,
         start_date = DateTime.Today.AddDays(-7),
@@ -317,7 +439,15 @@ var events = await context.FromParameterizedView<UserEventView>(
     .OrderByDescending(e => e.Timestamp)
     .ToListAsync();
 
-// Aggregate by event type
+// Use convenience methods
+var count = await context.UserEventsView.CountAsync(new
+{
+    user_id = 12345UL,
+    start_date = DateTime.Today.AddMonths(-1),
+    end_date = DateTime.Today
+});
+
+// Or use the traditional FromParameterizedView method
 var summary = await context.FromParameterizedView<UserEventView>(
     "user_events_view",
     new
@@ -338,7 +468,7 @@ var summary = await context.FromParameterizedView<UserEventView>(
 
 ## Limitations
 
-1. **No DDL Generation from Model**: The view must be created via migration or raw SQL. `HasParameterizedView` only configures the result entity, it doesn't generate CREATE VIEW statements.
+1. **Fluent Configuration Requires Column Mappings**: When using `AsParameterizedView<TView, TSource>()`, ensure the source entity has explicit column name mappings if your database uses snake_case columns.
 
 2. **Parameter Escaping**: String parameters are escaped with backslash. For complex strings with unusual characters, test carefully.
 
@@ -357,6 +487,8 @@ var summary = await context.FromParameterizedView<UserEventView>(
 4. **Parameter Naming**: Use snake_case in view definitions to match the automatic conversion from C# property names.
 
 5. **Avoid Wide Result Sets**: If the view could return large amounts of data, add reasonable defaults or require date range parameters.
+
+6. **Use Strongly-Typed Accessors**: Prefer `ClickHouseParameterizedView<T>` over raw `FromParameterizedView` for better IntelliSense and type safety.
 
 ## See Also
 
