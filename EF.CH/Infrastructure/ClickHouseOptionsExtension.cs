@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Text;
 using EF.CH.BulkInsert;
 using EF.CH.InsertSelect;
+using EF.CH.QueryProfiling;
 using EF.CH.Configuration;
 using EF.CH.Diagnostics;
 using EF.CH.Dictionaries;
@@ -406,6 +407,9 @@ public static class ClickHouseServiceCollectionExtensions
 
         // Register insert-select executor for server-side INSERT ... SELECT operations.
         services.TryAddScoped<IClickHouseInsertSelectExecutor, ClickHouseInsertSelectExecutor>();
+
+        // Register query profiler for EXPLAIN and query statistics.
+        services.TryAddScoped<IClickHouseQueryProfiler, ClickHouseQueryProfiler>();
 
         return services;
     }
