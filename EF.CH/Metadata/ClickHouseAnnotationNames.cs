@@ -512,6 +512,58 @@ public static class ClickHouseAnnotationNames
 
     #endregion
 
+    #region Parameterized Views
+
+    /// <summary>
+    /// Marks this entity as a parameterized view.
+    /// Value type: bool
+    /// </summary>
+    public const string ParameterizedView = Prefix + "ParameterizedView";
+
+    /// <summary>
+    /// The parameterized view name.
+    /// Value type: string
+    /// </summary>
+    public const string ParameterizedViewName = Prefix + "ParameterizedViewName";
+
+    /// <summary>
+    /// The source entity type for fluent view configuration.
+    /// Value type: Type
+    /// </summary>
+    public const string ParameterizedViewSourceType = Prefix + "ParameterizedViewSourceType";
+
+    /// <summary>
+    /// The source table name for fluent view configuration.
+    /// Value type: string
+    /// </summary>
+    public const string ParameterizedViewSourceTable = Prefix + "ParameterizedViewSourceTable";
+
+    /// <summary>
+    /// The projection expression for SELECT clause generation.
+    /// Value type: LambdaExpression
+    /// </summary>
+    public const string ParameterizedViewProjection = Prefix + "ParameterizedViewProjection";
+
+    /// <summary>
+    /// The parameter definitions for the view.
+    /// Value type: Dictionary&lt;string, ParameterDefinition&gt;
+    /// </summary>
+    public const string ParameterizedViewParameters = Prefix + "ParameterizedViewParameters";
+
+    /// <summary>
+    /// The WHERE clause expressions for the view.
+    /// Value type: List&lt;LambdaExpression&gt;
+    /// </summary>
+    public const string ParameterizedViewWhereClause = Prefix + "ParameterizedViewWhereClause";
+
+    /// <summary>
+    /// The full metadata for fluent view configuration.
+    /// Value type: ParameterizedViewMetadataBase
+    /// </summary>
+    public const string ParameterizedViewMetadata = Prefix + "ParameterizedViewMetadata";
+
+    #endregion
+
     #region Replication and Clustering
 
     /// <summary>
