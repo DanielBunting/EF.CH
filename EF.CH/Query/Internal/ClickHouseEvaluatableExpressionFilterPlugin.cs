@@ -87,13 +87,14 @@ public class ClickHouseEvaluatableExpressionFilterPlugin : IEvaluatableExpressio
             {
                 var genericDef = method.GetGenericMethodDefinition();
 
-                // Don't parameterize calls to Sample, WithSetting, WithSettings, or LimitBy
+                // Don't parameterize calls to Sample, WithSetting, WithSettings, LimitBy, or WithRawFilter
                 if (genericDef == ClickHouseQueryableExtensions.SampleMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.SampleWithOffsetMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.WithSettingMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.WithSettingsMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.LimitByMethodInfo ||
-                    genericDef == ClickHouseQueryableExtensions.LimitByWithOffsetMethodInfo)
+                    genericDef == ClickHouseQueryableExtensions.LimitByWithOffsetMethodInfo ||
+                    genericDef == ClickHouseQueryableExtensions.WithRawFilterMethodInfo)
                 {
                     return false;
                 }

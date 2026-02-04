@@ -469,4 +469,82 @@ public static class ClickHouseQueryableExtensions
     internal static readonly MethodInfo WithTotalsMethodInfo =
         typeof(ClickHouseQueryableExtensions).GetMethod(
             nameof(WithTotals), BindingFlags.Public | BindingFlags.Static)!;
+
+    /// <summary>
+    /// Adds a raw SQL fragment to the WHERE clause.
+    /// Use positional parameters {0}, {1}, etc. for parameter substitution.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is useful for ClickHouse-specific SQL expressions that cannot be expressed in LINQ,
+    /// such as JSON functions, array operations, or complex conditions.
+    /// </para>
+    /// <para>
+    /// Parameters are properly escaped to prevent SQL injection. However, be careful
+    /// with the raw SQL fragment itself - it is NOT validated or escaped.
+    /// </para>
+    /// </remarks>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <param name="source">The source queryable.</param>
+    /// <param name="rawSql">The raw SQL fragment (e.g., "JSONExtractString(metadata, 'key') = {0}").</param>
+    /// <param name="parameters">The parameter values to substitute for {0}, {1}, etc.</param>
+    /// <returns>A queryable with the raw filter applied.</returns>
+    /// <example>
+    /// <code>
+    /// // Filter by JSON field
+    /// var results = context.Events
+    ///     .Where(e => e.Active)
+    ///     .WithRawFilter("JSONExtractString(metadata, 'source') = {0}", "api")
+    ///     .ToListAsync();
+    ///
+    /// // Multiple parameters
+    /// var results = context.Events
+    ///     .WithRawFilter("arrayExists(x -> x > {0}, tags) AND status IN ({1}, {2})", 5, "active", "pending")
+    ///     .ToListAsync();
+    /// </code>
+    /// </example>
+    public static IQueryable<TEntity> WithRawFilter<TEntity>(
+        this IQueryable<TEntity> source,
+        string rawSql,
+        params object[] parameters)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentException.ThrowIfNullOrWhiteSpace(rawSql);
+
+        // Store the raw SQL and parameters together
+        var filterData = new RawFilterData(rawSql, parameters);
+
+        return source.Provider.CreateQuery<TEntity>(
+            Expression.Call(
+                null,
+                WithRawFilterMethodInfo.MakeGenericMethod(typeof(TEntity)),
+                source.Expression,
+                WrapInEfConstant(filterData)));
+    }
+
+    internal static readonly MethodInfo WithRawFilterMethodInfo =
+        typeof(ClickHouseQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .First(m => m.Name == nameof(WithRawFilter));
+}
+
+/// <summary>
+/// Represents a raw SQL filter with parameters.
+/// </summary>
+public class RawFilterData
+{
+    /// <summary>
+    /// The raw SQL fragment with {0}, {1}, etc. placeholders.
+    /// </summary>
+    public string RawSql { get; }
+
+    /// <summary>
+    /// The parameter values to substitute.
+    /// </summary>
+    public object[] Parameters { get; }
+
+    public RawFilterData(string rawSql, object[] parameters)
+    {
+        RawSql = rawSql;
+        Parameters = parameters;
+    }
 }

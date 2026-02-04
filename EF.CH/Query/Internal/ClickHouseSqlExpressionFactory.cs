@@ -156,4 +156,15 @@ public class ClickHouseSqlExpressionFactory : SqlExpressionFactory
             returnType,
             _typeMappingSource.FindMapping(returnType));
     }
+
+    /// <summary>
+    /// Creates a raw SQL fragment expression.
+    /// </summary>
+    /// <param name="sql">The raw SQL to embed.</param>
+    /// <param name="typeMapping">Optional type mapping for the result.</param>
+    /// <returns>A SQL fragment expression.</returns>
+    public SqlFragmentExpression Fragment(string sql, RelationalTypeMapping? typeMapping = null)
+    {
+        return new SqlFragmentExpression(sql);
+    }
 }

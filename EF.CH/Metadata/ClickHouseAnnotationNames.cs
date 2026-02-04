@@ -564,6 +564,186 @@ public static class ClickHouseAnnotationNames
 
     #endregion
 
+    #region S3 External Options
+
+    /// <summary>
+    /// The S3 path pattern (e.g., "s3://bucket/path/*.parquet").
+    /// </summary>
+    public const string ExternalS3Path = Prefix + "External:S3:Path";
+
+    /// <summary>
+    /// Environment variable name for S3 access key.
+    /// </summary>
+    public const string ExternalS3AccessKeyEnv = Prefix + "External:S3:AccessKeyEnv";
+
+    /// <summary>
+    /// Literal value for S3 access key (not recommended for production).
+    /// </summary>
+    public const string ExternalS3AccessKeyValue = Prefix + "External:S3:AccessKeyValue";
+
+    /// <summary>
+    /// Environment variable name for S3 secret key.
+    /// </summary>
+    public const string ExternalS3SecretKeyEnv = Prefix + "External:S3:SecretKeyEnv";
+
+    /// <summary>
+    /// Literal value for S3 secret key (not recommended for production).
+    /// </summary>
+    public const string ExternalS3SecretKeyValue = Prefix + "External:S3:SecretKeyValue";
+
+    /// <summary>
+    /// The data format for S3 files (e.g., "Parquet", "CSV", "JSONEachRow").
+    /// </summary>
+    public const string ExternalS3Format = Prefix + "External:S3:Format";
+
+    /// <summary>
+    /// Optional structure definition for S3 data.
+    /// </summary>
+    public const string ExternalS3Structure = Prefix + "External:S3:Structure";
+
+    /// <summary>
+    /// Optional compression for S3 data (e.g., "gzip", "zstd", "none").
+    /// </summary>
+    public const string ExternalS3Compression = Prefix + "External:S3:Compression";
+
+    #endregion
+
+    #region URL External Options
+
+    /// <summary>
+    /// The URL to fetch data from.
+    /// </summary>
+    public const string ExternalUrl = Prefix + "External:Url:Url";
+
+    /// <summary>
+    /// Environment variable name for the URL.
+    /// </summary>
+    public const string ExternalUrlEnv = Prefix + "External:Url:UrlEnv";
+
+    /// <summary>
+    /// The data format for URL content (e.g., "CSV", "JSONEachRow").
+    /// </summary>
+    public const string ExternalUrlFormat = Prefix + "External:Url:Format";
+
+    /// <summary>
+    /// Optional structure definition for URL data.
+    /// </summary>
+    public const string ExternalUrlStructure = Prefix + "External:Url:Structure";
+
+    /// <summary>
+    /// Optional compression for URL data (e.g., "gzip", "none").
+    /// </summary>
+    public const string ExternalUrlCompression = Prefix + "External:Url:Compression";
+
+    /// <summary>
+    /// HTTP headers as Dictionary&lt;string, string&gt;.
+    /// </summary>
+    public const string ExternalUrlHeaders = Prefix + "External:Url:Headers";
+
+    #endregion
+
+    #region Remote ClickHouse External Options
+
+    /// <summary>
+    /// The remote server addresses (comma-separated or expression).
+    /// </summary>
+    public const string ExternalRemoteAddresses = Prefix + "External:Remote:Addresses";
+
+    /// <summary>
+    /// Environment variable name for remote addresses.
+    /// </summary>
+    public const string ExternalRemoteAddressesEnv = Prefix + "External:Remote:AddressesEnv";
+
+    /// <summary>
+    /// The remote database name.
+    /// </summary>
+    public const string ExternalRemoteDatabase = Prefix + "External:Remote:Database";
+
+    /// <summary>
+    /// Environment variable name for remote database.
+    /// </summary>
+    public const string ExternalRemoteDatabaseEnv = Prefix + "External:Remote:DatabaseEnv";
+
+    /// <summary>
+    /// The remote table name.
+    /// </summary>
+    public const string ExternalRemoteTable = Prefix + "External:Remote:Table";
+
+    /// <summary>
+    /// Environment variable name for remote user.
+    /// </summary>
+    public const string ExternalRemoteUserEnv = Prefix + "External:Remote:UserEnv";
+
+    /// <summary>
+    /// Literal value for remote user.
+    /// </summary>
+    public const string ExternalRemoteUserValue = Prefix + "External:Remote:UserValue";
+
+    /// <summary>
+    /// Environment variable name for remote password.
+    /// </summary>
+    public const string ExternalRemotePasswordEnv = Prefix + "External:Remote:PasswordEnv";
+
+    /// <summary>
+    /// Literal value for remote password.
+    /// </summary>
+    public const string ExternalRemotePasswordValue = Prefix + "External:Remote:PasswordValue";
+
+    /// <summary>
+    /// Optional sharding key for distributed queries.
+    /// </summary>
+    public const string ExternalRemoteShardingKey = Prefix + "External:Remote:ShardingKey";
+
+    #endregion
+
+    #region File External Options
+
+    /// <summary>
+    /// The file path pattern (e.g., "/data/*.csv", "file*.parquet").
+    /// </summary>
+    public const string ExternalFilePath = Prefix + "External:File:Path";
+
+    /// <summary>
+    /// The data format for the file (e.g., "CSV", "Parquet", "JSONEachRow").
+    /// </summary>
+    public const string ExternalFileFormat = Prefix + "External:File:Format";
+
+    /// <summary>
+    /// Optional structure definition for file data.
+    /// </summary>
+    public const string ExternalFileStructure = Prefix + "External:File:Structure";
+
+    /// <summary>
+    /// Optional compression for file data (e.g., "gzip", "none").
+    /// </summary>
+    public const string ExternalFileCompression = Prefix + "External:File:Compression";
+
+    #endregion
+
+    #region Cluster External Options
+
+    /// <summary>
+    /// The cluster name for cluster() table function.
+    /// </summary>
+    public const string ExternalClusterName = Prefix + "External:Cluster:Name";
+
+    /// <summary>
+    /// The database name within the cluster.
+    /// </summary>
+    public const string ExternalClusterDatabase = Prefix + "External:Cluster:Database";
+
+    /// <summary>
+    /// The table name within the cluster.
+    /// </summary>
+    public const string ExternalClusterTable = Prefix + "External:Cluster:Table";
+
+    /// <summary>
+    /// Optional sharding key for cluster queries.
+    /// </summary>
+    public const string ExternalClusterShardingKey = Prefix + "External:Cluster:ShardingKey";
+
+    #endregion
+
     #region Replication and Clustering
 
     /// <summary>

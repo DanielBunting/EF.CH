@@ -13,6 +13,7 @@ public class ClickHouseMethodCallTranslatorProvider : RelationalMethodCallTransl
         : base(dependencies)
     {
         var sqlExpressionFactory = (ClickHouseSqlExpressionFactory)dependencies.SqlExpressionFactory;
+        var typeMappingSource = dependencies.RelationalTypeMappingSource;
 
         // Register ClickHouse-specific translators
         AddTranslators(
@@ -28,6 +29,7 @@ public class ClickHouseMethodCallTranslatorProvider : RelationalMethodCallTransl
             new ClickHouseNestedMethodTranslator(sqlExpressionFactory),
             new ClickHouseDictionaryMethodTranslator(sqlExpressionFactory),
             new ClickHouseJsonMethodTranslator(sqlExpressionFactory),
+            new ClickHouseRawSqlTranslator(sqlExpressionFactory, typeMappingSource),
         ]);
     }
 }

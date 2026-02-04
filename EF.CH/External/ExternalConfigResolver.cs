@@ -48,6 +48,11 @@ public class ExternalConfigResolver : IExternalConfigResolver
             "mysql" => ResolveMySqlTableFunction(entityType),
             "odbc" => ResolveOdbcTableFunction(entityType),
             "redis" => ResolveRedisTableFunction(entityType),
+            "s3" => ResolveS3TableFunction(entityType),
+            "url" => ResolveUrlTableFunction(entityType),
+            "remote" => ResolveRemoteTableFunction(entityType),
+            "file" => ResolveFileTableFunction(entityType),
+            "cluster" => ResolveClusterTableFunction(entityType),
             _ => throw new NotSupportedException($"External provider '{provider}' is not supported.")
         };
     }
@@ -448,6 +453,267 @@ public class ExternalConfigResolver : IExternalConfigResolver
 
         throw new InvalidOperationException(
             $"Environment variable '{envVarName}' is not set (required by {context}).");
+    }
+
+    /// <summary>
+    /// Resolves the s3() table function for S3-compatible storage.
+    /// </summary>
+    public string ResolveS3TableFunction(IEntityType entityType)
+    {
+        var path = entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalS3Path)
+            ?.Value?.ToString()
+            ?? throw new InvalidOperationException(
+                $"External S3 entity '{entityType.ClrType.Name}' requires a path. Use FromPath().");
+
+        var format = entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalS3Format)
+            ?.Value?.ToString();
+
+        var structure = entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalS3Structure)
+            ?.Value?.ToString();
+
+        var compression = entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalS3Compression)
+            ?.Value?.ToString();
+
+        // Resolve access key
+        var accessKey = ResolveOptionalAnnotationValue(
+            entityType,
+            ClickHouseAnnotationNames.ExternalS3AccessKeyEnv,
+            ClickHouseAnnotationNames.ExternalS3AccessKeyValue);
+
+        // Resolve secret key
+        var secretKey = ResolveOptionalAnnotationValue(
+            entityType,
+            ClickHouseAnnotationNames.ExternalS3SecretKeyEnv,
+            ClickHouseAnnotationNames.ExternalS3SecretKeyValue);
+
+        // Build function call
+        // s3(path, [aws_access_key_id, aws_secret_access_key,] [format, [structure, [compression]]])
+        var parts = new List<string> { $"'{Escape(path)}'" };
+
+        if (!string.IsNullOrEmpty(accessKey) && !string.IsNullOrEmpty(secretKey))
+        {
+            parts.Add($"'{Escape(accessKey)}'");
+            parts.Add($"'{Escape(secretKey)}'");
+        }
+
+        if (!string.IsNullOrEmpty(format))
+        {
+            parts.Add($"'{Escape(format)}'");
+        }
+
+        if (!string.IsNullOrEmpty(structure))
+        {
+            parts.Add($"'{Escape(structure)}'");
+        }
+
+        if (!string.IsNullOrEmpty(compression))
+        {
+            parts.Add($"'{Escape(compression)}'");
+        }
+
+        return $"s3({string.Join(", ", parts)})";
+    }
+
+    /// <summary>
+    /// Resolves the url() table function for HTTP/HTTPS URLs.
+    /// </summary>
+    public string ResolveUrlTableFunction(IEntityType entityType)
+    {
+        // Try environment variable first, then literal URL
+        var url = ResolveOptionalAnnotationValue(
+            entityType,
+            ClickHouseAnnotationNames.ExternalUrlEnv,
+            ClickHouseAnnotationNames.ExternalUrl);
+
+        if (string.IsNullOrEmpty(url))
+        {
+            throw new InvalidOperationException(
+                $"External URL entity '{entityType.ClrType.Name}' requires a URL. Use FromUrl() or FromUrlEnv().");
+        }
+
+        var format = entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalUrlFormat)
+            ?.Value?.ToString()
+            ?? throw new InvalidOperationException(
+                $"External URL entity '{entityType.ClrType.Name}' requires a format. Use WithFormat().");
+
+        var structure = entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalUrlStructure)
+            ?.Value?.ToString();
+
+        var compression = entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalUrlCompression)
+            ?.Value?.ToString();
+
+        // Build function call
+        // url(url, format, [structure, [compression]])
+        var parts = new List<string>
+        {
+            $"'{Escape(url)}'",
+            $"'{Escape(format)}'"
+        };
+
+        if (!string.IsNullOrEmpty(structure))
+        {
+            parts.Add($"'{Escape(structure)}'");
+        }
+
+        if (!string.IsNullOrEmpty(compression))
+        {
+            parts.Add($"'{Escape(compression)}'");
+        }
+
+        return $"url({string.Join(", ", parts)})";
+    }
+
+    /// <summary>
+    /// Resolves the remote() table function for remote ClickHouse servers.
+    /// </summary>
+    public string ResolveRemoteTableFunction(IEntityType entityType)
+    {
+        // Resolve addresses
+        var addresses = ResolveOptionalAnnotationValue(
+            entityType,
+            ClickHouseAnnotationNames.ExternalRemoteAddressesEnv,
+            ClickHouseAnnotationNames.ExternalRemoteAddresses);
+
+        if (string.IsNullOrEmpty(addresses))
+        {
+            throw new InvalidOperationException(
+                $"External remote entity '{entityType.ClrType.Name}' requires server addresses. Use FromAddresses().");
+        }
+
+        // Resolve database
+        var database = ResolveOptionalAnnotationValue(
+            entityType,
+            ClickHouseAnnotationNames.ExternalRemoteDatabaseEnv,
+            ClickHouseAnnotationNames.ExternalRemoteDatabase);
+
+        if (string.IsNullOrEmpty(database))
+        {
+            throw new InvalidOperationException(
+                $"External remote entity '{entityType.ClrType.Name}' requires a database. Use FromTable().");
+        }
+
+        var table = entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalRemoteTable)
+            ?.Value?.ToString()
+            ?? throw new InvalidOperationException(
+                $"External remote entity '{entityType.ClrType.Name}' requires a table. Use FromTable().");
+
+        // Resolve optional credentials
+        var user = ResolveOptionalAnnotationValue(
+            entityType,
+            ClickHouseAnnotationNames.ExternalRemoteUserEnv,
+            ClickHouseAnnotationNames.ExternalRemoteUserValue) ?? "default";
+
+        var password = ResolveOptionalAnnotationValue(
+            entityType,
+            ClickHouseAnnotationNames.ExternalRemotePasswordEnv,
+            ClickHouseAnnotationNames.ExternalRemotePasswordValue) ?? "";
+
+        var shardingKey = entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalRemoteShardingKey)
+            ?.Value?.ToString();
+
+        // Build function call
+        // remote('addresses', 'database', 'table', 'user', 'password', [sharding_key])
+        var parts = new List<string>
+        {
+            $"'{Escape(addresses)}'",
+            $"'{Escape(database)}'",
+            $"'{Escape(table)}'",
+            $"'{Escape(user)}'",
+            $"'{Escape(password)}'"
+        };
+
+        if (!string.IsNullOrEmpty(shardingKey))
+        {
+            parts.Add(shardingKey); // sharding_key is an expression, not a string
+        }
+
+        return $"remote({string.Join(", ", parts)})";
+    }
+
+    /// <summary>
+    /// Resolves the file() table function for local files.
+    /// </summary>
+    public string ResolveFileTableFunction(IEntityType entityType)
+    {
+        var path = entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalFilePath)
+            ?.Value?.ToString()
+            ?? throw new InvalidOperationException(
+                $"External file entity '{entityType.ClrType.Name}' requires a path. Use FromPath().");
+
+        var format = entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalFileFormat)
+            ?.Value?.ToString();
+
+        var structure = entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalFileStructure)
+            ?.Value?.ToString();
+
+        var compression = entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalFileCompression)
+            ?.Value?.ToString();
+
+        // Build function call
+        // file(path, [format, [structure, [compression]]])
+        var parts = new List<string> { $"'{Escape(path)}'" };
+
+        if (!string.IsNullOrEmpty(format))
+        {
+            parts.Add($"'{Escape(format)}'");
+        }
+
+        if (!string.IsNullOrEmpty(structure))
+        {
+            parts.Add($"'{Escape(structure)}'");
+        }
+
+        if (!string.IsNullOrEmpty(compression))
+        {
+            parts.Add($"'{Escape(compression)}'");
+        }
+
+        return $"file({string.Join(", ", parts)})";
+    }
+
+    /// <summary>
+    /// Resolves the cluster() table function for cluster-wide queries.
+    /// </summary>
+    public string ResolveClusterTableFunction(IEntityType entityType)
+    {
+        var clusterName = entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalClusterName)
+            ?.Value?.ToString()
+            ?? throw new InvalidOperationException(
+                $"External cluster entity '{entityType.ClrType.Name}' requires a cluster name. Use FromCluster().");
+
+        var database = entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalClusterDatabase)
+            ?.Value?.ToString()
+            ?? throw new InvalidOperationException(
+                $"External cluster entity '{entityType.ClrType.Name}' requires a database. Use FromTable().");
+
+        var table = entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalClusterTable)
+            ?.Value?.ToString()
+            ?? throw new InvalidOperationException(
+                $"External cluster entity '{entityType.ClrType.Name}' requires a table. Use FromTable().");
+
+        var shardingKey = entityType.FindAnnotation(ClickHouseAnnotationNames.ExternalClusterShardingKey)
+            ?.Value?.ToString();
+
+        // Build function call
+        // cluster('cluster_name', 'database', 'table', [sharding_key])
+        // Note: database can be currentDatabase() which should not be quoted
+        var databaseArg = database == "currentDatabase()"
+            ? "currentDatabase()"
+            : $"'{Escape(database)}'";
+
+        var parts = new List<string>
+        {
+            $"'{Escape(clusterName)}'",
+            databaseArg,
+            $"'{Escape(table)}'"
+        };
+
+        if (!string.IsNullOrEmpty(shardingKey))
+        {
+            parts.Add(shardingKey); // sharding_key is an expression, not a string
+        }
+
+        return $"cluster({string.Join(", ", parts)})";
     }
 
     /// <summary>

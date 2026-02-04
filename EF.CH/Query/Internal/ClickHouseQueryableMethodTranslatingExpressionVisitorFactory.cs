@@ -5,6 +5,8 @@ using EF.CH.Query.Internal.WithFill;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Query.SqlExpressions;
 
+// Import RawFilterData from the Extensions namespace
+
 namespace EF.CH.Query.Internal;
 
 /// <summary>
@@ -160,6 +162,12 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
             if (genericDef == ClickHouseQueryableExtensions.WithTotalsMethodInfo)
             {
                 return TranslateGroupByModifier(methodCallExpression, GroupByModifier.Totals);
+            }
+
+            // Handle WithRawFilter extension method
+            if (genericDef == ClickHouseQueryableExtensions.WithRawFilterMethodInfo)
+            {
+                return TranslateWithRawFilter(methodCallExpression);
             }
         }
 
@@ -453,6 +461,26 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
         }
 
         _options.GroupByModifier = modifier;
+
+        return source;
+    }
+
+    /// <summary>
+    /// Translates the WithRawFilter() extension method.
+    /// Stores raw SQL filters to be appended to the WHERE clause during SQL generation.
+    /// </summary>
+    private Expression TranslateWithRawFilter(MethodCallExpression methodCallExpression)
+    {
+        var source = Visit(methodCallExpression.Arguments[0]);
+
+        var filterArg = methodCallExpression.Arguments[1];
+        if (!TryGetConstantValue<RawFilterData>(filterArg, out var filterData))
+        {
+            throw new InvalidOperationException(
+                "WithRawFilter argument must be a constant RawFilterData.");
+        }
+
+        _options.RawFilters.Add(filterData);
 
         return source;
     }
@@ -788,6 +816,16 @@ public class ClickHouseQueryCompilationContextOptions
     /// GROUP BY modifier (ROLLUP, CUBE, or TOTALS).
     /// </summary>
     public GroupByModifier GroupByModifier { get; set; } = GroupByModifier.None;
+
+    /// <summary>
+    /// Raw SQL filters to append to the WHERE clause.
+    /// </summary>
+    public List<RawFilterData> RawFilters { get; } = new();
+
+    /// <summary>
+    /// Whether any raw filters have been added.
+    /// </summary>
+    public bool HasRawFilters => RawFilters.Count > 0;
 }
 
 /// <summary>

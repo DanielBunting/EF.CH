@@ -90,6 +90,12 @@ public class ClickHouseQueryTranslationPostprocessor : RelationalQueryTranslatio
             ClickHouseQuerySqlGenerator.SetGroupByModifier(options.GroupByModifier);
         }
 
+        // Pass raw filters via thread-local to SQL generator
+        if (options.HasRawFilters)
+        {
+            ClickHouseQuerySqlGenerator.SetRawFilters(options.RawFilters);
+        }
+
         return query;
     }
 }

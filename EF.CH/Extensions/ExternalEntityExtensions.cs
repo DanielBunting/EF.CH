@@ -134,4 +134,150 @@ public static class ExternalEntityExtensions
         builder.Build();
         return builder;
     }
+
+    /// <summary>
+    /// Configures an entity that reads from S3-compatible storage
+    /// via ClickHouse's s3() table function. No ClickHouse table is created for this entity.
+    /// </summary>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <param name="modelBuilder">The model builder.</param>
+    /// <param name="configure">Optional action to configure the external entity.</param>
+    /// <returns>The builder for further configuration.</returns>
+    /// <example>
+    /// <code>
+    /// modelBuilder.ExternalS3Entity&lt;LogEntry&gt;(ext => ext
+    ///     .FromPath("s3://bucket/logs/*.parquet")
+    ///     .WithFormat("Parquet")
+    ///     .Connection(c => c
+    ///         .AccessKey(env: "AWS_ACCESS_KEY_ID")
+    ///         .SecretKey(env: "AWS_SECRET_ACCESS_KEY")));
+    /// </code>
+    /// </example>
+    public static ExternalS3EntityBuilder<TEntity> ExternalS3Entity<TEntity>(
+        this ModelBuilder modelBuilder,
+        Action<ExternalS3EntityBuilder<TEntity>>? configure = null)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(modelBuilder);
+
+        var builder = new ExternalS3EntityBuilder<TEntity>(modelBuilder);
+        configure?.Invoke(builder);
+        builder.Build();
+        return builder;
+    }
+
+    /// <summary>
+    /// Configures an entity that reads from an HTTP/HTTPS URL
+    /// via ClickHouse's url() table function. No ClickHouse table is created for this entity.
+    /// </summary>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <param name="modelBuilder">The model builder.</param>
+    /// <param name="configure">Optional action to configure the external entity.</param>
+    /// <returns>The builder for further configuration.</returns>
+    /// <example>
+    /// <code>
+    /// modelBuilder.ExternalUrlEntity&lt;WeatherData&gt;(ext => ext
+    ///     .FromUrl("https://api.example.com/data.csv")
+    ///     .WithFormat("CSVWithNames")
+    ///     .WithHeader("Authorization", "Bearer token"));
+    /// </code>
+    /// </example>
+    public static ExternalUrlEntityBuilder<TEntity> ExternalUrlEntity<TEntity>(
+        this ModelBuilder modelBuilder,
+        Action<ExternalUrlEntityBuilder<TEntity>>? configure = null)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(modelBuilder);
+
+        var builder = new ExternalUrlEntityBuilder<TEntity>(modelBuilder);
+        configure?.Invoke(builder);
+        builder.Build();
+        return builder;
+    }
+
+    /// <summary>
+    /// Configures an entity that reads from a remote ClickHouse server
+    /// via ClickHouse's remote() table function. No ClickHouse table is created for this entity.
+    /// </summary>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <param name="modelBuilder">The model builder.</param>
+    /// <param name="configure">Optional action to configure the external entity.</param>
+    /// <returns>The builder for further configuration.</returns>
+    /// <example>
+    /// <code>
+    /// modelBuilder.ExternalRemoteEntity&lt;AnalyticsData&gt;(ext => ext
+    ///     .FromAddresses("remote-ch-01:9000,remote-ch-02:9000")
+    ///     .FromTable("analytics", "events")
+    ///     .Connection(c => c.Credentials("CH_USER", "CH_PASSWORD")));
+    /// </code>
+    /// </example>
+    public static ExternalRemoteEntityBuilder<TEntity> ExternalRemoteEntity<TEntity>(
+        this ModelBuilder modelBuilder,
+        Action<ExternalRemoteEntityBuilder<TEntity>>? configure = null)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(modelBuilder);
+
+        var builder = new ExternalRemoteEntityBuilder<TEntity>(modelBuilder);
+        configure?.Invoke(builder);
+        builder.Build();
+        return builder;
+    }
+
+    /// <summary>
+    /// Configures an entity that reads from local files
+    /// via ClickHouse's file() table function. No ClickHouse table is created for this entity.
+    /// </summary>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <param name="modelBuilder">The model builder.</param>
+    /// <param name="configure">Optional action to configure the external entity.</param>
+    /// <returns>The builder for further configuration.</returns>
+    /// <example>
+    /// <code>
+    /// modelBuilder.ExternalFileEntity&lt;ImportData&gt;(ext => ext
+    ///     .FromPath("/data/imports/*.csv")
+    ///     .WithFormat("CSVWithNames"));
+    /// </code>
+    /// </example>
+    public static ExternalFileEntityBuilder<TEntity> ExternalFileEntity<TEntity>(
+        this ModelBuilder modelBuilder,
+        Action<ExternalFileEntityBuilder<TEntity>>? configure = null)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(modelBuilder);
+
+        var builder = new ExternalFileEntityBuilder<TEntity>(modelBuilder);
+        configure?.Invoke(builder);
+        builder.Build();
+        return builder;
+    }
+
+    /// <summary>
+    /// Configures an entity that reads from tables across a ClickHouse cluster
+    /// via ClickHouse's cluster() table function. No ClickHouse table is created for this entity.
+    /// </summary>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <param name="modelBuilder">The model builder.</param>
+    /// <param name="configure">Optional action to configure the external entity.</param>
+    /// <returns>The builder for further configuration.</returns>
+    /// <example>
+    /// <code>
+    /// modelBuilder.ExternalClusterEntity&lt;DistributedData&gt;(ext => ext
+    ///     .FromCluster("my_cluster")
+    ///     .FromCurrentDatabase("local_events")
+    ///     .WithShardingKey(x => x.UserId));
+    /// </code>
+    /// </example>
+    public static ExternalClusterEntityBuilder<TEntity> ExternalClusterEntity<TEntity>(
+        this ModelBuilder modelBuilder,
+        Action<ExternalClusterEntityBuilder<TEntity>>? configure = null)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(modelBuilder);
+
+        var builder = new ExternalClusterEntityBuilder<TEntity>(modelBuilder);
+        configure?.Invoke(builder);
+        builder.Build();
+        return builder;
+    }
 }
