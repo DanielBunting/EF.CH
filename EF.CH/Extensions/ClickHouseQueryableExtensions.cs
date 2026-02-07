@@ -469,4 +469,42 @@ public static class ClickHouseQueryableExtensions
     internal static readonly MethodInfo WithTotalsMethodInfo =
         typeof(ClickHouseQueryableExtensions).GetMethod(
             nameof(WithTotals), BindingFlags.Public | BindingFlags.Static)!;
+
+    /// <summary>
+    /// Wraps the current query as a Common Table Expression (CTE) with the given name.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// CTEs allow naming a subquery and referencing it in the outer query. This is useful
+    /// for complex analytical queries that benefit from logical separation.
+    /// </para>
+    /// <para>
+    /// Generates: <c>WITH "name" AS (SELECT ...) SELECT ... FROM "name"</c>
+    /// </para>
+    /// <para>
+    /// Limitations:
+    /// - Single CTE per query (multi-CTE deferred to future version)
+    /// - No recursive CTEs (limited ClickHouse support)
+    /// </para>
+    /// </remarks>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <param name="source">The source queryable to use as CTE body.</param>
+    /// <param name="name">The CTE name (used in WITH clause and FROM reference).</param>
+    /// <returns>A queryable that will be rendered as a CTE.</returns>
+    public static IQueryable<TEntity> AsCte<TEntity>(this IQueryable<TEntity> source, string name)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentException.ThrowIfNullOrEmpty(name);
+
+        return source.Provider.CreateQuery<TEntity>(
+            Expression.Call(
+                null,
+                AsCteMethodInfo.MakeGenericMethod(typeof(TEntity)),
+                source.Expression,
+                WrapInEfConstant(name)));
+    }
+
+    internal static readonly MethodInfo AsCteMethodInfo =
+        typeof(ClickHouseQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .First(m => m.Name == nameof(AsCte));
 }

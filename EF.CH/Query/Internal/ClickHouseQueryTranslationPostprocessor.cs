@@ -90,6 +90,18 @@ public class ClickHouseQueryTranslationPostprocessor : RelationalQueryTranslatio
             ClickHouseQuerySqlGenerator.SetGroupByModifier(options.GroupByModifier);
         }
 
+        // Extract CTE if AsCte() was called
+        if (options.PendingCteName != null)
+        {
+            query = new ClickHouseCteExtractionVisitor(options).Visit(query);
+        }
+
+        // Pass CTE definitions to SQL generator
+        if (options.HasCtes)
+        {
+            ClickHouseQuerySqlGenerator.SetCteDefinitions(options.CteDefinitions);
+        }
+
         return query;
     }
 }
@@ -340,5 +352,145 @@ internal class ClickHouseDictionaryTableFunctionVisitor : ExpressionVisitor
             }
         }
         return result.ToString();
+    }
+}
+
+/// <summary>
+/// Extracts the innermost FROM-clause subquery (or table) from the outer SelectExpression,
+/// stores it as a CTE definition, and replaces it with a <see cref="ClickHouseCteReferenceExpression"/>.
+/// </summary>
+internal class ClickHouseCteExtractionVisitor : ExpressionVisitor
+{
+    private readonly ClickHouseQueryCompilationContextOptions _options;
+    private bool _isOuterSelect = true;
+
+    public ClickHouseCteExtractionVisitor(ClickHouseQueryCompilationContextOptions options)
+    {
+        _options = options;
+    }
+
+    protected override Expression VisitExtension(Expression node)
+    {
+        // Handle ShapedQueryExpression specially
+        if (node is ShapedQueryExpression shapedQuery)
+        {
+            var newQueryExpression = Visit(shapedQuery.QueryExpression);
+            var newShaperExpression = Visit(shapedQuery.ShaperExpression);
+
+            if (newQueryExpression != shapedQuery.QueryExpression ||
+                newShaperExpression != shapedQuery.ShaperExpression)
+            {
+                return shapedQuery.Update(newQueryExpression, newShaperExpression);
+            }
+
+            return shapedQuery;
+        }
+
+        // EnumerableExpression.VisitChildren throws in EF Core 10+
+        if (node is EnumerableExpression)
+        {
+            return node;
+        }
+
+        // For the outer SelectExpression, look for tables to extract as CTEs
+        if (node is SelectExpression selectExpression && _isOuterSelect)
+        {
+            _isOuterSelect = false;
+            return ExtractCteFromSelect(selectExpression);
+        }
+
+        return base.VisitExtension(node);
+    }
+
+    private Expression ExtractCteFromSelect(SelectExpression selectExpression)
+    {
+        var cteName = _options.PendingCteName!;
+        _options.PendingCteName = null;
+
+        // Look for the first table source that can be extracted as a CTE
+        if (selectExpression.Tables.Count == 0)
+        {
+            return selectExpression;
+        }
+
+        var firstTable = selectExpression.Tables[0];
+
+        if (firstTable is SelectExpression subquery)
+        {
+            // Subquery in FROM — extract as CTE body
+            _options.CteDefinitions.Add(new CteDefinition(cteName, subquery));
+
+            // Replace with CTE reference using the same alias
+            var cteRef = new ClickHouseCteReferenceExpression(cteName, subquery.Alias);
+            return ReplaceTables(selectExpression, 0, cteRef);
+        }
+
+        if (firstTable is TableExpression tableExpr)
+        {
+            // Direct table — store table reference for SQL generator to render SELECT * FROM "table"
+            _options.CteDefinitions.Add(new CteDefinition(cteName, (TableExpressionBase)tableExpr));
+
+            var cteRef = new ClickHouseCteReferenceExpression(cteName, tableExpr.Alias);
+            return ReplaceTables(selectExpression, 0, cteRef);
+        }
+
+        if (firstTable is ClickHouseTableModifierExpression modifierExpr)
+        {
+            // Table with FINAL/SAMPLE modifiers — store for SQL generator
+            var alias = modifierExpr.Table is TableExpression te ? te.Alias : modifierExpr.Alias;
+            _options.CteDefinitions.Add(new CteDefinition(cteName, (TableExpressionBase)modifierExpr));
+
+            var cteRef = new ClickHouseCteReferenceExpression(cteName, alias);
+            return ReplaceTables(selectExpression, 0, cteRef);
+        }
+
+        // Fallback: can't extract CTE from this table type
+        return selectExpression;
+    }
+
+    /// <summary>
+    /// Replaces the table at the given index in a SelectExpression with a new table expression.
+    /// Uses reflection to create a new SelectExpression with the modified tables list.
+    /// </summary>
+    private static SelectExpression ReplaceTables(
+        SelectExpression selectExpression,
+        int tableIndex,
+        TableExpressionBase replacement)
+    {
+        // Use the SelectExpression's Update-style API via visitor pattern
+        // We create a visitor that replaces only the target table
+        var replacer = new TableReplacerVisitor(selectExpression.Tables[tableIndex], replacement);
+        return (SelectExpression)replacer.Visit(selectExpression);
+    }
+}
+
+/// <summary>
+/// Replaces a specific table expression with a replacement in the expression tree.
+/// </summary>
+internal class TableReplacerVisitor : ExpressionVisitor
+{
+    private readonly TableExpressionBase _target;
+    private readonly TableExpressionBase _replacement;
+
+    public TableReplacerVisitor(TableExpressionBase target, TableExpressionBase replacement)
+    {
+        _target = target;
+        _replacement = replacement;
+    }
+
+    protected override Expression VisitExtension(Expression node)
+    {
+        if (node == _target)
+        {
+            return _replacement;
+        }
+
+        // EnumerableExpression.VisitChildren throws in EF Core 10+
+        if (node is EnumerableExpression)
+        {
+            return node;
+        }
+
+        return base.VisitExtension(node);
     }
 }

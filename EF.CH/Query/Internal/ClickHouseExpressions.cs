@@ -313,3 +313,85 @@ public class ClickHouseDictionaryTableExpression : TableExpressionBase
     public override int GetHashCode()
         => HashCode.Combine(DictionaryName, EntityClrType, Alias);
 }
+
+/// <summary>
+/// Represents a CTE reference in the FROM clause.
+/// Replaces a subquery or table expression with a reference to a named CTE defined in a WITH clause.
+/// </summary>
+public class ClickHouseCteReferenceExpression : TableExpressionBase
+{
+    /// <summary>
+    /// Gets the CTE name as defined in the WITH clause.
+    /// </summary>
+    public string CteName { get; }
+
+    public ClickHouseCteReferenceExpression(string cteName, string? alias)
+        : base(alias)
+    {
+        CteName = cteName ?? throw new ArgumentNullException(nameof(cteName));
+    }
+
+    private ClickHouseCteReferenceExpression(
+        string cteName,
+        string? alias,
+        IEnumerable<IAnnotation>? annotations)
+        : base(alias, annotations)
+    {
+        CteName = cteName;
+    }
+
+    protected override Expression VisitChildren(ExpressionVisitor visitor)
+        => this; // Leaf node
+
+    protected override TableExpressionBase CreateWithAnnotations(IEnumerable<IAnnotation> annotations)
+        => new ClickHouseCteReferenceExpression(CteName, Alias, annotations);
+
+    protected override void Print(ExpressionPrinter expressionPrinter)
+    {
+        expressionPrinter.Append(CteName);
+        if (!string.IsNullOrEmpty(Alias))
+        {
+            expressionPrinter.Append(" AS ");
+            expressionPrinter.Append(Alias);
+        }
+    }
+
+    public override bool Equals(object? obj)
+        => obj is ClickHouseCteReferenceExpression other
+           && CteName == other.CteName
+           && Alias == other.Alias;
+
+    public override int GetHashCode()
+        => HashCode.Combine(CteName, Alias);
+}
+
+/// <summary>
+/// Stores a CTE definition (name + body) to be rendered in the WITH clause.
+/// </summary>
+internal class CteDefinition
+{
+    public string Name { get; }
+
+    /// <summary>
+    /// The CTE body as a SelectExpression, or null if using a direct table reference.
+    /// </summary>
+    public SelectExpression? Body { get; }
+
+    /// <summary>
+    /// The original table expression, used when the source is a direct table (not a subquery).
+    /// The SQL generator will render: SELECT * FROM "table"
+    /// </summary>
+    public TableExpressionBase? SourceTable { get; }
+
+    public CteDefinition(string name, SelectExpression body)
+    {
+        Name = name;
+        Body = body;
+    }
+
+    public CteDefinition(string name, TableExpressionBase sourceTable)
+    {
+        Name = name;
+        SourceTable = sourceTable;
+    }
+}

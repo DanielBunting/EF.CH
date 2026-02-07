@@ -161,6 +161,12 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
             {
                 return TranslateGroupByModifier(methodCallExpression, GroupByModifier.Totals);
             }
+
+            // Handle AsCte extension method
+            if (genericDef == ClickHouseQueryableExtensions.AsCteMethodInfo)
+            {
+                return TranslateAsCte(methodCallExpression);
+            }
         }
 
         return base.VisitMethodCall(methodCallExpression);
@@ -433,6 +439,36 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
         }
 
         _options.PreWhereExpression = translatedPredicate;
+
+        return source;
+    }
+
+    /// <summary>
+    /// Translates the AsCte() extension method.
+    /// Stores the CTE name in options; actual extraction happens in postprocessor.
+    /// </summary>
+    private Expression TranslateAsCte(MethodCallExpression methodCallExpression)
+    {
+        var source = Visit(methodCallExpression.Arguments[0]);
+
+        var nameArg = methodCallExpression.Arguments[1];
+        if (!TryGetConstantValue<string>(nameArg, out var name))
+        {
+            throw new InvalidOperationException("AsCte name must be a constant string.");
+        }
+
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            throw new ArgumentException("CTE name cannot be empty.", nameof(name));
+        }
+
+        if (_options.PendingCteName != null)
+        {
+            throw new InvalidOperationException(
+                $"Cannot define multiple CTEs in a single query. Already defined CTE '{_options.PendingCteName}'.");
+        }
+
+        _options.PendingCteName = name;
 
         return source;
     }
@@ -788,6 +824,21 @@ public class ClickHouseQueryCompilationContextOptions
     /// GROUP BY modifier (ROLLUP, CUBE, or TOTALS).
     /// </summary>
     public GroupByModifier GroupByModifier { get; set; } = GroupByModifier.None;
+
+    /// <summary>
+    /// The pending CTE name (set during translation, consumed during postprocessing).
+    /// </summary>
+    internal string? PendingCteName { get; set; }
+
+    /// <summary>
+    /// CTE definitions extracted during postprocessing.
+    /// </summary>
+    internal List<CteDefinition> CteDefinitions { get; } = new();
+
+    /// <summary>
+    /// Whether any CTEs have been defined.
+    /// </summary>
+    public bool HasCtes => CteDefinitions.Count > 0;
 }
 
 /// <summary>

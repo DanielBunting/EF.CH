@@ -11,6 +11,9 @@ An Entity Framework Core provider for [ClickHouse](https://clickhouse.com/), bui
 - **Projections** - Pre-sorted and pre-aggregated table-level optimizations
 - **EF Core Migrations** - DDL generation with ClickHouse-specific clauses
 - **DELETE Support** - Lightweight and mutation-based strategies
+- **UPDATE Support** - Bulk mutations via `ExecuteUpdateAsync` (ALTER TABLE UPDATE)
+- **Set Operations** - UNION ALL, UNION DISTINCT, INTERSECT, EXCEPT with convenience extensions
+- **CTEs** - Common Table Expressions via `AsCte()` for analytical queries
 - **Dictionaries** - In-memory key-value stores with dictGet translation
 - **External Entities** - Query PostgreSQL, MySQL, Redis, and ODBC sources via table functions
 - **Scaffolding** - Reverse engineering with C# enum generation
@@ -105,9 +108,17 @@ ClickHouse uses eventual consistency. `SaveChanges()` batches INSERTs but there'
 
 ### No Row-Level UPDATE
 
-ClickHouse doesn't support efficient `UPDATE` statements. Attempting to update an entity throws `NotSupportedException`. Instead:
+ClickHouse doesn't support efficient row-level `UPDATE` via `SaveChanges()`. Modifying a tracked entity and calling `SaveChanges()` throws `NotSupportedException`. Instead:
+- Use `ExecuteUpdateAsync` for bulk mutations (generates `ALTER TABLE ... UPDATE`)
 - Use `ReplacingMergeTree` with a version column for "last write wins" semantics
 - Use delete-and-reinsert patterns for infrequent updates
+
+```csharp
+// Bulk update via ExecuteUpdateAsync
+await context.Products
+    .Where(p => p.Category == "electronics")
+    .ExecuteUpdateAsync(s => s.SetProperty(p => p.Price, p => p.Price * 1.1m));
+```
 
 ### Batch-Oriented, Not Row-at-a-Time
 
@@ -168,7 +179,7 @@ See [docs/types/](docs/types/) for the complete type mapping reference.
 | Feature | SQL Server/PostgreSQL | ClickHouse |
 |---------|----------------------|------------|
 | Transactions | Full ACID | Eventual consistency |
-| UPDATE | Efficient row updates | Not supported - use ReplacingMergeTree |
+| UPDATE | Efficient row updates | Bulk via `ExecuteUpdateAsync`; no row-level tracking |
 | DELETE | Immediate | Lightweight (marks) or mutation (async rewrite) |
 | Auto-increment | `IDENTITY`, `SERIAL` | Not available - use UUID |
 | Foreign Keys | Enforced constraints | Application-level only |
@@ -269,6 +280,33 @@ var events = await context.Events
 
 See [docs/features/query-modifiers.md](docs/features/query-modifiers.md) for full documentation.
 
+## UPDATE Operations
+
+ClickHouse supports bulk updates via `ALTER TABLE ... UPDATE` mutations. Use EF Core's `ExecuteUpdateAsync`:
+
+```csharp
+// Single column update
+await context.Products
+    .Where(p => p.Status == "discontinued")
+    .ExecuteUpdateAsync(s => s.SetProperty(p => p.Status, "archived"));
+
+// Multiple columns
+await context.Orders
+    .Where(o => o.Region == "NA")
+    .ExecuteUpdateAsync(s => s
+        .SetProperty(o => o.Region, "North America")
+        .SetProperty(o => o.UpdatedAt, DateTime.UtcNow));
+
+// Expression-based (computed values)
+await context.Products
+    .Where(p => p.Category == "electronics")
+    .ExecuteUpdateAsync(s => s.SetProperty(p => p.Price, p => p.Price * 1.1m));
+```
+
+**Note:** Row-level tracked updates via `SaveChanges()` remain blocked by design (single-row mutations are inefficient). Use `ExecuteUpdateAsync` for bulk operations.
+
+See [docs/features/update-operations.md](docs/features/update-operations.md) for full documentation.
+
 ## DELETE Operations
 
 ```csharp
@@ -285,6 +323,62 @@ await context.Orders
 // Configure mutation-based delete
 options.UseClickHouse("...", o => o.UseDeleteStrategy(ClickHouseDeleteStrategy.Mutation));
 ```
+
+## Set Operations
+
+Combine queries with ClickHouse-compatible set operations:
+
+```csharp
+using EF.CH.Extensions;
+
+// UNION ALL (keeps duplicates)
+var all = await query1.Concat(query2).ToListAsync();
+
+// UNION DISTINCT (removes duplicates)
+var distinct = await query1.Union(query2).ToListAsync();
+
+// INTERSECT / EXCEPT
+var common = await query1.Intersect(query2).ToListAsync();
+var diff = await query1.Except(query2).ToListAsync();
+
+// Convenience: chain multiple unions
+var combined = await query1.UnionAll(query2, query3, query4).ToListAsync();
+
+// Fluent builder
+var result = await query1
+    .AsSetOperation()
+    .UnionAll(query2)
+    .Except(query3)
+    .Build()
+    .OrderBy(e => e.Timestamp)
+    .Take(100)
+    .ToListAsync();
+```
+
+See [docs/features/set-operations.md](docs/features/set-operations.md) for full documentation.
+
+## Common Table Expressions (CTEs)
+
+Wrap subqueries as named CTEs for analytical queries:
+
+```csharp
+using EF.CH.Extensions;
+
+var result = await context.Events
+    .Where(e => e.Category == "electronics")
+    .AsCte("filtered")
+    .OrderByDescending(e => e.Amount)
+    .Take(10)
+    .ToListAsync();
+
+// Generates:
+// WITH "filtered" AS (
+//     SELECT ... FROM "Events" WHERE "Category" = 'electronics'
+// )
+// SELECT ... FROM "filtered" ORDER BY "Amount" DESC LIMIT 10
+```
+
+See [docs/features/cte.md](docs/features/cte.md) for full documentation.
 
 ## Window Functions
 
@@ -738,6 +832,9 @@ See [docs/features/external-entities.md](docs/features/external-entities.md) for
 | [Window Functions](docs/features/window-functions.md) | Ranking, lead/lag, running totals |
 | [Data Skipping Indices](docs/features/skip-indices.md) | Bloom filter, minmax, set, and token indices |
 | [Time Series Gap Filling](docs/features/interpolate.md) | WITH FILL and INTERPOLATE for continuous data |
+| [Update Operations](docs/features/update-operations.md) | Bulk updates via ExecuteUpdateAsync |
+| [Set Operations](docs/features/set-operations.md) | UNION, INTERSECT, EXCEPT with convenience extensions |
+| [CTEs](docs/features/cte.md) | Common Table Expressions via AsCte() |
 | [Query Modifiers](docs/features/query-modifiers.md) | FINAL, SAMPLE, PREWHERE, SETTINGS query hints |
 | [Computed Columns](docs/features/computed-columns.md) | MATERIALIZED, ALIAS, DEFAULT expression columns |
 | [Aggregate Combinators](docs/features/aggregate-combinators.md) | State, Merge, If, Array combinators for pre-aggregation |
@@ -774,6 +871,9 @@ See [docs/features/external-entities.md](docs/features/external-entities.md) for
 | [JsonTypeSample](samples/JsonTypeSample/) | Native JSON with subcolumn queries |
 | [ClusterSample](samples/ClusterSample/) | Multi-node cluster with replication |
 | [DistributedSample](samples/DistributedSample/) | Sharding with Distributed tables |
+| [LightweightUpdateSample](samples/LightweightUpdateSample/) | Bulk updates via ExecuteUpdateAsync |
+| [SetOperationsSample](samples/SetOperationsSample/) | UNION, INTERSECT, EXCEPT, fluent builder |
+| [CteSample](samples/CteSample/) | Common Table Expressions for analytics |
 
 ## License
 
