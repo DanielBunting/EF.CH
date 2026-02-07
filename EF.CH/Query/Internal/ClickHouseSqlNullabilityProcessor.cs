@@ -95,6 +95,7 @@ public class ClickHouseSqlNullabilityProcessor : SqlNullabilityProcessor
 
             case ClickHouseExternalTableFunctionExpression:
             case ClickHouseDictionaryTableExpression:
+            case ClickHouseCteReferenceExpression:
                 // These are leaf nodes, no children to visit
                 return tableExpressionBase;
 

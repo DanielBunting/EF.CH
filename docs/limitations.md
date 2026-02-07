@@ -19,22 +19,29 @@ await context.SaveChangesAsync();  // If order2 fails, order1 is still inserted
 
 **Workaround:** Design for idempotency. Use unique IDs to detect duplicates.
 
-### No Row-Level UPDATE
+### No Row-Level UPDATE (via SaveChanges)
 
 ```csharp
 var order = await context.Orders.FindAsync(id);
 order.Status = "Completed";
-await context.SaveChangesAsync();  // Throws NotSupportedException
+await context.SaveChangesAsync();  // Throws ClickHouseUnsupportedOperationException
 ```
 
-**Workarounds:**
+**Solutions:**
 
-1. **ReplacingMergeTree**: Insert new version, merge deduplicates
+1. **`ExecuteUpdateAsync`** (recommended for bulk updates): Generates `ALTER TABLE ... UPDATE`
+   ```csharp
+   await context.Orders
+       .Where(o => o.Status == "pending")
+       .ExecuteUpdateAsync(s => s.SetProperty(o => o.Status, "Completed"));
+   ```
+
+2. **ReplacingMergeTree**: Insert new version, merge deduplicates
    ```csharp
    entity.UseReplacingMergeTree(x => x.Version, x => x.Id);
    ```
 
-2. **Delete and re-insert**:
+3. **Delete and re-insert**:
    ```csharp
    context.Orders.Remove(order);
    await context.SaveChangesAsync();
@@ -44,7 +51,9 @@ await context.SaveChangesAsync();  // Throws NotSupportedException
    await context.SaveChangesAsync();
    ```
 
-3. **Append-only design**: Track changes as events instead of updating state.
+4. **Append-only design**: Track changes as events instead of updating state.
+
+See [Update Operations](features/update-operations.md) for full documentation.
 
 ### No Auto-Increment / IDENTITY
 
@@ -283,7 +292,7 @@ context.Events.Where(e => e.UserId == userId)
 | Feature | SQL Server | ClickHouse | Notes |
 |---------|-----------|------------|-------|
 | Transactions | ✅ | ❌ | Eventual consistency |
-| UPDATE | ✅ | ❌ | Use ReplacingMergeTree |
+| UPDATE | ✅ | ⚠️ | Bulk via `ExecuteUpdateAsync`; no row-level tracking |
 | DELETE | ✅ | ⚠️ | Async/eventual |
 | Auto-increment | ✅ | ❌ | Use UUID |
 | Foreign keys | ✅ | ❌ | Application-level |
@@ -297,4 +306,5 @@ context.Events.Where(e => e.UserId == userId)
 
 - [ClickHouse Concepts](clickhouse-concepts.md) - Understanding ClickHouse architecture
 - [ReplacingMergeTree](engines/replacing-mergetree.md) - Deduplication workaround
+- [Update Operations](features/update-operations.md) - Bulk update via ExecuteUpdateAsync
 - [Delete Operations](features/delete-operations.md) - Delete strategies

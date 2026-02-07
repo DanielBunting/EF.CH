@@ -19,6 +19,7 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     private readonly IRelationalTypeMappingSource _typeMappingSource;
     private readonly HashSet<string> _visitedParameters = new();
     private bool _inDeleteContext;
+    private bool _inUpdateContext;
 
     // Thread-local storage for query settings (set during translation, read during SQL generation)
     [ThreadStatic]
@@ -45,6 +46,10 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     // Thread-local storage for GROUP BY modifier (stored as int for Interlocked.Exchange compatibility)
     [ThreadStatic]
     private static int _currentGroupByModifierValue;
+
+    // Thread-local storage for CTE definitions
+    [ThreadStatic]
+    private static List<CteDefinition>? _currentCteDefinitions;
 
     public ClickHouseQuerySqlGenerator(
         QuerySqlGeneratorDependencies dependencies,
@@ -98,6 +103,14 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     internal static void SetGroupByModifier(GroupByModifier modifier)
     {
         _currentGroupByModifierValue = (int)modifier;
+    }
+
+    /// <summary>
+    /// Sets CTE definitions to be prepended as a WITH clause.
+    /// </summary>
+    internal static void SetCteDefinitions(List<CteDefinition> definitions)
+    {
+        _currentCteDefinitions = definitions.Count > 0 ? definitions : null;
     }
 
     /// <summary>
@@ -260,6 +273,7 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
             ClickHouseFinalExpression finalExpression => VisitFinal(finalExpression),
             ClickHouseSampleExpression sampleExpression => VisitSample(sampleExpression),
             ClickHouseJsonPathExpression jsonPathExpression => VisitJsonPath(jsonPathExpression),
+            ClickHouseCteReferenceExpression cteRef => VisitCteReference(cteRef),
             _ => base.VisitExtension(extensionExpression)
         };
     }
@@ -344,6 +358,59 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
         }
 
         return expression;
+    }
+
+    /// <summary>
+    /// Generates a CTE reference in the FROM clause.
+    /// E.g., "cte_name" AS "alias"
+    /// </summary>
+    private Expression VisitCteReference(ClickHouseCteReferenceExpression expression)
+    {
+        Sql.Append(_sqlGenerationHelper.DelimitIdentifier(expression.CteName));
+        Sql.Append(" AS ");
+        Sql.Append(_sqlGenerationHelper.DelimitIdentifier(expression.Alias!));
+        return expression;
+    }
+
+    /// <summary>
+    /// Generates the WITH clause for CTE definitions.
+    /// </summary>
+    private void GenerateWithClause(List<CteDefinition> definitions)
+    {
+        for (var i = 0; i < definitions.Count; i++)
+        {
+            if (i == 0)
+            {
+                Sql.Append("WITH ");
+            }
+            else
+            {
+                Sql.Append(", ");
+            }
+
+            var cte = definitions[i];
+            Sql.Append(_sqlGenerationHelper.DelimitIdentifier(cte.Name));
+            Sql.Append(" AS (");
+            Sql.AppendLine();
+
+            using (Sql.Indent())
+            {
+                if (cte.Body != null)
+                {
+                    Visit(cte.Body);
+                }
+                else if (cte.SourceTable != null)
+                {
+                    // Direct table reference — generate SELECT * FROM "table"
+                    Sql.Append("SELECT * FROM ");
+                    Visit(cte.SourceTable);
+                }
+            }
+
+            Sql.AppendLine();
+            Sql.Append(")");
+            Sql.AppendLine();
+        }
     }
 
     /// <summary>
@@ -461,6 +528,32 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
             _ => throw new InvalidOperationException($"Unknown frame bound: {bound}")
         };
         Sql.Append(text);
+    }
+
+    /// <summary>
+    /// Generates set operations with explicit ALL/DISTINCT qualifiers.
+    /// ClickHouse requires UNION ALL or UNION DISTINCT — bare UNION is not accepted.
+    /// Same applies to INTERSECT and EXCEPT.
+    /// </summary>
+    protected override void GenerateSetOperation(SetOperationBase setOperation)
+    {
+        GenerateSetOperationOperand(setOperation, setOperation.Source1);
+
+        Sql.AppendLine();
+
+        var operationKeyword = setOperation switch
+        {
+            UnionExpression => "UNION",
+            IntersectExpression => "INTERSECT",
+            ExceptExpression => "EXCEPT",
+            _ => throw new InvalidOperationException($"Unknown set operation type: {setOperation.GetType().Name}")
+        };
+
+        Sql.Append(operationKeyword);
+        Sql.Append(setOperation.IsDistinct ? " DISTINCT" : " ALL");
+        Sql.AppendLine();
+
+        GenerateSetOperationOperand(setOperation, setOperation.Source2);
     }
 
     /// <summary>
@@ -774,14 +867,73 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     }
 
     /// <summary>
+    /// Generates UPDATE statement for ClickHouse using ALTER TABLE ... UPDATE mutation syntax.
+    /// ClickHouse does not support standard UPDATE; instead uses ALTER TABLE mutations.
+    /// </summary>
+    protected override Expression VisitUpdate(UpdateExpression updateExpression)
+    {
+        var selectExpression = updateExpression.SelectExpression;
+        var table = updateExpression.Table;
+
+        // ClickHouse mutations don't support joins
+        if (selectExpression.Tables.Count > 1)
+        {
+            throw new InvalidOperationException(
+                "ClickHouse does not support UPDATE with joins. " +
+                "Simplify the query to update a single table without joins.");
+        }
+
+        // ALTER TABLE "table" UPDATE col1 = val1, col2 = val2 WHERE predicate
+        Sql.Append("ALTER TABLE ");
+        Sql.Append(_sqlGenerationHelper.DelimitIdentifier(table.Name, table.Schema));
+        Sql.Append(" UPDATE ");
+
+        _inUpdateContext = true;
+        try
+        {
+            // Generate SET clause: col1 = val1, col2 = val2
+            for (var i = 0; i < updateExpression.ColumnValueSetters.Count; i++)
+            {
+                if (i > 0)
+                {
+                    Sql.Append(", ");
+                }
+
+                var setter = updateExpression.ColumnValueSetters[i];
+                Sql.Append(_sqlGenerationHelper.DelimitIdentifier(setter.Column.Name));
+                Sql.Append(" = ");
+                Visit(setter.Value);
+            }
+
+            // Generate WHERE clause (ClickHouse requires WHERE for mutations)
+            if (selectExpression.Predicate != null)
+            {
+                Sql.AppendLine().Append("WHERE ");
+                Visit(selectExpression.Predicate);
+            }
+            else
+            {
+                Sql.AppendLine().Append("WHERE 1");
+            }
+        }
+        finally
+        {
+            _inUpdateContext = false;
+        }
+
+        return updateExpression;
+    }
+
+    /// <summary>
     /// Generates column reference.
-    /// In DELETE context, omits table alias since ClickHouse DELETE doesn't support aliases.
+    /// In DELETE/UPDATE context, omits table alias since ClickHouse mutations don't support aliases.
     /// </summary>
     protected override Expression VisitColumn(ColumnExpression columnExpression)
     {
-        if (_inDeleteContext)
+        if (_inDeleteContext || _inUpdateContext)
         {
-            // In DELETE context, use unqualified column name
+            // In DELETE/UPDATE context, use unqualified column name
+            // ClickHouse mutations don't support table aliases
             Sql.Append(_sqlGenerationHelper.DelimitIdentifier(columnExpression.Name));
             return columnExpression;
         }
@@ -796,6 +948,13 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     /// </summary>
     protected override Expression VisitSelect(SelectExpression selectExpression)
     {
+        // Capture and clear CTE definitions (only at outermost SELECT)
+        var cteDefinitions = Interlocked.Exchange(ref _currentCteDefinitions, null);
+        if (cteDefinitions?.Count > 0)
+        {
+            GenerateWithClause(cteDefinitions);
+        }
+
         // Capture and clear PREWHERE expression atomically
         var preWhereExpr = Interlocked.Exchange(ref _currentPreWhereExpression, null);
 

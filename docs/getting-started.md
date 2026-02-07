@@ -243,9 +243,10 @@ entity.UseMergeTree(x => x.Id);  // At minimum, ORDER BY primary key
 
 ### "Cannot update entity"
 
-ClickHouse doesn't support row-level UPDATE. Options:
+ClickHouse doesn't support row-level UPDATE via `SaveChanges()`. Options:
+- Use `ExecuteUpdateAsync` for bulk mutations (generates `ALTER TABLE ... UPDATE`)
 - Use `ReplacingMergeTree` for last-write-wins semantics
 - Delete and re-insert the row
 - Design for append-only patterns
 
-See [Limitations](limitations.md) for more details.
+See [Update Operations](features/update-operations.md) and [Limitations](limitations.md) for more details.
