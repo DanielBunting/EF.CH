@@ -1,6 +1,7 @@
 using System.Reflection;
 using EF.CH.Extensions;
 using EF.CH.Metadata;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
@@ -166,6 +167,9 @@ public class ClickHouseAnnotationCodeGenerator : AnnotationCodeGenerator
             if (annotations.TryGetValue(ClickHouseAnnotationNames.OrderBy, out var orderByAnnotation)
                 && orderByAnnotation.Value is string[] orderBy)
             {
+                // Resolve property names to column names
+                orderBy = ResolveColumnNames(orderBy, entityType);
+
                 var signColumn = annotations.TryGetValue(ClickHouseAnnotationNames.SignColumn, out var signAnnotation)
                     ? signAnnotation.Value as string
                     : null;
@@ -173,6 +177,10 @@ public class ClickHouseAnnotationCodeGenerator : AnnotationCodeGenerator
                 var versionColumn = annotations.TryGetValue(ClickHouseAnnotationNames.VersionColumn, out var versionAnnotation)
                     ? versionAnnotation.Value as string
                     : null;
+
+                // Resolve property names to column names
+                if (signColumn != null) signColumn = ResolveColumnName(signColumn, entityType);
+                if (versionColumn != null) versionColumn = ResolveColumnName(versionColumn, entityType);
 
                 switch (engine)
                 {
@@ -236,7 +244,7 @@ public class ClickHouseAnnotationCodeGenerator : AnnotationCodeGenerator
         if (annotations.TryGetValue(ClickHouseAnnotationNames.PartitionBy, out var partitionByAnnotation)
             && partitionByAnnotation.Value is string partitionBy)
         {
-            calls.Add(new MethodCallCodeFragment(HasPartitionByMethodInfo, partitionBy));
+            calls.Add(new MethodCallCodeFragment(HasPartitionByMethodInfo, ResolveExpressionColumnNames(partitionBy, entityType)));
             annotations.Remove(ClickHouseAnnotationNames.PartitionBy);
         }
 
@@ -244,7 +252,7 @@ public class ClickHouseAnnotationCodeGenerator : AnnotationCodeGenerator
         if (annotations.TryGetValue(ClickHouseAnnotationNames.SampleBy, out var sampleByAnnotation)
             && sampleByAnnotation.Value is string sampleBy)
         {
-            calls.Add(new MethodCallCodeFragment(HasSampleByMethodInfo, sampleBy));
+            calls.Add(new MethodCallCodeFragment(HasSampleByMethodInfo, ResolveExpressionColumnNames(sampleBy, entityType)));
             annotations.Remove(ClickHouseAnnotationNames.SampleBy);
         }
 
@@ -252,11 +260,44 @@ public class ClickHouseAnnotationCodeGenerator : AnnotationCodeGenerator
         if (annotations.TryGetValue(ClickHouseAnnotationNames.Ttl, out var ttlAnnotation)
             && ttlAnnotation.Value is string ttl)
         {
-            calls.Add(new MethodCallCodeFragment(HasTtlMethodInfo, ttl));
+            calls.Add(new MethodCallCodeFragment(HasTtlMethodInfo, ResolveExpressionColumnNames(ttl, entityType)));
             annotations.Remove(ClickHouseAnnotationNames.Ttl);
         }
 
         return calls;
+    }
+
+    /// <summary>
+    /// Resolves a property name to its mapped column name using the entity type metadata.
+    /// </summary>
+    private static string ResolveColumnName(string propertyOrColumnName, IEntityType entityType)
+    {
+        var property = entityType.FindProperty(propertyOrColumnName);
+        return property?.GetColumnName() ?? propertyOrColumnName;
+    }
+
+    /// <summary>
+    /// Resolves an array of property names to their mapped column names.
+    /// </summary>
+    private static string[] ResolveColumnNames(string[] propertyOrColumnNames, IEntityType entityType)
+    {
+        return propertyOrColumnNames.Select(n => ResolveColumnName(n, entityType)).ToArray();
+    }
+
+    /// <summary>
+    /// Resolves quoted property names within an expression string to their mapped column names.
+    /// </summary>
+    private static string ResolveExpressionColumnNames(string expression, IEntityType entityType)
+    {
+        foreach (var property in entityType.GetProperties())
+        {
+            var columnName = property.GetColumnName();
+            if (columnName != null && columnName != property.Name)
+            {
+                expression = expression.Replace($"\"{property.Name}\"", $"\"{columnName}\"");
+            }
+        }
+        return expression;
     }
 
     /// <summary>

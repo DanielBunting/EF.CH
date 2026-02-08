@@ -909,6 +909,15 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         var distributedPolicy = GetAnnotation<string>(operation, ClickHouseAnnotationNames.DistributedPolicyName)
                              ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.DistributedPolicyName);
 
+        // Resolve property names to column names
+        if (orderBy != null) orderBy = ResolveColumnNames(orderBy, entityType);
+        if (primaryKey != null) primaryKey = ResolveColumnNames(primaryKey, entityType);
+        if (versionColumn != null) versionColumn = ResolveColumnName(versionColumn, entityType);
+        if (isDeletedColumn != null) isDeletedColumn = ResolveColumnName(isDeletedColumn, entityType);
+        if (signColumn != null) signColumn = ResolveColumnName(signColumn, entityType);
+        if (partitionBy != null) partitionBy = ResolveExpressionColumnNames(partitionBy, entityType);
+        if (ttl != null) ttl = ResolveExpressionColumnNames(ttl, entityType);
+
         builder.Append("ENGINE = ");
 
         // Generate engine with parameters
@@ -1055,6 +1064,16 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
                                   ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.DistributedShardingKey);
         var distributedPolicy = GetAnnotation<string>(operation, ClickHouseAnnotationNames.DistributedPolicyName)
                              ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.DistributedPolicyName);
+
+        // Resolve property names to column names
+        if (orderBy != null) orderBy = ResolveColumnNames(orderBy, entityType);
+        if (primaryKey != null) primaryKey = ResolveColumnNames(primaryKey, entityType);
+        if (versionColumn != null) versionColumn = ResolveColumnName(versionColumn, entityType);
+        if (isDeletedColumn != null) isDeletedColumn = ResolveColumnName(isDeletedColumn, entityType);
+        if (signColumn != null) signColumn = ResolveColumnName(signColumn, entityType);
+        if (partitionBy != null) partitionBy = ResolveExpressionColumnNames(partitionBy, entityType);
+        if (sampleBy != null) sampleBy = ResolveExpressionColumnNames(sampleBy, entityType);
+        if (ttl != null) ttl = ResolveExpressionColumnNames(ttl, entityType);
 
         builder.AppendLine();
         builder.Append("ENGINE = ");
@@ -1213,6 +1232,44 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
             builder.Append("SETTINGS ");
             builder.Append(string.Join(", ", settings.Select(kvp => $"{kvp.Key} = {kvp.Value}")));
         }
+    }
+
+    /// <summary>
+    /// Resolves a property name to its mapped column name using the entity type metadata.
+    /// Falls back to the original name if no entity type is available or property is not found.
+    /// </summary>
+    private static string ResolveColumnName(string propertyOrColumnName, IEntityType? entityType)
+    {
+        if (entityType == null) return propertyOrColumnName;
+        var property = entityType.FindProperty(propertyOrColumnName);
+        return property?.GetColumnName() ?? propertyOrColumnName;
+    }
+
+    /// <summary>
+    /// Resolves an array of property names to their mapped column names.
+    /// </summary>
+    private static string[] ResolveColumnNames(string[] propertyOrColumnNames, IEntityType? entityType)
+    {
+        if (entityType == null) return propertyOrColumnNames;
+        return propertyOrColumnNames.Select(n => ResolveColumnName(n, entityType)).ToArray();
+    }
+
+    /// <summary>
+    /// Resolves quoted property names within an expression string to their mapped column names.
+    /// Handles expressions like toYYYYMM("PeriodStart") → toYYYYMM("period_start").
+    /// </summary>
+    private static string ResolveExpressionColumnNames(string expression, IEntityType? entityType)
+    {
+        if (entityType == null) return expression;
+        foreach (var property in entityType.GetProperties())
+        {
+            var columnName = property.GetColumnName();
+            if (columnName != null && columnName != property.Name)
+            {
+                expression = expression.Replace($"\"{property.Name}\"", $"\"{columnName}\"");
+            }
+        }
+        return expression;
     }
 
     /// <summary>
