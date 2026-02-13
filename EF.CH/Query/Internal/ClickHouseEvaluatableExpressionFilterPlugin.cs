@@ -83,6 +83,12 @@ public class ClickHouseEvaluatableExpressionFilterPlugin : IEvaluatableExpressio
                 return false;
             }
 
+            // Never evaluate ClickHouseFunctions methods - these are translation stubs
+            if (declaringType == typeof(ClickHouseFunctions))
+            {
+                return false;
+            }
+
             if (method.IsGenericMethod)
             {
                 var genericDef = method.GetGenericMethodDefinition();
@@ -94,7 +100,8 @@ public class ClickHouseEvaluatableExpressionFilterPlugin : IEvaluatableExpressio
                     genericDef == ClickHouseQueryableExtensions.WithSettingsMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.LimitByMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.LimitByWithOffsetMethodInfo ||
-                    genericDef == ClickHouseQueryableExtensions.AsCteMethodInfo)
+                    genericDef == ClickHouseQueryableExtensions.AsCteMethodInfo ||
+                    genericDef == ClickHouseQueryableExtensions.WithRawFilterMethodInfo)
                 {
                     return false;
                 }

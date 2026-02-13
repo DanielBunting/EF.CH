@@ -167,6 +167,12 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
             {
                 return TranslateAsCte(methodCallExpression);
             }
+
+            // Handle WithRawFilter extension method
+            if (genericDef == ClickHouseQueryableExtensions.WithRawFilterMethodInfo)
+            {
+                return TranslateWithRawFilter(methodCallExpression);
+            }
         }
 
         return base.VisitMethodCall(methodCallExpression);
@@ -469,6 +475,30 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
         }
 
         _options.PendingCteName = name;
+
+        return source;
+    }
+
+    /// <summary>
+    /// Translates the WithRawFilter() extension method.
+    /// Stores the raw SQL string in options for injection into the WHERE clause.
+    /// </summary>
+    private Expression TranslateWithRawFilter(MethodCallExpression methodCallExpression)
+    {
+        var source = Visit(methodCallExpression.Arguments[0]);
+
+        var sqlArg = methodCallExpression.Arguments[1];
+        if (!TryGetConstantValue<string>(sqlArg, out var rawSql))
+        {
+            throw new InvalidOperationException("WithRawFilter argument must be a constant string.");
+        }
+
+        if (string.IsNullOrWhiteSpace(rawSql))
+        {
+            throw new ArgumentException("WithRawFilter SQL condition cannot be empty.");
+        }
+
+        _options.RawFilterSql = rawSql;
 
         return source;
     }
@@ -839,6 +869,11 @@ public class ClickHouseQueryCompilationContextOptions
     /// Whether any CTEs have been defined.
     /// </summary>
     public bool HasCtes => CteDefinitions.Count > 0;
+
+    /// <summary>
+    /// Raw SQL condition to inject into the WHERE clause.
+    /// </summary>
+    public string? RawFilterSql { get; set; }
 }
 
 /// <summary>
