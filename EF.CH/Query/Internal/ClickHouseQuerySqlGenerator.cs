@@ -47,6 +47,10 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     [ThreadStatic]
     private static int _currentGroupByModifierValue;
 
+    // Thread-local storage for raw SQL filter
+    [ThreadStatic]
+    private static string? _currentRawFilter;
+
     // Thread-local storage for CTE definitions
     [ThreadStatic]
     private static List<CteDefinition>? _currentCteDefinitions;
@@ -103,6 +107,14 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     internal static void SetGroupByModifier(GroupByModifier modifier)
     {
         _currentGroupByModifierValue = (int)modifier;
+    }
+
+    /// <summary>
+    /// Sets a raw SQL filter to be AND-ed into the WHERE clause.
+    /// </summary>
+    internal static void SetRawFilter(string rawFilter)
+    {
+        _currentRawFilter = rawFilter;
     }
 
     /// <summary>
@@ -274,6 +286,7 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
             ClickHouseSampleExpression sampleExpression => VisitSample(sampleExpression),
             ClickHouseJsonPathExpression jsonPathExpression => VisitJsonPath(jsonPathExpression),
             ClickHouseCteReferenceExpression cteRef => VisitCteReference(cteRef),
+            ClickHouseRawSqlExpression rawSql => VisitRawSql(rawSql),
             _ => base.VisitExtension(extensionExpression)
         };
     }
@@ -369,6 +382,12 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
         Sql.Append(_sqlGenerationHelper.DelimitIdentifier(expression.CteName));
         Sql.Append(" AS ");
         Sql.Append(_sqlGenerationHelper.DelimitIdentifier(expression.Alias!));
+        return expression;
+    }
+
+    private Expression VisitRawSql(ClickHouseRawSqlExpression expression)
+    {
+        Sql.Append(expression.Sql);
         return expression;
     }
 
@@ -958,22 +977,25 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
         // Capture and clear PREWHERE expression atomically
         var preWhereExpr = Interlocked.Exchange(ref _currentPreWhereExpression, null);
 
+        // Capture and clear raw filter atomically
+        var rawFilter = Interlocked.Exchange(ref _currentRawFilter, null);
+
         // Check if we have a GROUP BY modifier - we need to handle this specially
         var hasGroupByModifier = _currentGroupByModifierValue != 0;
 
-        if (preWhereExpr == null && !hasGroupByModifier)
+        if (preWhereExpr == null && rawFilter == null && !hasGroupByModifier)
         {
-            // No PREWHERE and no GROUP BY modifier - use base implementation
+            // No PREWHERE, no raw filter, and no GROUP BY modifier - use base implementation
             return base.VisitSelect(selectExpression);
         }
 
-        if (preWhereExpr == null && hasGroupByModifier)
+        if (preWhereExpr == null && rawFilter == null && hasGroupByModifier)
         {
-            // No PREWHERE but has GROUP BY modifier - need custom implementation
+            // No PREWHERE, no raw filter, but has GROUP BY modifier - need custom implementation
             return VisitSelectWithGroupByModifier(selectExpression);
         }
 
-        // Generate SELECT with PREWHERE injection
+        // Generate SELECT with PREWHERE and/or raw filter injection
         IDisposable? subQueryIndent = null;
 
         if (selectExpression.Alias != null)
@@ -1017,14 +1039,30 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
         }
 
         // Generate PREWHERE (before WHERE)
-        Sql.AppendLine().Append("PREWHERE ");
-        Visit(preWhereExpr);
+        if (preWhereExpr != null)
+        {
+            Sql.AppendLine().Append("PREWHERE ");
+            Visit(preWhereExpr);
+        }
 
-        // Generate WHERE
-        if (selectExpression.Predicate != null)
+        // Generate WHERE (potentially with raw filter AND-ed)
+        if (selectExpression.Predicate != null && rawFilter != null)
+        {
+            Sql.AppendLine().Append("WHERE (");
+            Visit(selectExpression.Predicate);
+            Sql.Append(") AND (");
+            Sql.Append(rawFilter);
+            Sql.Append(")");
+        }
+        else if (selectExpression.Predicate != null)
         {
             Sql.AppendLine().Append("WHERE ");
             Visit(selectExpression.Predicate);
+        }
+        else if (rawFilter != null)
+        {
+            Sql.AppendLine().Append("WHERE ");
+            Sql.Append(rawFilter);
         }
 
         // Generate GROUP BY

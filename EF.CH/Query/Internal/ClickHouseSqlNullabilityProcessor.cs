@@ -186,6 +186,13 @@ public class ClickHouseSqlNullabilityProcessor : SqlNullabilityProcessor
             return VisitWindowFunction(windowExpression);
         }
 
+        if (sqlExpression is ClickHouseRawSqlExpression rawSqlExpression)
+        {
+            // Raw SQL fragments are opaque - assume nullable
+            nullable = true;
+            return rawSqlExpression;
+        }
+
         return base.VisitCustomSqlExpression(sqlExpression, allowOptimizedExpansion, out nullable);
     }
 

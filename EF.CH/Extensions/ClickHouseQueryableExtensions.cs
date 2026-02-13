@@ -507,4 +507,39 @@ public static class ClickHouseQueryableExtensions
     internal static readonly MethodInfo AsCteMethodInfo =
         typeof(ClickHouseQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
             .First(m => m.Name == nameof(AsCte));
+
+    /// <summary>
+    /// Injects a raw SQL condition into the WHERE clause of the query.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Use this for ClickHouse-specific SQL syntax that cannot be expressed through LINQ,
+    /// such as lambda expressions in predicates, special functions, or complex ClickHouse expressions.
+    /// </para>
+    /// <para>
+    /// The raw SQL is AND-ed with any existing WHERE conditions from LINQ.
+    /// </para>
+    /// </remarks>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <param name="source">The source queryable.</param>
+    /// <param name="rawSqlCondition">The raw SQL condition to inject (e.g. <c>"arrayExists(x -> x > 10, ArrayColumn)"</c>).</param>
+    /// <returns>A queryable with the raw SQL condition applied.</returns>
+    public static IQueryable<TEntity> WithRawFilter<TEntity>(
+        this IQueryable<TEntity> source,
+        string rawSqlCondition)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentException.ThrowIfNullOrEmpty(rawSqlCondition);
+
+        return source.Provider.CreateQuery<TEntity>(
+            Expression.Call(
+                null,
+                WithRawFilterMethodInfo.MakeGenericMethod(typeof(TEntity)),
+                source.Expression,
+                WrapInEfConstant(rawSqlCondition)));
+    }
+
+    internal static readonly MethodInfo WithRawFilterMethodInfo =
+        typeof(ClickHouseQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .First(m => m.Name == nameof(WithRawFilter));
 }

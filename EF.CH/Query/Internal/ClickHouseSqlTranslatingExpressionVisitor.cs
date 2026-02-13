@@ -495,6 +495,13 @@ public class ClickHouseSqlTranslatingExpressionVisitor : RelationalSqlTranslatin
             return TranslateWindowFunctionFromBuilder(methodCallExpression);
         }
 
+        // Check if this is a ClickHouseFunctions.RawSql<T>() call
+        if (declaringType == typeof(ClickHouseFunctions) &&
+            method.Name == nameof(ClickHouseFunctions.RawSql))
+        {
+            return TranslateRawSql(methodCallExpression);
+        }
+
         // Check if this is a Window.Xxx() call with lambda-style API
         if (declaringType == typeof(Window))
         {
@@ -509,6 +516,53 @@ public class ClickHouseSqlTranslatingExpressionVisitor : RelationalSqlTranslatin
         }
 
         return base.VisitMethodCall(methodCallExpression);
+    }
+
+    /// <summary>
+    /// Translates <see cref="ClickHouseFunctions.RawSql{T}"/> to a <see cref="ClickHouseRawSqlExpression"/>.
+    /// </summary>
+    private Expression TranslateRawSql(MethodCallExpression methodCallExpression)
+    {
+        // Extract the SQL string from the argument
+        var sqlArg = methodCallExpression.Arguments[0];
+
+        // Unwrap EF.Constant() if present
+        if (sqlArg is MethodCallExpression efConstantCall &&
+            efConstantCall.Method.DeclaringType?.FullName == "Microsoft.EntityFrameworkCore.EF" &&
+            efConstantCall.Method.Name == "Constant")
+        {
+            sqlArg = efConstantCall.Arguments[0];
+        }
+
+        string? sql = null;
+
+        if (sqlArg is ConstantExpression constant && constant.Value is string s)
+        {
+            sql = s;
+        }
+        else
+        {
+            // Try to evaluate the expression to get the string value
+            try
+            {
+                var lambda = Expression.Lambda<Func<string>>(sqlArg);
+                sql = lambda.Compile()();
+            }
+            catch
+            {
+                // Fall through to error
+            }
+        }
+
+        if (string.IsNullOrEmpty(sql))
+        {
+            throw new InvalidOperationException(
+                "ClickHouseFunctions.RawSql requires a non-empty constant string argument.");
+        }
+
+        var returnType = methodCallExpression.Method.ReturnType;
+        var typeMapping = _typeMappingSource.FindMapping(returnType);
+        return new ClickHouseRawSqlExpression(sql, returnType, typeMapping);
     }
 
     private Expression TranslateDictionaryMethod(MethodCallExpression methodCallExpression)

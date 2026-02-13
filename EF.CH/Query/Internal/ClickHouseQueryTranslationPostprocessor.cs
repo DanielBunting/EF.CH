@@ -90,6 +90,12 @@ public class ClickHouseQueryTranslationPostprocessor : RelationalQueryTranslatio
             ClickHouseQuerySqlGenerator.SetGroupByModifier(options.GroupByModifier);
         }
 
+        // Pass raw filter SQL via thread-local to SQL generator
+        if (options.RawFilterSql != null)
+        {
+            ClickHouseQuerySqlGenerator.SetRawFilter(options.RawFilterSql);
+        }
+
         // Extract CTE if AsCte() was called
         if (options.PendingCteName != null)
         {
