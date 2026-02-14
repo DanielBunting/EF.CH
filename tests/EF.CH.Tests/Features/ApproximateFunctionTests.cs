@@ -274,7 +274,7 @@ public class ApproximateFunctionTests : IAsyncLifetime
 
         var results = await context.Database
             .SqlQueryRaw<ApproxQuantileResult>(
-                "SELECT Region, quantileTDigest(0.5)(Latency) AS MedianLatency FROM approx_metrics GROUP BY Region")
+                "SELECT Region, toFloat64(quantileTDigest(0.5)(Latency)) AS MedianLatency FROM approx_metrics GROUP BY Region")
             .ToListAsync();
 
         Assert.Single(results);
