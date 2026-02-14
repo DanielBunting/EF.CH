@@ -453,10 +453,27 @@ public class ClickHouseAggregateMethodCallTranslator
             // Phase 2 - Parameterized aggregates
             "Quantile" => TranslateQuantile(arguments),
 
+            // Approximate count distinct
+            "UniqCombined" => TranslateSimpleAggregate("uniqCombined", argument, typeof(ulong)),
+            "UniqCombined64" => TranslateSimpleAggregate("uniqCombined64", argument, typeof(ulong)),
+            "UniqHLL12" => TranslateSimpleAggregate("uniqHLL12", argument, typeof(ulong)),
+            "UniqTheta" => TranslateSimpleAggregate("uniqTheta", argument, typeof(ulong)),
+
+            // Quantile variants
+            "QuantileTDigest" => TranslateParametricQuantile("quantileTDigest", arguments),
+            "QuantileDD" => TranslateQuantileDD(arguments),
+            "QuantileExact" => TranslateParametricQuantile("quantileExact", arguments),
+            "QuantileTiming" => TranslateParametricQuantile("quantileTiming", arguments),
+
+            // Multi-quantile
+            "Quantiles" => TranslateMultiQuantile("quantiles", arguments),
+            "QuantilesTDigest" => TranslateMultiQuantile("quantilesTDigest", arguments),
+
             // Phase 3 - Array aggregates
             "GroupArray" => TranslateGroupArray(arguments, returnType),
             "GroupUniqArray" => TranslateSimpleAggregate("groupUniqArray", argument, returnType),
             "TopK" => TranslateTopK(arguments, returnType),
+            "TopKWeighted" => TranslateTopKWeighted(arguments, returnType),
 
             // State combinators - return byte[] for AggregatingMergeTree storage
             "CountState" => TranslateNoArgAggregate("countState", typeof(byte[])),
@@ -491,6 +508,8 @@ public class ClickHouseAggregateMethodCallTranslator
             "UniqIf" => TranslateIfCombinator("uniqIf", arguments, typeof(ulong)),
             "UniqExactIf" => TranslateIfCombinator("uniqExactIf", arguments, typeof(ulong)),
             "AnyIf" => TranslateIfCombinator("anyIf", arguments, returnType),
+            "AnyLastIf" => TranslateIfCombinator("anyLastIf", arguments, returnType),
+            "QuantileIf" => TranslateQuantileIf(arguments),
 
             _ => null
         };
@@ -723,6 +742,155 @@ public class ClickHouseAggregateMethodCallTranslator
             nullable: true,
             argumentsPropagateNullability: new[] { false, false },
             returnType);
+    }
+
+    /// <summary>
+    /// Translates quantileDD(relative_accuracy, level)(column) - two parametric args.
+    /// </summary>
+    private SqlExpression? TranslateQuantileDD(IReadOnlyList<SqlExpression> arguments)
+    {
+        // Pattern: QuantileDD(source, relativeAccuracy, level, selector)
+        // - relativeAccuracy is arguments[0], level is arguments[1], selector result is arguments[2]
+        if (arguments.Count < 3)
+        {
+            return null;
+        }
+
+        var accuracyArg = arguments[0];
+        var levelArg = arguments[1];
+        var selectorArg = arguments[2];
+
+        if (accuracyArg is not SqlConstantExpression accuracyConstant || accuracyConstant.Value is not double accuracy)
+        {
+            return null;
+        }
+
+        if (levelArg is not SqlConstantExpression levelConstant || levelConstant.Value is not double level)
+        {
+            return null;
+        }
+
+        var accuracyStr = accuracy.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var levelStr = level.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+        return _sqlExpressionFactory.Function(
+            $"quantileDD({accuracyStr}, {levelStr})",
+            new[] { selectorArg },
+            nullable: true,
+            argumentsPropagateNullability: new[] { false },
+            typeof(double));
+    }
+
+    /// <summary>
+    /// Translates parametric quantile variants like quantileTDigest(level)(column).
+    /// </summary>
+    private SqlExpression? TranslateParametricQuantile(string functionName, IReadOnlyList<SqlExpression> arguments)
+    {
+        // Pattern: QuantileXxx(source, level, selector) - level is arguments[0], selector result is arguments[1]
+        if (arguments.Count < 2)
+        {
+            return null;
+        }
+
+        var levelArg = arguments[0];
+        var selectorArg = arguments[1];
+
+        if (levelArg is not SqlConstantExpression levelConstant || levelConstant.Value is not double level)
+        {
+            return null;
+        }
+
+        return _sqlExpressionFactory.Function(
+            $"{functionName}({level.ToString(System.Globalization.CultureInfo.InvariantCulture)})",
+            new[] { selectorArg },
+            nullable: true,
+            argumentsPropagateNullability: new[] { false },
+            typeof(double));
+    }
+
+    /// <summary>
+    /// Translates multi-quantile functions like quantiles(0.5, 0.9, 0.99)(column).
+    /// </summary>
+    private SqlExpression? TranslateMultiQuantile(string functionName, IReadOnlyList<SqlExpression> arguments)
+    {
+        // Pattern: Quantiles(source, levels[], selector) - levels is arguments[0], selector result is arguments[1]
+        if (arguments.Count < 2)
+        {
+            return null;
+        }
+
+        var levelsArg = arguments[0];
+        var selectorArg = arguments[1];
+
+        if (levelsArg is not SqlConstantExpression levelsConstant || levelsConstant.Value is not double[] levels)
+        {
+            return null;
+        }
+
+        var levelsStr = string.Join(", ", levels.Select(l => l.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+
+        return _sqlExpressionFactory.Function(
+            $"{functionName}({levelsStr})",
+            new[] { selectorArg },
+            nullable: true,
+            argumentsPropagateNullability: new[] { false },
+            typeof(double[]));
+    }
+
+    /// <summary>
+    /// Translates topKWeighted(k)(column, weight) - parametric with two arguments.
+    /// </summary>
+    private SqlExpression? TranslateTopKWeighted(IReadOnlyList<SqlExpression> arguments, Type returnType)
+    {
+        // Pattern: TopKWeighted(source, k, selector, weightSelector) - k is arguments[0], selector is arguments[1], weight is arguments[2]
+        if (arguments.Count < 3)
+        {
+            return null;
+        }
+
+        var kArg = arguments[0];
+        var selectorArg = arguments[1];
+        var weightArg = arguments[2];
+
+        if (kArg is not SqlConstantExpression kConstant || kConstant.Value is not int k)
+        {
+            return null;
+        }
+
+        return _sqlExpressionFactory.Function(
+            $"topKWeighted({k})",
+            new[] { selectorArg, weightArg },
+            nullable: true,
+            argumentsPropagateNullability: new[] { false, false },
+            returnType);
+    }
+
+    /// <summary>
+    /// Translates quantileIf(level)(column, condition) - parametric quantile with If combinator.
+    /// </summary>
+    private SqlExpression? TranslateQuantileIf(IReadOnlyList<SqlExpression> arguments)
+    {
+        // Pattern: QuantileIf(source, level, selector, predicate) - level is arguments[0], selector is arguments[1], predicate is arguments[2]
+        if (arguments.Count < 3)
+        {
+            return null;
+        }
+
+        var levelArg = arguments[0];
+        var selectorArg = arguments[1];
+        var predicateArg = arguments[2];
+
+        if (levelArg is not SqlConstantExpression levelConstant || levelConstant.Value is not double level)
+        {
+            return null;
+        }
+
+        return _sqlExpressionFactory.Function(
+            $"quantileIf({level.ToString(System.Globalization.CultureInfo.InvariantCulture)})",
+            new[] { selectorArg, predicateArg },
+            nullable: true,
+            argumentsPropagateNullability: new[] { false, false },
+            typeof(double));
     }
 }
 

@@ -502,12 +502,29 @@ internal class ProjectionExpressionVisitor<TSource> : ExpressionVisitor
             "VarSamp" => TranslateSimpleClickHouseAggregate("varSamp", methodExpr),
 
             // Phase 2 - Parameterized aggregates
-            "Quantile" => TranslateQuantile(methodExpr),
+            "Quantile" => TranslateParametricQuantile("quantile", methodExpr),
+
+            // Approximate count distinct
+            "UniqCombined" => TranslateSimpleClickHouseAggregate("uniqCombined", methodExpr),
+            "UniqCombined64" => TranslateSimpleClickHouseAggregate("uniqCombined64", methodExpr),
+            "UniqHLL12" => TranslateSimpleClickHouseAggregate("uniqHLL12", methodExpr),
+            "UniqTheta" => TranslateSimpleClickHouseAggregate("uniqTheta", methodExpr),
+
+            // Quantile variants
+            "QuantileTDigest" => TranslateParametricQuantile("quantileTDigest", methodExpr),
+            "QuantileDD" => TranslateQuantileDD(methodExpr),
+            "QuantileExact" => TranslateParametricQuantile("quantileExact", methodExpr),
+            "QuantileTiming" => TranslateParametricQuantile("quantileTiming", methodExpr),
+
+            // Multi-quantile
+            "Quantiles" => TranslateMultiQuantile("quantiles", methodExpr),
+            "QuantilesTDigest" => TranslateMultiQuantile("quantilesTDigest", methodExpr),
 
             // Phase 3 - Array aggregates
             "GroupArray" => TranslateGroupArray(methodExpr),
             "GroupUniqArray" => TranslateSimpleClickHouseAggregate("groupUniqArray", methodExpr),
             "TopK" => TranslateTopK(methodExpr),
+            "TopKWeighted" => TranslateTopKWeighted(methodExpr),
 
             // State combinators - for AggregatingMergeTree storage
             "CountState" => "countState()",
@@ -542,6 +559,8 @@ internal class ProjectionExpressionVisitor<TSource> : ExpressionVisitor
             "UniqIf" => TranslateIfAggregate("uniqIf", methodExpr),
             "UniqExactIf" => TranslateIfAggregate("uniqExactIf", methodExpr),
             "AnyIf" => TranslateIfAggregate("anyIf", methodExpr),
+            "AnyLastIf" => TranslateIfAggregate("anyLastIf", methodExpr),
+            "QuantileIf" => TranslateQuantileIfAggregate(methodExpr),
 
             _ => throw new NotSupportedException($"ClickHouse aggregate {methodName} is not supported.")
         };
@@ -565,13 +584,13 @@ internal class ProjectionExpressionVisitor<TSource> : ExpressionVisitor
         return $"{function}({argSql}, {valSql})";
     }
 
-    private string TranslateQuantile(MethodCallExpression methodExpr)
+    private string TranslateParametricQuantile(string functionName, MethodCallExpression methodExpr)
     {
-        // Pattern: Quantile(source, level, selector)
+        // Pattern: QuantileXxx(source, level, selector)
         var level = ExtractConstantValue<double>(methodExpr.Arguments[1]);
         var selector = ExtractLambda(methodExpr.Arguments[2]);
         var innerSql = TranslateExpression(selector.Body);
-        return $"quantile({level.ToString(System.Globalization.CultureInfo.InvariantCulture)})({innerSql})";
+        return $"{functionName}({level.ToString(System.Globalization.CultureInfo.InvariantCulture)})({innerSql})";
     }
 
     private string TranslateGroupArray(MethodCallExpression methodExpr)
@@ -637,6 +656,50 @@ internal class ProjectionExpressionVisitor<TSource> : ExpressionVisitor
         return $"{function}({valueSql}, {conditionSql})";
     }
 
+    private string TranslateQuantileDD(MethodCallExpression methodExpr)
+    {
+        // Pattern: QuantileDD(source, relativeAccuracy, level, selector)
+        var accuracy = ExtractConstantValue<double>(methodExpr.Arguments[1]);
+        var level = ExtractConstantValue<double>(methodExpr.Arguments[2]);
+        var selector = ExtractLambda(methodExpr.Arguments[3]);
+        var innerSql = TranslateExpression(selector.Body);
+        var accuracyStr = accuracy.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var levelStr = level.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        return $"quantileDD({accuracyStr}, {levelStr})({innerSql})";
+    }
+
+    private string TranslateMultiQuantile(string functionName, MethodCallExpression methodExpr)
+    {
+        // Pattern: Quantiles(source, levels[], selector)
+        var levels = ExtractConstantValue<double[]>(methodExpr.Arguments[1]);
+        var selector = ExtractLambda(methodExpr.Arguments[2]);
+        var innerSql = TranslateExpression(selector.Body);
+        var levelsStr = string.Join(", ", levels.Select(l => l.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        return $"{functionName}({levelsStr})({innerSql})";
+    }
+
+    private string TranslateTopKWeighted(MethodCallExpression methodExpr)
+    {
+        // Pattern: TopKWeighted(source, k, selector, weightSelector)
+        var k = ExtractConstantValue<int>(methodExpr.Arguments[1]);
+        var selector = ExtractLambda(methodExpr.Arguments[2]);
+        var weightSelector = ExtractLambda(methodExpr.Arguments[3]);
+        var valueSql = TranslateExpression(selector.Body);
+        var weightSql = TranslateExpression(weightSelector.Body);
+        return $"topKWeighted({k})({valueSql}, {weightSql})";
+    }
+
+    private string TranslateQuantileIfAggregate(MethodCallExpression methodExpr)
+    {
+        // Pattern: QuantileIf(source, level, selector, predicate)
+        var level = ExtractConstantValue<double>(methodExpr.Arguments[1]);
+        var selector = ExtractLambda(methodExpr.Arguments[2]);
+        var predicate = ExtractLambda(methodExpr.Arguments[3]);
+        var valueSql = TranslateExpression(selector.Body);
+        var conditionSql = TranslateExpression(predicate.Body);
+        return $"quantileIf({level.ToString(System.Globalization.CultureInfo.InvariantCulture)})({valueSql}, {conditionSql})";
+    }
+
     private static LambdaExpression ExtractLambda(Expression arg)
     {
         return arg switch
@@ -673,6 +736,26 @@ internal class ProjectionExpressionVisitor<TSource> : ExpressionVisitor
                     return (T)prop.GetValue(containerConst.Value)!;
                 }
             }
+        }
+
+        // Handle inline array initialization: new[] { 0.5, 0.9, 0.99 }
+        if (arg is NewArrayExpression newArrayExpr && typeof(T).IsArray)
+        {
+            var elementType = typeof(T).GetElementType()!;
+            var array = Array.CreateInstance(elementType, newArrayExpr.Expressions.Count);
+            for (int i = 0; i < newArrayExpr.Expressions.Count; i++)
+            {
+                if (newArrayExpr.Expressions[i] is ConstantExpression elemConst)
+                {
+                    array.SetValue(Convert.ChangeType(elemConst.Value, elementType), i);
+                }
+                else
+                {
+                    throw new NotSupportedException(
+                        $"Array element at index {i} is not a constant expression.");
+                }
+            }
+            return (T)(object)array;
         }
 
         throw new NotSupportedException($"Cannot extract constant value of type {typeof(T).Name} from {arg.GetType().Name}");
