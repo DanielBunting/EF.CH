@@ -4,6 +4,7 @@ using System.Text;
 using EF.CH.BulkInsert;
 using EF.CH.InsertSelect;
 using EF.CH.QueryProfiling;
+using EF.CH.TempTable;
 using EF.CH.Configuration;
 using EF.CH.Diagnostics;
 using EF.CH.Dictionaries;
@@ -410,6 +411,9 @@ public static class ClickHouseServiceCollectionExtensions
 
         // Register query profiler for EXPLAIN and query statistics.
         services.TryAddScoped<IClickHouseQueryProfiler, ClickHouseQueryProfiler>();
+
+        // Register temp table manager for session-scoped temporary tables.
+        services.TryAddScoped<IClickHouseTempTableManager, ClickHouseTempTableManager>();
 
         return services;
     }
