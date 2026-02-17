@@ -99,10 +99,9 @@ public class ClickHouseEvaluatableExpressionFilterPlugin : IEvaluatableExpressio
             {
                 var genericDef = method.GetGenericMethodDefinition();
 
-                // Don't parameterize calls to Sample, WithSetting, WithSettings, LimitBy, or AsCte
+                // Don't parameterize calls to Sample, WithSetting, WithSettings, or LimitBy
                 if (genericDef == ClickHouseQueryableExtensions.SampleMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.SampleWithOffsetMethodInfo ||
-                    genericDef == ClickHouseQueryableExtensions.WithSettingMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.WithSettingsMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.LimitByMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.LimitByWithOffsetMethodInfo ||
