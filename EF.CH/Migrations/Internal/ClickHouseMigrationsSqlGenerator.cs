@@ -897,6 +897,18 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         var settings = GetAnnotation<IDictionary<string, string>>(operation, ClickHouseAnnotationNames.Settings)
                     ?? GetEntityAnnotation<IDictionary<string, string>>(entityType, ClickHouseAnnotationNames.Settings);
 
+        // Distributed engine parameters
+        var distributedCluster = GetAnnotation<string>(operation, ClickHouseAnnotationNames.DistributedCluster)
+                              ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.DistributedCluster);
+        var distributedDatabase = GetAnnotation<string>(operation, ClickHouseAnnotationNames.DistributedDatabase)
+                               ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.DistributedDatabase);
+        var distributedTable = GetAnnotation<string>(operation, ClickHouseAnnotationNames.DistributedTable)
+                            ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.DistributedTable);
+        var distributedShardingKey = GetAnnotation<string>(operation, ClickHouseAnnotationNames.DistributedShardingKey)
+                                  ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.DistributedShardingKey);
+        var distributedPolicy = GetAnnotation<string>(operation, ClickHouseAnnotationNames.DistributedPolicyName)
+                             ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.DistributedPolicyName);
+
         builder.Append("ENGINE = ");
 
         // Generate engine with parameters
@@ -915,6 +927,31 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
             case "VersionedCollapsingMergeTree" when !string.IsNullOrEmpty(signColumn) && !string.IsNullOrEmpty(versionColumn):
                 builder.Append($"VersionedCollapsingMergeTree({Dependencies.SqlGenerationHelper.DelimitIdentifier(signColumn)}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(versionColumn)})");
                 break;
+
+            // Distributed engine
+            case "Distributed":
+                builder.Append("Distributed(");
+                builder.Append($"'{distributedCluster?.Replace("'", "''")}'");
+                builder.Append(", ");
+
+                // Handle currentDatabase() as a function (not quoted)
+                if (distributedDatabase == "currentDatabase()")
+                    builder.Append("currentDatabase()");
+                else
+                    builder.Append($"'{distributedDatabase?.Replace("'", "''")}'");
+
+                builder.Append(", ");
+                builder.Append($"'{distributedTable?.Replace("'", "''")}'");
+
+                if (!string.IsNullOrEmpty(distributedShardingKey))
+                {
+                    builder.Append(", ").Append(distributedShardingKey);
+                    if (!string.IsNullOrEmpty(distributedPolicy))
+                        builder.Append($", '{distributedPolicy.Replace("'", "''")}'");
+                }
+                builder.Append(")");
+                break;
+
             default:
                 builder.Append(engine);
                 if (engine.EndsWith("MergeTree", StringComparison.OrdinalIgnoreCase))
@@ -1007,6 +1044,18 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         var settings = GetAnnotation<IDictionary<string, string>>(operation, ClickHouseAnnotationNames.Settings)
                     ?? GetEntityAnnotation<IDictionary<string, string>>(entityType, ClickHouseAnnotationNames.Settings);
 
+        // Distributed engine parameters
+        var distributedCluster = GetAnnotation<string>(operation, ClickHouseAnnotationNames.DistributedCluster)
+                              ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.DistributedCluster);
+        var distributedDatabase = GetAnnotation<string>(operation, ClickHouseAnnotationNames.DistributedDatabase)
+                               ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.DistributedDatabase);
+        var distributedTable = GetAnnotation<string>(operation, ClickHouseAnnotationNames.DistributedTable)
+                            ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.DistributedTable);
+        var distributedShardingKey = GetAnnotation<string>(operation, ClickHouseAnnotationNames.DistributedShardingKey)
+                                  ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.DistributedShardingKey);
+        var distributedPolicy = GetAnnotation<string>(operation, ClickHouseAnnotationNames.DistributedPolicyName)
+                             ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.DistributedPolicyName);
+
         builder.AppendLine();
         builder.Append("ENGINE = ");
 
@@ -1066,6 +1115,31 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
             case "VersionedCollapsingMergeTree" when !string.IsNullOrEmpty(signColumn) && !string.IsNullOrEmpty(versionColumn):
                 builder.Append($"VersionedCollapsingMergeTree({Dependencies.SqlGenerationHelper.DelimitIdentifier(signColumn)}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(versionColumn)})");
                 break;
+
+            // Distributed engine
+            case "Distributed":
+                builder.Append("Distributed(");
+                builder.Append($"'{distributedCluster?.Replace("'", "''")}'");
+                builder.Append(", ");
+
+                // Handle currentDatabase() as a function (not quoted)
+                if (distributedDatabase == "currentDatabase()")
+                    builder.Append("currentDatabase()");
+                else
+                    builder.Append($"'{distributedDatabase?.Replace("'", "''")}'");
+
+                builder.Append(", ");
+                builder.Append($"'{distributedTable?.Replace("'", "''")}'");
+
+                if (!string.IsNullOrEmpty(distributedShardingKey))
+                {
+                    builder.Append(", ").Append(distributedShardingKey);
+                    if (!string.IsNullOrEmpty(distributedPolicy))
+                        builder.Append($", '{distributedPolicy.Replace("'", "''")}'");
+                }
+                builder.Append(")");
+                break;
+
             default:
                 builder.Append(engine);
                 if (engine.EndsWith("MergeTree", StringComparison.OrdinalIgnoreCase))

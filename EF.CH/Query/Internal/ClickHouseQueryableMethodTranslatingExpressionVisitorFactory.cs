@@ -8,6 +8,17 @@ using Microsoft.EntityFrameworkCore.Query.SqlExpressions;
 namespace EF.CH.Query.Internal;
 
 /// <summary>
+/// GROUP BY modifier types for ClickHouse.
+/// </summary>
+public enum GroupByModifier
+{
+    None = 0,
+    Rollup,
+    Cube,
+    Totals
+}
+
+/// <summary>
 /// Factory for creating ClickHouse queryable method translating expression visitors.
 /// </summary>
 public class ClickHouseQueryableMethodTranslatingExpressionVisitorFactory
@@ -135,6 +146,32 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
             if (genericDef == ClickHouseQueryableExtensions.LimitByWithOffsetMethodInfo)
             {
                 return TranslateLimitBy(methodCallExpression, hasOffset: true);
+            }
+
+            // Handle GROUP BY modifiers
+            if (genericDef == ClickHouseQueryableExtensions.WithRollupMethodInfo)
+            {
+                return TranslateGroupByModifier(methodCallExpression, GroupByModifier.Rollup);
+            }
+            if (genericDef == ClickHouseQueryableExtensions.WithCubeMethodInfo)
+            {
+                return TranslateGroupByModifier(methodCallExpression, GroupByModifier.Cube);
+            }
+            if (genericDef == ClickHouseQueryableExtensions.WithTotalsMethodInfo)
+            {
+                return TranslateGroupByModifier(methodCallExpression, GroupByModifier.Totals);
+            }
+
+            // Handle AsCte extension method
+            if (genericDef == ClickHouseQueryableExtensions.AsCteMethodInfo)
+            {
+                return TranslateAsCte(methodCallExpression);
+            }
+
+            // Handle WithRawFilter extension method
+            if (genericDef == ClickHouseQueryableExtensions.WithRawFilterMethodInfo)
+            {
+                return TranslateWithRawFilter(methodCallExpression);
             }
         }
 
@@ -408,6 +445,80 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
         }
 
         _options.PreWhereExpression = translatedPredicate;
+
+        return source;
+    }
+
+    /// <summary>
+    /// Translates the AsCte() extension method.
+    /// Stores the CTE name in options; actual extraction happens in postprocessor.
+    /// </summary>
+    private Expression TranslateAsCte(MethodCallExpression methodCallExpression)
+    {
+        var source = Visit(methodCallExpression.Arguments[0]);
+
+        var nameArg = methodCallExpression.Arguments[1];
+        if (!TryGetConstantValue<string>(nameArg, out var name))
+        {
+            throw new InvalidOperationException("AsCte name must be a constant string.");
+        }
+
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            throw new ArgumentException("CTE name cannot be empty.", nameof(name));
+        }
+
+        if (_options.PendingCteName != null)
+        {
+            throw new InvalidOperationException(
+                $"Cannot define multiple CTEs in a single query. Already defined CTE '{_options.PendingCteName}'.");
+        }
+
+        _options.PendingCteName = name;
+
+        return source;
+    }
+
+    /// <summary>
+    /// Translates the WithRawFilter() extension method.
+    /// Stores the raw SQL string in options for injection into the WHERE clause.
+    /// </summary>
+    private Expression TranslateWithRawFilter(MethodCallExpression methodCallExpression)
+    {
+        var source = Visit(methodCallExpression.Arguments[0]);
+
+        var sqlArg = methodCallExpression.Arguments[1];
+        if (!TryGetConstantValue<string>(sqlArg, out var rawSql))
+        {
+            throw new InvalidOperationException("WithRawFilter argument must be a constant string.");
+        }
+
+        if (string.IsNullOrWhiteSpace(rawSql))
+        {
+            throw new ArgumentException("WithRawFilter SQL condition cannot be empty.");
+        }
+
+        _options.RawFilterSql = rawSql;
+
+        return source;
+    }
+
+    /// <summary>
+    /// Translates GROUP BY modifier extension methods (WithRollup, WithCube, WithTotals).
+    /// </summary>
+    private Expression TranslateGroupByModifier(
+        MethodCallExpression methodCallExpression,
+        GroupByModifier modifier)
+    {
+        var source = Visit(methodCallExpression.Arguments[0]);
+
+        if (_options.GroupByModifier != GroupByModifier.None)
+        {
+            throw new InvalidOperationException(
+                $"Cannot combine multiple GROUP BY modifiers. Already using {_options.GroupByModifier}.");
+        }
+
+        _options.GroupByModifier = modifier;
 
         return source;
     }
@@ -738,6 +849,31 @@ public class ClickHouseQueryCompilationContextOptions
     /// Whether any LIMIT BY clause has been specified.
     /// </summary>
     public bool HasLimitBy => LimitByLimit.HasValue && LimitByExpressions?.Count > 0;
+
+    /// <summary>
+    /// GROUP BY modifier (ROLLUP, CUBE, or TOTALS).
+    /// </summary>
+    public GroupByModifier GroupByModifier { get; set; } = GroupByModifier.None;
+
+    /// <summary>
+    /// The pending CTE name (set during translation, consumed during postprocessing).
+    /// </summary>
+    internal string? PendingCteName { get; set; }
+
+    /// <summary>
+    /// CTE definitions extracted during postprocessing.
+    /// </summary>
+    internal List<CteDefinition> CteDefinitions { get; } = new();
+
+    /// <summary>
+    /// Whether any CTEs have been defined.
+    /// </summary>
+    public bool HasCtes => CteDefinitions.Count > 0;
+
+    /// <summary>
+    /// Raw SQL condition to inject into the WHERE clause.
+    /// </summary>
+    public string? RawFilterSql { get; set; }
 }
 
 /// <summary>

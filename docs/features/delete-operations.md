@@ -124,21 +124,27 @@ await context.Events
     .ExecuteDeleteAsync();
 ```
 
-## UPDATE is Not Supported
+## UPDATE Operations
 
-ClickHouse doesn't support efficient row-level UPDATE. Attempting to update throws:
+Row-level tracked updates via `SaveChanges()` are not supported — but bulk updates via `ExecuteUpdateAsync` work:
 
 ```csharp
-var entity = await context.Events.FirstAsync();
-entity.EventType = "modified";  // Modify tracked entity
+// This works! Generates ALTER TABLE ... UPDATE
+await context.Events
+    .Where(e => e.EventType == "temp")
+    .ExecuteUpdateAsync(s => s.SetProperty(e => e.EventType, "archived"));
 
-// This throws ClickHouseUnsupportedOperationException
+// This still throws ClickHouseUnsupportedOperationException
+var entity = await context.Events.FirstAsync();
+entity.EventType = "modified";
 await context.SaveChangesAsync();
 ```
 
-### Workarounds
+See [Update Operations](update-operations.md) for full documentation on `ExecuteUpdateAsync`.
 
-**1. Use ReplacingMergeTree** (recommended):
+### Alternative Approaches
+
+**1. Use ReplacingMergeTree** (recommended for row-level semantics):
 
 ```csharp
 entity.UseReplacingMergeTree(x => x.UpdatedAt, x => x.Id);
@@ -258,13 +264,14 @@ await context.Database.ExecuteSqlRawAsync(
 
 ## Limitations
 
-- **No UPDATE**: Row-level UPDATE throws `NotSupportedException`
+- **No row-level UPDATE**: `SaveChanges()` with modified entities throws; use `ExecuteUpdateAsync` for bulk updates
 - **Eventual Consistency**: Deleted rows may briefly appear in queries
 - **Row Count**: HTTP interface may not return accurate affected counts
 - **Async Mutations**: Mutation deletes run asynchronously
 
 ## See Also
 
+- [Update Operations](update-operations.md) - Bulk updates via ExecuteUpdateAsync
 - [ReplacingMergeTree](../engines/replacing-mergetree.md) - For update semantics
 - [TTL](ttl.md) - For automatic data expiration
 - [Partitioning](partitioning.md) - For partition-based deletion

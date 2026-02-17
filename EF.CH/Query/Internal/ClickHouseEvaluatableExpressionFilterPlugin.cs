@@ -83,6 +83,18 @@ public class ClickHouseEvaluatableExpressionFilterPlugin : IEvaluatableExpressio
                 return false;
             }
 
+            // Never evaluate ClickHouseFunctions methods - these are translation stubs
+            if (declaringType == typeof(ClickHouseFunctions))
+            {
+                return false;
+            }
+
+            // Never evaluate NewGuidV7() - it's a server-side function stub
+            if (declaringType == typeof(ClickHouseUuidDbFunctionsExtensions))
+            {
+                return false;
+            }
+
             if (method.IsGenericMethod)
             {
                 var genericDef = method.GetGenericMethodDefinition();
@@ -90,10 +102,11 @@ public class ClickHouseEvaluatableExpressionFilterPlugin : IEvaluatableExpressio
                 // Don't parameterize calls to Sample, WithSetting, WithSettings, or LimitBy
                 if (genericDef == ClickHouseQueryableExtensions.SampleMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.SampleWithOffsetMethodInfo ||
-                    genericDef == ClickHouseQueryableExtensions.WithSettingMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.WithSettingsMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.LimitByMethodInfo ||
-                    genericDef == ClickHouseQueryableExtensions.LimitByWithOffsetMethodInfo)
+                    genericDef == ClickHouseQueryableExtensions.LimitByWithOffsetMethodInfo ||
+                    genericDef == ClickHouseQueryableExtensions.AsCteMethodInfo ||
+                    genericDef == ClickHouseQueryableExtensions.WithRawFilterMethodInfo)
                 {
                     return false;
                 }

@@ -76,9 +76,27 @@ await context.SaveChangesAsync();  // Both inserted, but no rollback if one fail
 
 ## No Row-Level UPDATE
 
-ClickHouse's columnar storage makes updates extremely inefficient. Instead:
+ClickHouse's columnar storage makes row-level tracked updates inefficient. `SaveChanges()` with modified entities throws an exception. However, bulk updates via `ExecuteUpdateAsync` are supported.
 
-### Option 1: ReplacingMergeTree (Recommended)
+### Option 1: ExecuteUpdateAsync (Bulk Updates)
+
+For updating many rows at once, use EF Core's `ExecuteUpdateAsync` which generates `ALTER TABLE ... UPDATE`:
+
+```csharp
+// Bulk update — efficient for many rows
+await context.Users
+    .Where(u => u.Status == "inactive")
+    .ExecuteUpdateAsync(s => s.SetProperty(u => u.Status, "archived"));
+
+// Expression-based update
+await context.Products
+    .Where(p => p.Category == "electronics")
+    .ExecuteUpdateAsync(s => s.SetProperty(p => p.Price, p => p.Price * 1.1m));
+```
+
+See [Update Operations](features/update-operations.md) for full documentation.
+
+### Option 2: ReplacingMergeTree (Recommended for Row-Level)
 
 Insert a new row with the same key and a higher version. ClickHouse merges them eventually:
 
@@ -106,7 +124,7 @@ var currentUser = await context.Users
     .FirstAsync(u => u.Id == id);
 ```
 
-### Option 2: Delete and Re-insert
+### Option 3: Delete and Re-insert
 
 For infrequent updates:
 
@@ -120,7 +138,7 @@ context.Users.Add(user);
 await context.SaveChangesAsync();
 ```
 
-### Option 3: Append-Only Design
+### Option 4: Append-Only Design
 
 Don't update at all - append new facts:
 
@@ -346,7 +364,7 @@ var approxCount = await context.Events
 | SQL Server/PostgreSQL | ClickHouse |
 |----------------------|------------|
 | Transactions | Eventual consistency |
-| UPDATE/DELETE | Append, merge, or rewrite |
+| UPDATE/DELETE | Bulk mutations, append, merge, or rewrite |
 | IDENTITY | UUID or app-generated |
 | Foreign keys enforced | Application-level only |
 | Row-at-a-time OK | Batch thousands of rows |
