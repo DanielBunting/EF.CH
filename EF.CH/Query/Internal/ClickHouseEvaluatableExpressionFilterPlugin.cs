@@ -89,6 +89,12 @@ public class ClickHouseEvaluatableExpressionFilterPlugin : IEvaluatableExpressio
                 return false;
             }
 
+            // Never evaluate NewGuidV7() - it's a server-side function stub
+            if (declaringType == typeof(ClickHouseUuidDbFunctionsExtensions))
+            {
+                return false;
+            }
+
             if (method.IsGenericMethod)
             {
                 var genericDef = method.GetGenericMethodDefinition();
