@@ -100,6 +100,99 @@ public class ReplicatedEngineBuilder<TEntity> where TEntity : class
 }
 
 /// <summary>
+/// A builder that provides fluent chaining for configuring Distributed engine options.
+/// </summary>
+/// <remarks>
+/// <para>
+/// This builder is returned from <c>UseDistributed</c> methods
+/// and allows chaining sharding key and policy configuration in a fluent manner.
+/// </para>
+/// <para>
+/// The builder supports implicit conversion back to <see cref="EntityTypeBuilder{TEntity}"/>,
+/// ensuring backward compatibility with existing code that chains other entity configuration methods.
+/// </para>
+/// </remarks>
+/// <typeparam name="TEntity">The entity type being configured.</typeparam>
+/// <example>
+/// <code>
+/// // Fluent chain pattern
+/// entity.UseDistributed("my_cluster", "events_local")
+///       .WithShardingKey(x => x.UserId);
+///
+/// // With expression-based sharding
+/// entity.UseDistributed("my_cluster", "events_local")
+///       .WithShardingKey("cityHash64(UserId)")
+///       .WithPolicy("ssd_policy");
+/// </code>
+/// </example>
+public class DistributedEngineBuilder<TEntity> where TEntity : class
+{
+    private readonly EntityTypeBuilder<TEntity> _builder;
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="DistributedEngineBuilder{TEntity}"/> class.
+    /// </summary>
+    /// <param name="builder">The underlying entity type builder.</param>
+    internal DistributedEngineBuilder(EntityTypeBuilder<TEntity> builder)
+    {
+        _builder = builder;
+    }
+
+    /// <summary>
+    /// Configures the sharding key using a property selector expression.
+    /// </summary>
+    /// <typeparam name="TProperty">The property type.</typeparam>
+    /// <param name="shardingKeySelector">Expression selecting the property to use as sharding key.</param>
+    /// <returns>This builder for continued chaining.</returns>
+    public DistributedEngineBuilder<TEntity> WithShardingKey<TProperty>(
+        Expression<Func<TEntity, TProperty>> shardingKeySelector)
+    {
+        ArgumentNullException.ThrowIfNull(shardingKeySelector);
+        var propertyName = ExpressionExtensions.GetPropertyName(shardingKeySelector);
+        _builder.HasAnnotation(ClickHouseAnnotationNames.DistributedShardingKey, propertyName);
+        return this;
+    }
+
+    /// <summary>
+    /// Configures the sharding key using a raw SQL expression.
+    /// </summary>
+    /// <param name="shardingKeyExpression">The sharding key expression (e.g., "cityHash64(UserId)").</param>
+    /// <returns>This builder for continued chaining.</returns>
+    public DistributedEngineBuilder<TEntity> WithShardingKey(string shardingKeyExpression)
+    {
+        ArgumentNullException.ThrowIfNull(shardingKeyExpression);
+        _builder.HasAnnotation(ClickHouseAnnotationNames.DistributedShardingKey, shardingKeyExpression);
+        return this;
+    }
+
+    /// <summary>
+    /// Configures the storage policy for the Distributed engine.
+    /// </summary>
+    /// <param name="policyName">The storage policy name as defined in ClickHouse server configuration.</param>
+    /// <returns>This builder for continued chaining.</returns>
+    public DistributedEngineBuilder<TEntity> WithPolicy(string policyName)
+    {
+        ArgumentNullException.ThrowIfNull(policyName);
+        _builder.HasAnnotation(ClickHouseAnnotationNames.DistributedPolicyName, policyName);
+        return this;
+    }
+
+    /// <summary>
+    /// Returns the underlying entity type builder for continued configuration.
+    /// </summary>
+    /// <returns>The underlying <see cref="EntityTypeBuilder{TEntity}"/>.</returns>
+    public EntityTypeBuilder<TEntity> And() => _builder;
+
+    /// <summary>
+    /// Implicitly converts the builder back to <see cref="EntityTypeBuilder{TEntity}"/>
+    /// for seamless integration with existing configuration patterns.
+    /// </summary>
+    /// <param name="builder">The distributed engine builder to convert.</param>
+    public static implicit operator EntityTypeBuilder<TEntity>(
+        DistributedEngineBuilder<TEntity> builder) => builder._builder;
+}
+
+/// <summary>
 /// Extension methods for configuring ClickHouse-specific entity type options.
 /// </summary>
 public static class ClickHouseEntityTypeBuilderExtensions
@@ -1198,6 +1291,141 @@ public static class ClickHouseEntityTypeBuilderExtensions
 
     #endregion
 
+    #region Distributed Engine
+
+    /// <summary>
+    /// Configures the entity to use a Distributed engine that queries across a cluster.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The Distributed engine provides a unified view over sharded data spread across multiple servers.
+    /// It does not store data itself but acts as a proxy to the underlying local tables.
+    /// </para>
+    /// <para>
+    /// The underlying local table must exist on each node of the cluster before creating the distributed table.
+    /// </para>
+    /// </remarks>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="cluster">The cluster name as defined in ClickHouse server configuration.</param>
+    /// <param name="database">The database name on the cluster nodes (use "currentDatabase()" for current database).</param>
+    /// <param name="table">The underlying local table name on each node.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    public static EntityTypeBuilder UseDistributed(
+        this EntityTypeBuilder builder,
+        string cluster,
+        string database,
+        string table)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(cluster);
+        ArgumentException.ThrowIfNullOrWhiteSpace(database);
+        ArgumentException.ThrowIfNullOrWhiteSpace(table);
+
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, "Distributed");
+        builder.HasAnnotation(ClickHouseAnnotationNames.DistributedCluster, cluster);
+        builder.HasAnnotation(ClickHouseAnnotationNames.DistributedDatabase, database);
+        builder.HasAnnotation(ClickHouseAnnotationNames.DistributedTable, table);
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Configures the entity to use a Distributed engine that queries across a cluster.
+    /// Uses currentDatabase() for the database parameter.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The Distributed engine provides a unified view over sharded data spread across multiple servers.
+    /// It does not store data itself but acts as a proxy to the underlying local tables.
+    /// </para>
+    /// <para>
+    /// The underlying local table must exist on each node of the cluster before creating the distributed table.
+    /// </para>
+    /// </remarks>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="cluster">The cluster name as defined in ClickHouse server configuration.</param>
+    /// <param name="table">The underlying local table name on each node.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    public static EntityTypeBuilder UseDistributed(
+        this EntityTypeBuilder builder,
+        string cluster,
+        string table)
+    {
+        return builder.UseDistributed(cluster, "currentDatabase()", table);
+    }
+
+    /// <summary>
+    /// Configures the entity to use a Distributed engine that queries across a cluster.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The Distributed engine provides a unified view over sharded data spread across multiple servers.
+    /// It does not store data itself but acts as a proxy to the underlying local tables.
+    /// </para>
+    /// <para>
+    /// The underlying local table must exist on each node of the cluster before creating the distributed table.
+    /// </para>
+    /// </remarks>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="cluster">The cluster name as defined in ClickHouse server configuration.</param>
+    /// <param name="database">The database name on the cluster nodes (use "currentDatabase()" for current database).</param>
+    /// <param name="table">The underlying local table name on each node.</param>
+    /// <returns>A builder for configuring distributed engine options with fluent chaining.</returns>
+    /// <example>
+    /// <code>
+    /// entity.UseDistributed("my_cluster", "default", "events_local")
+    ///       .WithShardingKey(x => x.UserId);
+    /// </code>
+    /// </example>
+    public static DistributedEngineBuilder<TEntity> UseDistributed<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        string cluster,
+        string database,
+        string table)
+        where TEntity : class
+    {
+        ((EntityTypeBuilder)builder).UseDistributed(cluster, database, table);
+        return new DistributedEngineBuilder<TEntity>(builder);
+    }
+
+    /// <summary>
+    /// Configures the entity to use a Distributed engine that queries across a cluster.
+    /// Uses currentDatabase() for the database parameter.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The Distributed engine provides a unified view over sharded data spread across multiple servers.
+    /// It does not store data itself but acts as a proxy to the underlying local tables.
+    /// </para>
+    /// <para>
+    /// The underlying local table must exist on each node of the cluster before creating the distributed table.
+    /// </para>
+    /// </remarks>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="cluster">The cluster name as defined in ClickHouse server configuration.</param>
+    /// <param name="table">The underlying local table name on each node.</param>
+    /// <returns>A builder for configuring distributed engine options with fluent chaining.</returns>
+    /// <example>
+    /// <code>
+    /// entity.UseDistributed("my_cluster", "events_local")
+    ///       .WithShardingKey("cityHash64(UserId)")
+    ///       .WithPolicy("ssd_policy");
+    /// </code>
+    /// </example>
+    public static DistributedEngineBuilder<TEntity> UseDistributed<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        string cluster,
+        string table)
+        where TEntity : class
+    {
+        ((EntityTypeBuilder)builder).UseDistributed(cluster, table);
+        return new DistributedEngineBuilder<TEntity>(builder);
+    }
+
+    #endregion
+
     #region Partition By
 
     /// <summary>
@@ -2018,6 +2246,180 @@ public static class ClickHouseEntityTypeBuilderExtensions
 
         projections.Add(projection);
         builder.HasAnnotation(ClickHouseAnnotationNames.Projections, projections);
+    }
+
+    #endregion
+
+    #region Parameterized Views
+
+    /// <summary>
+    /// Configures the entity as a result type for a ClickHouse parameterized view.
+    /// </summary>
+    /// <typeparam name="TEntity">The entity type representing the view's output schema.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="viewName">The name of the parameterized view.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    /// <remarks>
+    /// <para>
+    /// This method configures the entity as keyless and marks it as a parameterized view result type.
+    /// The entity can then be queried using <see cref="ClickHouseParameterizedViewExtensions.FromParameterizedView{TResult}"/>.
+    /// </para>
+    /// <para>
+    /// Parameterized views in ClickHouse use the syntax <c>{name:Type}</c> in the view definition
+    /// and are queried with <c>SELECT * FROM view_name(param=value, ...)</c>.
+    /// </para>
+    /// <para>
+    /// Note: This method does not create the view itself. Use <see cref="ClickHouseMigrationBuilderExtensions.CreateParameterizedView"/>
+    /// in a migration or raw SQL to create the view.
+    /// </para>
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// // Configure the result entity
+    /// modelBuilder.Entity&lt;UserEventView&gt;(entity =>
+    /// {
+    ///     entity.HasParameterizedView("user_events_view");
+    /// });
+    ///
+    /// // Query the view
+    /// var events = context.FromParameterizedView&lt;UserEventView&gt;(
+    ///     "user_events_view",
+    ///     new { user_id = 123UL, start_date = DateTime.Today })
+    ///     .Where(e => e.EventType == "click")
+    ///     .ToListAsync();
+    /// </code>
+    /// </example>
+    public static EntityTypeBuilder<TEntity> HasParameterizedView<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        string viewName)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(viewName);
+
+        // Mark as keyless since views don't have keys
+        builder.HasNoKey();
+
+        // Store view configuration as annotations
+        builder.HasAnnotation(ClickHouseAnnotationNames.ParameterizedView, true);
+        builder.HasAnnotation(ClickHouseAnnotationNames.ParameterizedViewName, viewName);
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Configures the entity as a result type for a ClickHouse parameterized view.
+    /// Non-generic overload.
+    /// </summary>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="viewName">The name of the parameterized view.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    public static EntityTypeBuilder HasParameterizedView(
+        this EntityTypeBuilder builder,
+        string viewName)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(viewName);
+
+        builder.HasNoKey();
+        builder.HasAnnotation(ClickHouseAnnotationNames.ParameterizedView, true);
+        builder.HasAnnotation(ClickHouseAnnotationNames.ParameterizedViewName, viewName);
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Configures the entity as a parameterized view using a fluent builder pattern.
+    /// </summary>
+    /// <typeparam name="TView">The view result entity type.</typeparam>
+    /// <typeparam name="TSource">The source entity type.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="configure">Action to configure the parameterized view.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    /// <remarks>
+    /// <para>
+    /// This method provides a type-safe way to configure parameterized views
+    /// instead of writing raw SQL. The configuration is stored as annotations
+    /// and can be used to generate CREATE VIEW DDL.
+    /// </para>
+    /// <para>
+    /// Use <see cref="ClickHouseDatabaseExtensions.EnsureParameterizedViewsAsync"/> to create
+    /// all configured views at runtime.
+    /// </para>
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// modelBuilder.Entity&lt;UserEventView&gt;(entity =>
+    /// {
+    ///     entity.AsParameterizedView&lt;UserEventView, Event&gt;(cfg => cfg
+    ///         .FromTable()
+    ///         .Select(e => new UserEventView
+    ///         {
+    ///             EventId = e.EventId,
+    ///             EventType = e.EventType,
+    ///             UserId = e.UserId,
+    ///             Timestamp = e.Timestamp
+    ///         })
+    ///         .Parameter&lt;ulong&gt;("user_id")
+    ///         .Parameter&lt;DateTime&gt;("start_date")
+    ///         .Where((e, p) => e.UserId == p.Get&lt;ulong&gt;("user_id"))
+    ///         .Where((e, p) => e.Timestamp >= p.Get&lt;DateTime&gt;("start_date")));
+    /// });
+    /// </code>
+    /// </example>
+    public static EntityTypeBuilder<TView> AsParameterizedView<TView, TSource>(
+        this EntityTypeBuilder<TView> builder,
+        Action<ParameterizedViews.ParameterizedViewConfiguration<TView, TSource>> configure)
+        where TView : class
+        where TSource : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(configure);
+
+        var configuration = new ParameterizedViews.ParameterizedViewConfiguration<TView, TSource>();
+        configure(configuration);
+
+        // Get or generate view name
+        var viewName = configuration.ViewName ?? ConvertToSnakeCase(typeof(TView).Name);
+
+        // Mark as keyless (views don't have keys)
+        builder.HasNoKey();
+
+        // Store basic annotations
+        builder.HasAnnotation(ClickHouseAnnotationNames.ParameterizedView, true);
+        builder.HasAnnotation(ClickHouseAnnotationNames.ParameterizedViewName, viewName);
+
+        // Build and store the full metadata
+        var metadata = configuration.BuildMetadata(viewName);
+        builder.HasAnnotation(ClickHouseAnnotationNames.ParameterizedViewMetadata, metadata);
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Converts PascalCase to snake_case.
+    /// </summary>
+    private static string ConvertToSnakeCase(string name)
+    {
+        if (string.IsNullOrEmpty(name))
+            return name;
+
+        var result = new System.Text.StringBuilder();
+        for (var i = 0; i < name.Length; i++)
+        {
+            var c = name[i];
+            if (char.IsUpper(c))
+            {
+                if (i > 0)
+                    result.Append('_');
+                result.Append(char.ToLowerInvariant(c));
+            }
+            else
+            {
+                result.Append(c);
+            }
+        }
+        return result.ToString();
     }
 
     #endregion

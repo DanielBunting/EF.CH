@@ -125,6 +125,147 @@ public static class ClickHouseAggregates
 
     #endregion
 
+    #region Approximate Count Distinct
+
+    /// <summary>
+    /// Calculates the approximate number of unique values using the Combined algorithm.
+    /// Translates to uniqCombined(column).
+    /// Uses a combination of HyperLogLog, hash table and error correction.
+    /// </summary>
+    public static ulong UniqCombined<TSource, TValue>(
+        this IEnumerable<TSource> source,
+        Func<TSource, TValue> selector) => Throw<ulong>();
+
+    /// <summary>
+    /// Calculates the approximate number of unique values using the Combined64 algorithm.
+    /// Translates to uniqCombined64(column).
+    /// Same as UniqCombined but uses 64-bit hash for all data types.
+    /// </summary>
+    public static ulong UniqCombined64<TSource, TValue>(
+        this IEnumerable<TSource> source,
+        Func<TSource, TValue> selector) => Throw<ulong>();
+
+    /// <summary>
+    /// Calculates the approximate number of unique values using HyperLogLog.
+    /// Translates to uniqHLL12(column).
+    /// Uses HyperLogLog algorithm with 2^12 cells.
+    /// </summary>
+    public static ulong UniqHLL12<TSource, TValue>(
+        this IEnumerable<TSource> source,
+        Func<TSource, TValue> selector) => Throw<ulong>();
+
+    /// <summary>
+    /// Calculates the approximate number of unique values using Theta Sketch.
+    /// Translates to uniqTheta(column).
+    /// Uses Theta Sketch algorithm for set operations support.
+    /// </summary>
+    public static ulong UniqTheta<TSource, TValue>(
+        this IEnumerable<TSource> source,
+        Func<TSource, TValue> selector) => Throw<ulong>();
+
+    #endregion
+
+    #region Quantile Variants
+
+    /// <summary>
+    /// Computes an approximate quantile using the t-digest algorithm.
+    /// Translates to quantileTDigest(level)(column).
+    /// </summary>
+    /// <param name="source">The source enumerable (group).</param>
+    /// <param name="level">Quantile level from 0 to 1 (e.g., 0.95 for 95th percentile).</param>
+    /// <param name="selector">The value selector.</param>
+    public static double QuantileTDigest<TSource>(
+        this IEnumerable<TSource> source,
+        double level,
+        Func<TSource, double> selector) => Throw<double>();
+
+    /// <summary>
+    /// Computes an approximate quantile using the DD (DDSketch) algorithm.
+    /// Translates to quantileDD(relative_accuracy, level)(column).
+    /// </summary>
+    /// <param name="source">The source enumerable (group).</param>
+    /// <param name="relativeAccuracy">Relative accuracy of the DD algorithm (e.g., 0.01 for 1%).</param>
+    /// <param name="level">Quantile level from 0 to 1 (e.g., 0.95 for 95th percentile).</param>
+    /// <param name="selector">The value selector.</param>
+    public static double QuantileDD<TSource>(
+        this IEnumerable<TSource> source,
+        double relativeAccuracy,
+        double level,
+        Func<TSource, double> selector) => Throw<double>();
+
+    /// <summary>
+    /// Computes the exact quantile value. Translates to quantileExact(level)(column).
+    /// More resource-intensive than approximate variants but provides exact results.
+    /// </summary>
+    /// <param name="source">The source enumerable (group).</param>
+    /// <param name="level">Quantile level from 0 to 1 (e.g., 0.95 for 95th percentile).</param>
+    /// <param name="selector">The value selector.</param>
+    public static double QuantileExact<TSource>(
+        this IEnumerable<TSource> source,
+        double level,
+        Func<TSource, double> selector) => Throw<double>();
+
+    /// <summary>
+    /// Computes an approximate quantile optimized for timing data.
+    /// Translates to quantileTiming(level)(column).
+    /// Optimized for sequences that describe distributions such as loading times.
+    /// </summary>
+    /// <param name="source">The source enumerable (group).</param>
+    /// <param name="level">Quantile level from 0 to 1 (e.g., 0.95 for 95th percentile).</param>
+    /// <param name="selector">The value selector.</param>
+    public static double QuantileTiming<TSource>(
+        this IEnumerable<TSource> source,
+        double level,
+        Func<TSource, double> selector) => Throw<double>();
+
+    #endregion
+
+    #region Multi-Quantile
+
+    /// <summary>
+    /// Computes multiple approximate quantiles in a single pass.
+    /// Translates to quantiles(level1, level2, ...)(column).
+    /// </summary>
+    /// <param name="source">The source enumerable (group).</param>
+    /// <param name="levels">Array of quantile levels from 0 to 1.</param>
+    /// <param name="selector">The value selector.</param>
+    public static double[] Quantiles<TSource>(
+        this IEnumerable<TSource> source,
+        double[] levels,
+        Func<TSource, double> selector) => Throw<double[]>();
+
+    /// <summary>
+    /// Computes multiple approximate quantiles using the t-digest algorithm in a single pass.
+    /// Translates to quantilesTDigest(level1, level2, ...)(column).
+    /// </summary>
+    /// <param name="source">The source enumerable (group).</param>
+    /// <param name="levels">Array of quantile levels from 0 to 1.</param>
+    /// <param name="selector">The value selector.</param>
+    public static double[] QuantilesTDigest<TSource>(
+        this IEnumerable<TSource> source,
+        double[] levels,
+        Func<TSource, double> selector) => Throw<double[]>();
+
+    #endregion
+
+    #region Weighted Top K
+
+    /// <summary>
+    /// Returns the top K most frequent values weighted by a weight column.
+    /// Translates to topKWeighted(k)(column, weight).
+    /// </summary>
+    /// <param name="source">The source enumerable (group).</param>
+    /// <param name="k">The number of top elements to return.</param>
+    /// <param name="selector">The value selector.</param>
+    /// <param name="weightSelector">The weight selector.</param>
+    public static TValue[] TopKWeighted<TSource, TValue, TWeight>(
+        this IEnumerable<TSource> source,
+        int k,
+        Func<TSource, TValue> selector,
+        Func<TSource, TWeight> weightSelector) => Throw<TValue[]>();
+
+    #endregion
+
     #region Phase 3 - Arrays
 
     /// <summary>

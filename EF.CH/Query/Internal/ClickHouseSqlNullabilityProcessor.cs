@@ -95,6 +95,7 @@ public class ClickHouseSqlNullabilityProcessor : SqlNullabilityProcessor
 
             case ClickHouseExternalTableFunctionExpression:
             case ClickHouseDictionaryTableExpression:
+            case ClickHouseCteReferenceExpression:
                 // These are leaf nodes, no children to visit
                 return tableExpressionBase;
 
@@ -183,6 +184,13 @@ public class ClickHouseSqlNullabilityProcessor : SqlNullabilityProcessor
             // Window functions may return null for some functions like lag/lead
             nullable = true;
             return VisitWindowFunction(windowExpression);
+        }
+
+        if (sqlExpression is ClickHouseRawSqlExpression rawSqlExpression)
+        {
+            // Raw SQL fragments are opaque - assume nullable
+            nullable = true;
+            return rawSqlExpression;
         }
 
         return base.VisitCustomSqlExpression(sqlExpression, allowOptimizedExpansion, out nullable);

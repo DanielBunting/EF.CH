@@ -343,4 +343,203 @@ public static class ClickHouseQueryableExtensions
     internal static readonly MethodInfo LimitByWithOffsetMethodInfo =
         typeof(ClickHouseQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
             .First(m => m.Name == nameof(LimitBy) && m.GetParameters().Length == 4);
+
+    /// <summary>
+    /// Adds WITH ROLLUP modifier to the GROUP BY clause, generating hierarchical subtotals.
+    /// Must be called after GroupBy() and Select().
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// WITH ROLLUP generates hierarchical subtotals from right to left. For example,
+    /// with GROUP BY a, b, c WITH ROLLUP, you get subtotals for (a,b,c), (a,b), (a), and ().
+    /// </para>
+    /// <para>
+    /// Subtotal rows have NULL values in the rolled-up columns. Consider using nullable
+    /// types in your result projection to properly handle these rows.
+    /// </para>
+    /// </remarks>
+    /// <typeparam name="TResult">The result type.</typeparam>
+    /// <param name="source">The source queryable (must be after GroupBy/Select).</param>
+    /// <returns>A queryable with WITH ROLLUP applied to GROUP BY.</returns>
+    /// <example>
+    /// <code>
+    /// var salesReport = context.Sales
+    ///     .GroupBy(s => new { s.Region, s.Category })
+    ///     .Select(g => new { g.Key.Region, g.Key.Category, Total = g.Sum(s => s.Amount) })
+    ///     .WithRollup()
+    ///     .ToList();
+    /// // Returns: Region+Category totals, Region totals, and Grand total
+    /// </code>
+    /// </example>
+    public static IQueryable<TResult> WithRollup<TResult>(this IQueryable<TResult> source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+
+        return source.Provider.CreateQuery<TResult>(
+            Expression.Call(
+                null,
+                WithRollupMethodInfo.MakeGenericMethod(typeof(TResult)),
+                source.Expression));
+    }
+
+    /// <summary>
+    /// Adds WITH CUBE modifier to the GROUP BY clause, generating all subtotal combinations.
+    /// Must be called after GroupBy() and Select().
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// WITH CUBE generates subtotals for all combinations of grouping columns. For example,
+    /// with GROUP BY a, b WITH CUBE, you get subtotals for (a,b), (a), (b), and ().
+    /// </para>
+    /// <para>
+    /// Subtotal rows have NULL values in the aggregated columns. Consider using nullable
+    /// types in your result projection to properly handle these rows.
+    /// </para>
+    /// </remarks>
+    /// <typeparam name="TResult">The result type.</typeparam>
+    /// <param name="source">The source queryable (must be after GroupBy/Select).</param>
+    /// <returns>A queryable with WITH CUBE applied to GROUP BY.</returns>
+    /// <example>
+    /// <code>
+    /// var analysis = context.Sales
+    ///     .GroupBy(s => new { s.Region, s.Category })
+    ///     .Select(g => new { g.Key.Region, g.Key.Category, Count = g.Count() })
+    ///     .WithCube()
+    ///     .ToList();
+    /// // Returns: Region+Category, Region-only, Category-only, and Grand total
+    /// </code>
+    /// </example>
+    public static IQueryable<TResult> WithCube<TResult>(this IQueryable<TResult> source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+
+        return source.Provider.CreateQuery<TResult>(
+            Expression.Call(
+                null,
+                WithCubeMethodInfo.MakeGenericMethod(typeof(TResult)),
+                source.Expression));
+    }
+
+    /// <summary>
+    /// Adds WITH TOTALS modifier to the GROUP BY clause, adding a grand total row.
+    /// Must be called after GroupBy() and Select().
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// WITH TOTALS adds a single additional row at the end containing the grand total
+    /// across all groups. The grouping columns will be NULL or default values in this row.
+    /// </para>
+    /// <para>
+    /// Consider using nullable types in your result projection to properly handle
+    /// the totals row.
+    /// </para>
+    /// </remarks>
+    /// <typeparam name="TResult">The result type.</typeparam>
+    /// <param name="source">The source queryable (must be after GroupBy/Select).</param>
+    /// <returns>A queryable with WITH TOTALS applied to GROUP BY.</returns>
+    /// <example>
+    /// <code>
+    /// var summary = context.Events
+    ///     .GroupBy(e => e.Category)
+    ///     .Select(g => new { Category = g.Key, Count = g.Count() })
+    ///     .WithTotals()
+    ///     .ToList();
+    /// // Returns: Each category's count + one row with the total count
+    /// </code>
+    /// </example>
+    public static IQueryable<TResult> WithTotals<TResult>(this IQueryable<TResult> source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+
+        return source.Provider.CreateQuery<TResult>(
+            Expression.Call(
+                null,
+                WithTotalsMethodInfo.MakeGenericMethod(typeof(TResult)),
+                source.Expression));
+    }
+
+    internal static readonly MethodInfo WithRollupMethodInfo =
+        typeof(ClickHouseQueryableExtensions).GetMethod(
+            nameof(WithRollup), BindingFlags.Public | BindingFlags.Static)!;
+
+    internal static readonly MethodInfo WithCubeMethodInfo =
+        typeof(ClickHouseQueryableExtensions).GetMethod(
+            nameof(WithCube), BindingFlags.Public | BindingFlags.Static)!;
+
+    internal static readonly MethodInfo WithTotalsMethodInfo =
+        typeof(ClickHouseQueryableExtensions).GetMethod(
+            nameof(WithTotals), BindingFlags.Public | BindingFlags.Static)!;
+
+    /// <summary>
+    /// Wraps the current query as a Common Table Expression (CTE) with the given name.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// CTEs allow naming a subquery and referencing it in the outer query. This is useful
+    /// for complex analytical queries that benefit from logical separation.
+    /// </para>
+    /// <para>
+    /// Generates: <c>WITH "name" AS (SELECT ...) SELECT ... FROM "name"</c>
+    /// </para>
+    /// <para>
+    /// Limitations:
+    /// - Single CTE per query (multi-CTE deferred to future version)
+    /// - No recursive CTEs (limited ClickHouse support)
+    /// </para>
+    /// </remarks>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <param name="source">The source queryable to use as CTE body.</param>
+    /// <param name="name">The CTE name (used in WITH clause and FROM reference).</param>
+    /// <returns>A queryable that will be rendered as a CTE.</returns>
+    public static IQueryable<TEntity> AsCte<TEntity>(this IQueryable<TEntity> source, string name)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentException.ThrowIfNullOrEmpty(name);
+
+        return source.Provider.CreateQuery<TEntity>(
+            Expression.Call(
+                null,
+                AsCteMethodInfo.MakeGenericMethod(typeof(TEntity)),
+                source.Expression,
+                WrapInEfConstant(name)));
+    }
+
+    internal static readonly MethodInfo AsCteMethodInfo =
+        typeof(ClickHouseQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .First(m => m.Name == nameof(AsCte));
+
+    /// <summary>
+    /// Injects a raw SQL condition into the WHERE clause of the query.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Use this for ClickHouse-specific SQL syntax that cannot be expressed through LINQ,
+    /// such as lambda expressions in predicates, special functions, or complex ClickHouse expressions.
+    /// </para>
+    /// <para>
+    /// The raw SQL is AND-ed with any existing WHERE conditions from LINQ.
+    /// </para>
+    /// </remarks>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <param name="source">The source queryable.</param>
+    /// <param name="rawSqlCondition">The raw SQL condition to inject (e.g. <c>"arrayExists(x -> x > 10, ArrayColumn)"</c>).</param>
+    /// <returns>A queryable with the raw SQL condition applied.</returns>
+    public static IQueryable<TEntity> WithRawFilter<TEntity>(
+        this IQueryable<TEntity> source,
+        string rawSqlCondition)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentException.ThrowIfNullOrEmpty(rawSqlCondition);
+
+        return source.Provider.CreateQuery<TEntity>(
+            Expression.Call(
+                null,
+                WithRawFilterMethodInfo.MakeGenericMethod(typeof(TEntity)),
+                source.Expression,
+                WrapInEfConstant(rawSqlCondition)));
+    }
+
+    internal static readonly MethodInfo WithRawFilterMethodInfo =
+        typeof(ClickHouseQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .First(m => m.Name == nameof(WithRawFilter));
 }

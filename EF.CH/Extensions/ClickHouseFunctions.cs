@@ -33,6 +33,19 @@ public static class ClickHouseFunctions
             "This method is a ClickHouse translation stub and should not be invoked directly. " +
             "It is intended for use in LINQ expressions that are translated to ClickHouse SQL.");
 
+    #region Raw SQL
+
+    /// <summary>
+    /// Embeds a raw SQL expression in a LINQ projection.
+    /// The SQL string is emitted verbatim in the SELECT clause.
+    /// </summary>
+    /// <typeparam name="T">The CLR return type of the expression.</typeparam>
+    /// <param name="sql">The raw SQL expression (e.g. <c>"quantile(0.95)(value)"</c>).</param>
+    /// <returns>Never returns — this method is translated to SQL at query time.</returns>
+    public static T RawSql<T>(string sql) => Throw<T>();
+
+    #endregion
+
     #region Date/Time Truncation Functions
 
     /// <summary>
