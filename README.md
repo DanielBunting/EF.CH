@@ -698,13 +698,13 @@ See [docs/types/json.md](docs/types/json.md) for full documentation.
 EF.CH supports multi-datacenter ClickHouse deployments with full replication and sharding:
 
 - **Replicated Engines** - ReplicatedMergeTree variants with fluent configuration
-- **Distributed Tables** - Unified view across sharded data with routing
 - **ON CLUSTER DDL** - Automatic cluster-aware schema management
 - **Connection Routing** - Read/write endpoint splitting with failover
 - **Table Groups** - Logical grouping with inherited cluster settings
 
 ```csharp
 // Replicated engine for high availability (same data on all nodes)
+// Fluent cluster configuration
 modelBuilder.Entity<Order>(entity =>
 {
     entity.UseReplicatedReplacingMergeTree(x => x.Version, x => new { x.OrderDate, x.Id })
@@ -741,8 +741,8 @@ options.UseClickHouse("Host=primary;Database=myapp", ch =>
 |---------|----------|--------|
 | **Replication** | High availability, read scaling | [ClusterSample](samples/ClusterSample/) |
 | **Sharding** | Horizontal scaling, large datasets | [DistributedSample](samples/DistributedSample/) |
-
-See [Clustering Documentation](docs/features/clustering.md) for details.
+s
+See [Clustering Documentation](docs/features/clustering.md) and [ClusterSample](samples/ClusterSample/) for details.
 
 ## Dictionaries
 
