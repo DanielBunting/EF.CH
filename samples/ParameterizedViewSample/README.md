@@ -1,94 +1,79 @@
 # Parameterized View Sample
 
-This sample demonstrates how to use ClickHouse parameterized views with EF.CH.
+Demonstrates ClickHouse parameterized views using EF.CH.
 
-## What Are Parameterized Views?
+## What This Sample Shows
 
-Parameterized views in ClickHouse allow you to create views with parameters that are substituted at query time. They use the `{name:Type}` syntax:
+1. **Create parameterized views** - `CreateParameterizedViewAsync` with typed parameters using `{name:Type}` syntax
+2. **Query parameterized views** - `FromParameterizedView<T>` with anonymous objects or dictionaries, composable with further LINQ operations
+3. **Drop parameterized views** - `DropParameterizedViewAsync` with optional `IF EXISTS` safety
+4. **Idempotent creation** - `EnsureParameterizedViewsAsync` for startup-safe view creation
 
-```sql
-CREATE VIEW user_events_view AS
-SELECT *
-FROM events
-WHERE user_id = {user_id:UInt64}
-  AND timestamp >= {start_date:DateTime}
+## Prerequisites
+
+- .NET 8.0 SDK
+- Docker (for Testcontainers)
+
+## Running
+
+```bash
+dotnet run --project samples/ParameterizedViewSample/
 ```
 
-Query with parameters:
-```sql
-SELECT * FROM user_events_view(user_id = 123, start_date = '2024-01-01 00:00:00')
-```
+## Key Concepts
 
-## Running the Sample
+### Creating Views
 
-1. Ensure ClickHouse is running on localhost:8123
-2. Run the sample:
-   ```bash
-   dotnet run
-   ```
-
-## What This Sample Demonstrates
-
-1. **Creating a Parameterized View** - Via raw SQL (views aren't managed by EF migrations)
-
-2. **Basic Queries** - Using `FromParameterizedView` with anonymous object parameters
-
-3. **LINQ Composition** - Chaining Where, OrderBy, and Take after parameter binding
-
-4. **Aggregation** - Using GroupBy with Sum and Count
-
-5. **Dictionary Parameters** - For dynamic parameter scenarios
-
-## Key Code Patterns
-
-### Configure the Result Entity
+Parameterized views use ClickHouse's `{name:Type}` syntax for parameters:
 
 ```csharp
-modelBuilder.Entity<UserEventView>(entity =>
-{
-    entity.HasParameterizedView("user_events_view");
-});
-```
-
-### Query with Parameters
-
-```csharp
-var events = await context.FromParameterizedView<UserEventView>(
+await context.Database.CreateParameterizedViewAsync(
     "user_events_view",
-    new { user_id = 123UL, start_date = DateTime.Today })
-    .Where(e => e.EventType == "click")
+    @"SELECT * FROM events
+      WHERE user_id = {user_id:UInt64}
+        AND timestamp >= {start_date:DateTime}");
+```
+
+### Querying Views
+
+Pass parameters via anonymous objects (property names are converted to snake_case):
+
+```csharp
+var events = await context.FromParameterizedView<EventView>(
+        "user_events_view",
+        new { UserId = 123UL, StartDate = new DateTime(2024, 1, 1) })
+    .Where(e => e.EventType == "click")    // Further LINQ composition
+    .OrderByDescending(e => e.Timestamp)
     .ToListAsync();
 ```
 
-### Use Dictionary for Dynamic Parameters
+Or pass parameters via dictionary:
 
 ```csharp
 var parameters = new Dictionary<string, object?>
 {
-    ["user_id"] = userId,
-    ["start_date"] = startDate
+    ["user_id"] = 123UL,
+    ["start_date"] = new DateTime(2024, 1, 1)
 };
-
-var events = await context.FromParameterizedView<UserEventView>(
-    "user_events_view", parameters)
-    .ToListAsync();
+var events = await context.FromParameterizedView<EventView>(
+    "user_events_view", parameters).ToListAsync();
 ```
 
-## Parameter Type Mapping
+### View Result Entities
 
-| C# Type | ClickHouse Type |
-|---------|-----------------|
-| `ulong` | UInt64 |
-| `long` | Int64 |
-| `int` | Int32 |
-| `DateTime` | DateTime |
-| `DateOnly` | Date |
-| `string` | String |
-| `decimal` | Decimal |
-| `bool` | UInt8 (1/0) |
+View result types must be configured as keyless entities with no table mapping:
 
-## Notes
+```csharp
+modelBuilder.Entity<EventView>(entity =>
+{
+    entity.HasNoKey();
+    entity.ToTable((string?)null);
+});
+```
 
-- Property names are automatically converted from PascalCase to snake_case
-- String values are properly escaped
-- The result entity must be configured as keyless (done automatically by `HasParameterizedView`)
+### Startup Pattern
+
+```csharp
+await context.Database.EnsureCreatedAsync();
+await context.Database.EnsureParameterizedViewsAsync();
+```

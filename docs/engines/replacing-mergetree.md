@@ -1,238 +1,64 @@
 # ReplacingMergeTree Engine
 
-ReplacingMergeTree automatically deduplicates rows with the same ORDER BY key, keeping only the row with the highest version. This is the closest thing ClickHouse has to "UPDATE" semantics.
+ReplacingMergeTree deduplicates rows with the same ORDER BY key during background merges. When multiple rows share the same key, only the row with the highest version column value is kept. Use this engine when you need the latest state of changing entities.
 
-## When to Use
-
-- User profiles that need occasional updates
-- Product catalogs with price changes
-- Configuration or settings tables
-- Any data where you need "last write wins" behavior
-
-## How It Works
-
-1. You insert a new row with the same key as an existing row
-2. Both rows exist until a merge happens
-3. During merge, ClickHouse keeps only the row with the highest version
-4. Use `FINAL` to see deduplicated results immediately
-
-```
-Insert: User(id=1, name="Alice", version=1)
-Insert: User(id=1, name="Alicia", version=2)  -- "update"
-
-Before merge: Both rows exist
-After merge:  Only version=2 remains
-```
-
-## Configuration
-
-### Basic Setup
+## Basic Configuration
 
 ```csharp
-public class User
+modelBuilder.Entity<User>(entity =>
 {
-    public Guid Id { get; set; }
-    public string Email { get; set; } = string.Empty;
-    public string Name { get; set; } = string.Empty;
-    public DateTime UpdatedAt { get; set; }  // Version column
-}
-
-public class MyDbContext : DbContext
-{
-    public DbSet<User> Users => Set<User>();
-
-    protected override void OnModelCreating(ModelBuilder modelBuilder)
-    {
-        modelBuilder.Entity<User>(entity =>
-        {
-            entity.HasKey(e => e.Id);
-            entity.UseReplacingMergeTree(
-                versionColumn: x => x.UpdatedAt,  // Higher = newer
-                orderByColumn: x => x.Id);        // Deduplication key
-        });
-    }
-}
+    entity.UseReplacingMergeTree(
+        x => x.Version,         // version column for deduplication
+        x => new { x.Id });     // ORDER BY key
+});
 ```
-
-### With Composite Key
-
-```csharp
-// Deduplicate by TenantId + UserId combination
-entity.UseReplacingMergeTree(
-    versionColumn: x => x.UpdatedAt,
-    orderByColumn: x => new { x.TenantId, x.UserId });
-```
-
-### Without Version Column
-
-If you don't specify a version, ClickHouse keeps an arbitrary row:
-
-```csharp
-// Not recommended - unpredictable which row survives
-entity.UseReplacingMergeTree(orderByColumn: x => x.Id);
-```
-
-## Generated DDL
-
-```csharp
-entity.UseReplacingMergeTree(x => x.UpdatedAt, x => x.Id);
-entity.HasPartitionByMonth(x => x.CreatedAt);
-```
-
-Generates:
 
 ```sql
 CREATE TABLE "Users" (
-    "Id" UUID NOT NULL,
-    "Email" String NOT NULL,
-    "Name" String NOT NULL,
-    "CreatedAt" DateTime64(3) NOT NULL,
-    "UpdatedAt" DateTime64(3) NOT NULL
+    "Id" UUID,
+    "Name" String,
+    "Version" Int64,
+    ...
 )
-ENGINE = ReplacingMergeTree("UpdatedAt")
-PARTITION BY toYYYYMM("CreatedAt")
+ENGINE = ReplacingMergeTree("Version")
 ORDER BY ("Id")
 ```
 
-## Usage Examples
+During background merges, if multiple rows have the same `Id`, only the row with the highest `Version` value survives.
 
-### "Updating" a User
+## Without Version Column
+
+When no version column is specified, the last inserted row wins during deduplication.
 
 ```csharp
-// Get current user
-var user = await context.Users
-    .Final()  // Important: see deduplicated data
-    .FirstAsync(u => u.Id == userId);
-
-// "Update" by inserting new version
-var updatedUser = new User
-{
-    Id = user.Id,           // Same key
-    Email = user.Email,
-    Name = "New Name",      // Changed field
-    UpdatedAt = DateTime.UtcNow  // Higher version
-};
-
-context.Users.Add(updatedUser);
-await context.SaveChangesAsync();
+entity.UseReplacingMergeTree(x => new { x.UserId, x.Timestamp });
 ```
 
-### Querying with FINAL
-
-```csharp
-// May return duplicate rows (before merge)
-var users = await context.Users.ToListAsync();
-
-// Guaranteed deduplicated (use for accurate results)
-var users = await context.Users.Final().ToListAsync();
-
-// Filter then deduplicate
-var activeUsers = await context.Users
-    .Where(u => u.IsActive)
-    .Final()
-    .ToListAsync();
+```sql
+ENGINE = ReplacingMergeTree()
+ORDER BY ("UserId", "Timestamp")
 ```
 
-### Bulk "Update"
+## Version with IsDeleted Column (ClickHouse 23.2+)
+
+The `isDeleted` parameter enables physical deletion during merges. When the winning version has `IsDeleted = 1`, the row is removed entirely.
 
 ```csharp
-// Update multiple users at once
-var updates = existingUsers.Select(u => new User
+modelBuilder.Entity<User>(entity =>
 {
-    Id = u.Id,
-    Email = u.Email,
-    Name = u.Name.ToUpper(),  // Transform
-    UpdatedAt = DateTime.UtcNow
+    entity.UseReplacingMergeTree(
+        x => x.Version,       // version column
+        x => x.IsDeleted,     // is_deleted column (UInt8)
+        x => new { x.Id });   // ORDER BY key
 });
-
-context.Users.AddRange(updates);
-await context.SaveChangesAsync();
 ```
 
-## Version Column Best Practices
-
-### Use DateTime for Time-Based Versioning
-
-```csharp
-public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+```sql
+ENGINE = ReplacingMergeTree("Version", "IsDeleted")
+ORDER BY ("Id")
 ```
 
-- Natural ordering (newer = higher)
-- Easy to understand and debug
-- Works well with partitioning
-
-### Use UInt64 for Explicit Versioning
-
-```csharp
-public ulong Version { get; set; }
-
-// When updating:
-newEntity.Version = oldEntity.Version + 1;
-```
-
-- Explicit control over version order
-- No clock skew issues
-- Requires tracking current version
-
-### Avoid Using Nullable Versions
-
-```csharp
-// Don't do this - NULL versions cause unpredictable behavior
-public DateTime? UpdatedAt { get; set; }
-```
-
-## FINAL Performance Considerations
-
-The `FINAL` modifier adds overhead:
-
-```csharp
-// Fast, but may have duplicates
-var count = await context.Users.CountAsync();
-
-// Slower, but accurate
-var count = await context.Users.Final().CountAsync();
-```
-
-**When to use FINAL:**
-- Real-time dashboards showing current state
-- Single-entity lookups
-- When accuracy matters more than speed
-
-**When to skip FINAL:**
-- Historical aggregations (duplicates often don't affect results)
-- Batch processing where you'll handle duplicates yourself
-- When data is stable (no recent inserts)
-
-## Forcing a Merge
-
-Merges happen automatically, but you can force one:
-
-```csharp
-// Force immediate deduplication (expensive operation)
-await context.Database.ExecuteSqlRawAsync(
-    @"OPTIMIZE TABLE ""Users"" FINAL");
-```
-
-**Caution:** Don't run `OPTIMIZE ... FINAL` frequently. It rewrites data and is resource-intensive.
-
-## Common Patterns
-
-### Upsert Pattern
-
-```csharp
-public async Task UpsertUser(User user)
-{
-    user.UpdatedAt = DateTime.UtcNow;
-    context.Users.Add(user);  // Always insert
-    await context.SaveChangesAsync();
-}
-```
-
-### Physical Delete with `is_deleted` Column (ClickHouse 23.2+)
-
-ClickHouse 23.2+ supports native deletion via the `is_deleted` column. Unlike soft delete, this approach:
-- **Automatically excludes** deleted rows when using `FINAL`
-- **Physically removes** deleted rows during merge operations
+The `IsDeleted` column should be `byte` (mapped to UInt8), with `0` meaning active and `1` meaning deleted:
 
 ```csharp
 public class User
@@ -242,110 +68,92 @@ public class User
     public long Version { get; set; }
     public byte IsDeleted { get; set; }  // UInt8: 0 = active, 1 = deleted
 }
-
-// Configure with is_deleted column
-entity.UseReplacingMergeTree(
-    versionColumn: x => x.Version,
-    isDeletedColumn: x => x.IsDeleted,  // Must be byte (UInt8)
-    orderByColumn: x => x.Id);
 ```
 
-Generated DDL:
+## String Overloads
+
+```csharp
+entity.UseReplacingMergeTree("Version", "Id");
+```
+
 ```sql
-ENGINE = ReplacingMergeTree("Version", "IsDeleted")
+ENGINE = ReplacingMergeTree("Version")
 ORDER BY ("Id")
 ```
 
-**Deletion Pattern:**
+## FINAL Modifier
+
+Deduplication only happens during background merges. Before a merge runs, queries may return duplicate rows. Use the `.Final()` query extension to get deduplicated results at query time:
 
 ```csharp
-public async Task DeleteUser(Guid userId)
-{
-    // Get current version
-    var user = await context.Users.Final()
-        .Where(u => u.Id == userId && u.IsDeleted == 0)
-        .FirstAsync();
-
-    // Insert delete marker with higher version
-    context.Users.Add(new User
-    {
-        Id = user.Id,
-        Name = user.Name,
-        Version = user.Version + 1,
-        IsDeleted = 1  // Mark as deleted
-    });
-    await context.SaveChangesAsync();
-}
-```
-
-**Behavior:**
-- Query with `FINAL` automatically excludes rows where `IsDeleted = 1`
-- During merge, rows with `IsDeleted = 1` are physically removed
-- No need for manual `WHERE IsDeleted = 0` filters when using `FINAL`
-
-### Soft Delete (Manual Filtering)
-
-For ClickHouse versions < 23.2, or if you need to query deleted rows, use manual soft delete:
-
-```csharp
-public class User
-{
-    public Guid Id { get; set; }
-    public bool IsDeleted { get; set; }
-    public DateTime UpdatedAt { get; set; }
-}
-
-public async Task SoftDeleteUser(Guid userId)
-{
-    var user = await context.Users.Final().FirstAsync(u => u.Id == userId);
-
-    context.Users.Add(new User
-    {
-        Id = user.Id,
-        IsDeleted = true,
-        UpdatedAt = DateTime.UtcNow
-    });
-    await context.SaveChangesAsync();
-}
-
-// Must manually filter
-var activeUsers = await context.Users.Final()
-    .Where(u => !u.IsDeleted)
+var users = await context.Users
+    .Final()
+    .Where(u => u.Active)
     .ToListAsync();
 ```
 
-### Change History (Keep Both)
-
-If you need history, use MergeTree instead and add a version column:
-
-```csharp
-// MergeTree keeps all versions
-entity.UseMergeTree(x => new { x.UserId, x.Version });
-
-// Query latest
-var latest = await context.UserHistory
-    .Where(h => h.UserId == userId)
-    .OrderByDescending(h => h.Version)
-    .FirstAsync();
+```sql
+SELECT ... FROM "Users" FINAL WHERE ...
 ```
 
-## Limitations
+> **Note:** `FINAL` forces on-the-fly deduplication, which can be slower than reading merged data. For large tables, consider running `OPTIMIZE TABLE ... FINAL` periodically instead of using `FINAL` on every query.
 
-- **Not Immediate**: Deduplication happens during merges, not on insert
-- **FINAL Overhead**: Accurate queries are slower
-- **No Partial Updates**: Must insert complete row
-- **Version Required**: Without version, behavior is undefined
+When using the `isDeleted` column, `FINAL` automatically excludes rows where `IsDeleted = 1`.
 
-## When Not to Use
+## When to Use
 
-| Scenario | Use Instead |
-|----------|-------------|
-| Append-only data | [MergeTree](mergetree.md) |
-| Auto-sum numeric columns | [SummingMergeTree](summing-mergetree.md) |
-| Track state changes with signs | [CollapsingMergeTree](collapsing-mergetree.md) |
+ReplacingMergeTree is the right choice when:
+
+- You need the latest state of entities that change over time (user profiles, product catalogs, configuration)
+- You want upsert semantics -- insert a new version and the old one is removed during merges
+- You need soft-delete behavior with the `isDeleted` column
+
+It is not suitable when:
+
+- You need immediate consistency (deduplication is eventual, use `FINAL` for on-the-fly dedup)
+- You need to aggregate numeric columns automatically (use SummingMergeTree instead)
+
+## Complete Example
+
+```csharp
+modelBuilder.Entity<Product>(entity =>
+{
+    entity.ToTable("products");
+    entity.HasKey(e => e.Id);
+
+    entity.UseReplacingMergeTree(
+        x => x.Version,
+        x => x.IsDeleted,
+        x => new { x.Id })
+        .HasPartitionByMonth(x => x.UpdatedAt);
+});
+```
+
+```sql
+CREATE TABLE "products" (
+    "Id" UUID,
+    "Name" String,
+    "Price" Decimal(18, 4),
+    "Version" Int64,
+    "IsDeleted" UInt8,
+    "UpdatedAt" DateTime64(3)
+)
+ENGINE = ReplacingMergeTree("Version", "IsDeleted")
+PARTITION BY toYYYYMM("UpdatedAt")
+ORDER BY ("Id")
+```
+
+Querying the latest state:
+
+```csharp
+var activeProducts = await context.Products
+    .Final()
+    .Where(p => p.Price > 0)
+    .ToListAsync();
+```
 
 ## See Also
 
-- [Engines Overview](overview.md)
-- [Query Modifiers - FINAL](../features/query-modifiers.md)
-- [ClickHouse ReplacingMergeTree Docs](https://clickhouse.com/docs/en/engines/table-engines/mergetree-family/replacingmergetree)
+- [MergeTree](mergetree.md) -- base engine without deduplication
+- [CollapsingMergeTree](collapsing-mergetree.md) -- state tracking with sign column
+- [VersionedCollapsingMergeTree](versioned-collapsing.md) -- out-of-order-aware collapsing

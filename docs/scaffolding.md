@@ -1,322 +1,200 @@
-# Scaffolding (Reverse Engineering)
+# Scaffolding
 
-Scaffolding generates C# entity classes and DbContext from an existing ClickHouse database. This is useful when you have existing tables and want to use them with EF Core.
+Scaffolding (reverse engineering) generates C# entity classes and a `DbContext` from an existing ClickHouse database. EF.CH extends the standard EF Core scaffolding pipeline to detect ClickHouse-specific features including engine types, enum definitions, and Nested types.
 
-## Basic Usage
+## Running the Scaffolder
 
-```bash
-dotnet ef dbcontext scaffold "Host=localhost;Database=mydb" EF.CH
-```
-
-This generates:
-- Entity classes for each table
-- A DbContext with DbSet properties
-- ClickHouse-specific configurations (ENGINE, ORDER BY, etc.)
-
-## Options
-
-### Output Directory
+Use the standard EF Core command to scaffold from a ClickHouse database.
 
 ```bash
-dotnet ef dbcontext scaffold "Host=localhost;Database=mydb" EF.CH \
-    --output-dir Models \
-    --context-dir Data
+dotnet ef dbcontext scaffold "Host=localhost;Port=8123;Database=mydb" EF.CH
 ```
 
-### Specific Tables
+Or in the Package Manager Console:
+
+```powershell
+Scaffold-DbContext "Host=localhost;Port=8123;Database=mydb" EF.CH
+```
+
+### Options
 
 ```bash
-dotnet ef dbcontext scaffold "Host=localhost;Database=mydb" EF.CH \
-    --table Orders \
-    --table Products
+# Scaffold specific tables only
+dotnet ef dbcontext scaffold "Host=localhost;Port=8123;Database=mydb" EF.CH \
+    --table Orders --table Products
+
+# Specify output directory
+dotnet ef dbcontext scaffold "Host=localhost;Port=8123;Database=mydb" EF.CH \
+    --output-dir Models
+
+# Specify context name
+dotnet ef dbcontext scaffold "Host=localhost;Port=8123;Database=mydb" EF.CH \
+    --context AnalyticsDbContext
 ```
 
-### Context Name
+## Engine Detection
 
-```bash
-dotnet ef dbcontext scaffold "Host=localhost;Database=mydb" EF.CH \
-    --context MyDbContext
-```
+The scaffolder queries `system.tables` to detect the engine type and parameters for each table. Engine metadata is preserved as annotations on the generated entity configuration.
 
-### Force Overwrite
+| Detected | Generated Configuration |
+|----------|------------------------|
+| Engine name | `UseMergeTree(...)`, `UseReplacingMergeTree(...)`, etc. |
+| ORDER BY columns | Columns passed to the engine method |
+| PARTITION BY expression | `HasPartitionBy(...)` or `HasPartitionByMonth(...)` |
+| PRIMARY KEY (if different from ORDER BY) | `HasPrimaryKey(...)` |
+| SAMPLE BY | `HasSampleBy(...)` |
+| Version column (ReplacingMergeTree) | Version parameter in engine method |
+| Sign column (CollapsingMergeTree) | Sign parameter in engine method |
 
-```bash
-dotnet ef dbcontext scaffold "Host=localhost;Database=mydb" EF.CH \
-    --force
-```
+### Example
 
-## What Gets Scaffolded
-
-### Tables
-
-Each ClickHouse table becomes an entity class:
+Given a ClickHouse table:
 
 ```sql
--- ClickHouse table
-CREATE TABLE Products (
-    Id UUID,
-    Name String,
-    Price Decimal(18, 4),
-    CreatedAt DateTime64(3)
+CREATE TABLE events
+(
+    event_id UInt64,
+    user_id UInt64,
+    event_type Enum8('click' = 1, 'view' = 2, 'purchase' = 3),
+    timestamp DateTime64(3),
+    amount Nullable(Decimal(18,4))
 )
-ENGINE = MergeTree
-ORDER BY (Id)
+ENGINE = ReplacingMergeTree(timestamp)
+ORDER BY (user_id, event_id)
+PARTITION BY toYYYYMM(timestamp);
 ```
 
-Generated entity:
+The scaffolder generates:
+
 ```csharp
-public class Product
+public class Event
 {
-    public Guid Id { get; set; }
-    public string Name { get; set; } = string.Empty;
-    public decimal Price { get; set; }
-    public DateTime CreatedAt { get; set; }
+    public ulong EventId { get; set; }
+    public ulong UserId { get; set; }
+    public EventsEventType EventType { get; set; }
+    public DateTime Timestamp { get; set; }
+    public decimal? Amount { get; set; }
 }
 ```
 
-### Engine Configuration
-
-ENGINE and ORDER BY are preserved:
+With `OnModelCreating` configuration:
 
 ```csharp
-modelBuilder.Entity<Product>(entity =>
+modelBuilder.Entity<Event>(entity =>
 {
-    entity.UseMergeTree(x => x.Id);
+    entity.UseReplacingMergeTree(x => x.Timestamp, x => new { x.UserId, x.EventId });
+    entity.HasPartitionBy("toYYYYMM(Timestamp)");
 });
 ```
 
-### Partitioning
+## C# Enum Generation
 
-PARTITION BY expressions are scaffolded:
+When the scaffolder encounters a ClickHouse `Enum8` or `Enum16` column, it generates a corresponding C# enum type with the same member names and values.
 
-```csharp
-entity.HasPartitionBy("toYYYYMM(CreatedAt)");
+Given:
+
+```sql
+event_type Enum8('click' = 1, 'view' = 2, 'purchase' = 3)
 ```
 
-### Special Engines
-
-ReplacingMergeTree, SummingMergeTree, etc. are detected:
+Generated enum:
 
 ```csharp
-// From: ENGINE = ReplacingMergeTree(UpdatedAt)
-entity.UseReplacingMergeTree("UpdatedAt", "Id");
-
-// From: ENGINE = CollapsingMergeTree(Sign)
-entity.UseCollapsingMergeTree("Sign", "UserId", "Timestamp");
+public enum EventsEventType
+{
+    click = 1,
+    view = 2,
+    purchase = 3
+}
 ```
 
-## Type Mappings
+### Enum Naming Convention
 
-ClickHouse types are mapped to .NET types:
+The enum type name is derived from the table and column names:
 
-| ClickHouse | .NET |
-|------------|------|
-| `UUID` | `Guid` |
-| `String` | `string` |
+- If the column name already ends with `Status`, `Type`, `Kind`, `State`, or `Mode`, the column name is used directly (for example, `EventType` becomes the enum name `EventType`)
+- Otherwise, the table name is prepended: `Events` + `Category` becomes `EventsCategory`
+
+Both names are converted to PascalCase from any snake_case or kebab-case source.
+
+## Nested Type Detection
+
+ClickHouse stores `Nested` types as parallel arrays with dotted column names. The scaffolder detects these patterns and generates:
+
+1. A virtual column with the `Nested(...)` store type
+2. A comment containing a suggested record class definition
+
+Given columns in `system.columns`:
+
+```
+Goals.ID    Array(UInt32)
+Goals.Name  Array(String)
+```
+
+The scaffolder generates a property with a documentation comment:
+
+```csharp
+/// <summary>
+/// ClickHouse Nested type with fields: ID (uint), Name (string)
+///
+/// TODO: Replace List<object> with a custom record type:
+///
+/// public record EventsGoal
+/// {
+///     public uint ID { get; set; }
+///     public string Name { get; set; }
+/// }
+///
+/// Then change this property to: public List<EventsGoal> ...
+/// </summary>
+public List<object> Goals { get; set; }
+```
+
+## Column Type Mapping
+
+The scaffolder maps ClickHouse types to CLR types during reverse engineering.
+
+| ClickHouse Type | C# Type |
+|----------------|---------|
+| `UInt8` | `byte` |
+| `UInt16` | `ushort` |
+| `UInt32` | `uint` |
+| `UInt64` | `ulong` |
+| `Int8` | `sbyte` |
+| `Int16` | `short` |
 | `Int32` | `int` |
 | `Int64` | `long` |
+| `Float32` | `float` |
 | `Float64` | `double` |
-| `Decimal(p, s)` | `decimal` |
-| `DateTime64(3)` | `DateTime` |
-| `Date` | `DateOnly` |
+| `Decimal(P,S)` | `decimal` |
+| `String` | `string` |
+| `FixedString(N)` | `string` |
 | `Bool` | `bool` |
-| `Array(T)` | `T[]` |
-| `Nullable(T)` | `T?` |
+| `UUID` | `Guid` |
+| `DateTime64(P)` | `DateTime` |
+| `Date` | `DateOnly` |
+| `Enum8(...)` | Generated C# enum |
+| `Enum16(...)` | Generated C# enum |
+| `Nullable(T)` | Nullable CLR type |
+| `LowCardinality(T)` | Same as inner type T |
+| `Array(T)` | Array of mapped type |
 
-## Enum Scaffolding
+## Compression Codec Detection
 
-ClickHouse Enum8/Enum16 types are scaffolded as C# enums:
+If a column has a compression codec configured, the scaffolder stores the codec as an annotation. This information can be used to generate `HasCodec(...)` calls in the entity configuration.
 
-```sql
--- ClickHouse
-CREATE TABLE Orders (
-    Status Enum8('pending' = 0, 'shipped' = 1, 'delivered' = 2)
-)
-```
+## System Table Queries
 
-Generated:
-```csharp
-public enum OrderStatus
-{
-    Pending = 0,
-    Shipped = 1,
-    Delivered = 2
-}
+The scaffolder reads metadata from these ClickHouse system tables:
 
-public class Order
-{
-    public OrderStatus Status { get; set; }
-}
-```
+| System Table | Data Retrieved |
+|-------------|----------------|
+| `system.tables` | Table names, engine types, sorting keys, partition keys, comments |
+| `system.columns` | Column names, types, default expressions, compression codecs, key membership |
 
-## Nested Types
-
-Nested columns are scaffolded as array properties:
-
-```sql
--- ClickHouse
-CREATE TABLE Events (
-    Tags Nested(
-        Name String,
-        Value String
-    )
-)
-```
-
-Generated:
-```csharp
-public class Event
-{
-    public string[] TagsName { get; set; } = Array.Empty<string>();
-    public string[] TagsValue { get; set; } = Array.Empty<string>();
-}
-```
-
-## LowCardinality
-
-LowCardinality columns are scaffolded with appropriate configuration:
-
-```sql
--- ClickHouse
-CREATE TABLE Orders (
-    Status LowCardinality(String)
-)
-```
-
-Generated:
-```csharp
-entity.Property(e => e.Status)
-    .HasColumnType("LowCardinality(String)");
-```
-
-## Complete Example
-
-### Source Database
-
-```sql
-CREATE TABLE Events (
-    Id UUID,
-    Timestamp DateTime64(3),
-    EventType String,
-    UserId String,
-    Data String
-)
-ENGINE = MergeTree
-PARTITION BY toYYYYMM(Timestamp)
-ORDER BY (Timestamp, Id)
-TTL Timestamp + INTERVAL 90 DAY
-```
-
-### Scaffold Command
-
-```bash
-dotnet ef dbcontext scaffold "Host=localhost;Database=analytics" EF.CH \
-    --output-dir Models \
-    --context AnalyticsContext
-```
-
-### Generated Entity
-
-```csharp
-public class Event
-{
-    public Guid Id { get; set; }
-    public DateTime Timestamp { get; set; }
-    public string EventType { get; set; } = string.Empty;
-    public string UserId { get; set; } = string.Empty;
-    public string Data { get; set; } = string.Empty;
-}
-```
-
-### Generated DbContext
-
-```csharp
-public class AnalyticsContext : DbContext
-{
-    public DbSet<Event> Events => Set<Event>();
-
-    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
-    {
-        optionsBuilder.UseClickHouse("Host=localhost;Database=analytics");
-    }
-
-    protected override void OnModelCreating(ModelBuilder modelBuilder)
-    {
-        modelBuilder.Entity<Event>(entity =>
-        {
-            entity.HasNoKey();
-            entity.UseMergeTree("Timestamp", "Id");
-            entity.HasPartitionBy("toYYYYMM(Timestamp)");
-            entity.HasTtl("Timestamp + INTERVAL 90 DAY");
-        });
-    }
-}
-```
-
-## Updating After Schema Changes
-
-When your database schema changes:
-
-```bash
-# Regenerate (overwrites existing files)
-dotnet ef dbcontext scaffold "Host=localhost;Database=mydb" EF.CH --force
-```
-
-Consider using partial classes to preserve custom code:
-
-```csharp
-// Generated file (will be overwritten)
-public partial class Product { ... }
-
-// Custom file (preserved)
-public partial class Product
-{
-    public decimal DiscountedPrice => Price * 0.9m;
-}
-```
-
-## Limitations
-
-### Materialized Views
-
-Materialized views are scaffolded as regular tables. You'll need to manually configure them if you want to recreate the view.
-
-### Complex Expressions
-
-Some complex ClickHouse expressions may not fully round-trip:
-
-```sql
--- Original
-PARTITION BY (TenantId, toYYYYMM(CreatedAt))
-
--- Scaffolded as string
-entity.HasPartitionBy("(TenantId, toYYYYMM(CreatedAt))");
-```
-
-### Primary Keys
-
-ClickHouse doesn't have traditional primary keys. Scaffolding uses ORDER BY columns as a heuristic for entity keys, but tables may be scaffolded as keyless.
-
-## Best Practices
-
-### Start Fresh
-
-For existing databases, scaffolding is a good starting point. Review and adjust the generated code.
-
-### Preserve Engine Configuration
-
-After scaffolding, verify the ENGINE configuration matches your needs - especially for specialized engines like ReplacingMergeTree.
-
-### Use Partial Classes
-
-Keep custom logic in separate partial class files to survive regeneration.
-
-### Review Type Mappings
-
-Check that scaffolded types match your expectations, especially for nullable columns and decimal precision.
+Materialized views, dictionaries, and temporary tables are excluded from scaffolding.
 
 ## See Also
 
-- [Migrations](migrations.md)
-- [Type Mappings](types/overview.md)
-- [EF Core Scaffolding Docs](https://learn.microsoft.com/en-us/ef/core/managing-schemas/scaffolding/)
+- [Migrations Overview](migrations/overview.md) -- forward migration workflow after scaffolding
+- [Split Migrations](migrations/split-migrations.md) -- how EF.CH handles multi-operation migrations

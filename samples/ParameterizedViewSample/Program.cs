@@ -1,267 +1,324 @@
+// -----------------------------------------------------------------
+// ParameterizedViewSample - Parameterized Views with EF.CH
+// -----------------------------------------------------------------
+// Demonstrates:
+//   1. Create a parameterized view (CreateParameterizedViewAsync)
+//   2. Query a parameterized view (FromParameterizedView)
+//   3. Drop a parameterized view (DropParameterizedViewAsync)
+//   4. Idempotent creation (EnsureParameterizedViewsAsync)
+// -----------------------------------------------------------------
+
 using EF.CH.Extensions;
-using EF.CH.ParameterizedViews;
 using Microsoft.EntityFrameworkCore;
+using Testcontainers.ClickHouse;
 
-// ============================================================
-// Parameterized View Sample
-// ============================================================
-// Demonstrates ClickHouse parameterized views for efficient
-// filtered queries with runtime parameters.
-// ============================================================
+// Start ClickHouse container
+var container = new ClickHouseBuilder()
+    .WithImage("clickhouse/clickhouse-server:latest")
+    .Build();
 
-Console.WriteLine("Parameterized View Sample");
-Console.WriteLine("=========================\n");
+Console.WriteLine("Starting ClickHouse container...");
+await container.StartAsync();
+Console.WriteLine("ClickHouse container started.");
 
-await using var context = new AnalyticsDbContext();
+try
+{
+    var connectionString = container.GetConnectionString();
+    await SeedData(connectionString);
 
-Console.WriteLine("Creating database and tables...");
-await context.Database.EnsureCreatedAsync();
+    await DemoCreateParameterizedView(connectionString);
+    await DemoQueryParameterizedView(connectionString);
+    await DemoDropParameterizedView(connectionString);
+    await DemoEnsureParameterizedViews(connectionString);
+}
+finally
+{
+    Console.WriteLine("\nStopping container...");
+    await container.DisposeAsync();
+    Console.WriteLine("Done.");
+}
 
-// Create the source table
-Console.WriteLine("Creating source table...");
-await context.Database.ExecuteSqlRawAsync(@"
-    CREATE TABLE IF NOT EXISTS events (
-        event_id UInt64,
-        event_type String,
-        user_id UInt64,
-        timestamp DateTime64(3),
-        value Decimal(18, 4)
-    ) ENGINE = MergeTree()
-    ORDER BY (user_id, timestamp)
-    PARTITION BY toYYYYMM(timestamp)
-");
+// -----------------------------------------------------------------
+// Seed sample data
+// -----------------------------------------------------------------
+static async Task SeedData(string connectionString)
+{
+    await using var context = new ViewDemoContext(connectionString);
+    await context.Database.EnsureCreatedAsync();
 
-// Create the parameterized view using raw SQL (traditional approach)
-Console.WriteLine("Creating parameterized view (raw SQL)...");
-await context.Database.CreateParameterizedViewAsync(
-    "user_events_view",
-    @"SELECT event_id AS ""EventId"",
-             event_type AS ""EventType"",
-             user_id AS ""UserId"",
-             timestamp AS ""Timestamp"",
-             value AS ""Value""
-      FROM events
-      WHERE user_id = {user_id:UInt64}
-        AND timestamp >= {start_date:DateTime}
-        AND timestamp < {end_date:DateTime}",
-    ifNotExists: true);
-
-// Insert sample data
-Console.WriteLine("Inserting sample events...\n");
-await context.Database.ExecuteSqlRawAsync(@"
-    INSERT INTO events (event_id, event_type, user_id, timestamp, value) VALUES
-    (1, 'page_view', 100, '2024-01-15 10:00:00', 0),
-    (2, 'click', 100, '2024-01-15 10:05:00', 0),
-    (3, 'purchase', 100, '2024-01-15 10:10:00', 99.99),
-    (4, 'page_view', 100, '2024-01-16 11:00:00', 0),
-    (5, 'click', 100, '2024-01-16 11:15:00', 0),
-    (6, 'purchase', 100, '2024-01-16 11:20:00', 149.99),
-    (7, 'page_view', 100, '2024-01-17 09:00:00', 0),
-    (8, 'page_view', 100, '2024-01-20 14:00:00', 0),
-    (9, 'page_view', 200, '2024-01-15 08:00:00', 0),
-    (10, 'click', 200, '2024-01-15 08:30:00', 0),
-    (11, 'purchase', 200, '2024-01-15 09:00:00', 49.99),
-    (12, 'page_view', 300, '2024-01-16 12:00:00', 0),
-    (13, 'click', 300, '2024-01-16 12:05:00', 0)
-");
-
-// ============================================================
-// Example 1: Basic Query with Parameters (Traditional)
-// ============================================================
-Console.WriteLine("--- Example 1: Basic Query (Traditional) ---");
-Console.WriteLine("Getting all events for user 100 in Jan 15-17:\n");
-
-var basicResults = await context.FromParameterizedView<UserEventView>(
-    "user_events_view",
-    new
+    await context.BulkInsertAsync(new List<Event>
     {
-        user_id = 100UL,
-        start_date = new DateTime(2024, 1, 15),
-        end_date = new DateTime(2024, 1, 18)
-    })
-    .OrderBy(e => e.Timestamp)
-    .ToListAsync();
+        new() { EventId = 1,  UserId = 100, EventType = "page_view", Category = "web",    Amount = 0,     Timestamp = new DateTime(2024, 1, 15, 10, 0, 0) },
+        new() { EventId = 2,  UserId = 100, EventType = "click",     Category = "web",    Amount = 0,     Timestamp = new DateTime(2024, 1, 15, 10, 5, 0) },
+        new() { EventId = 3,  UserId = 100, EventType = "purchase",  Category = "web",    Amount = 49.99m, Timestamp = new DateTime(2024, 1, 15, 10, 10, 0) },
+        new() { EventId = 4,  UserId = 200, EventType = "page_view", Category = "mobile", Amount = 0,     Timestamp = new DateTime(2024, 1, 15, 11, 0, 0) },
+        new() { EventId = 5,  UserId = 200, EventType = "page_view", Category = "mobile", Amount = 0,     Timestamp = new DateTime(2024, 1, 16, 9, 0, 0) },
+        new() { EventId = 6,  UserId = 200, EventType = "purchase",  Category = "mobile", Amount = 29.99m, Timestamp = new DateTime(2024, 1, 16, 9, 30, 0) },
+        new() { EventId = 7,  UserId = 300, EventType = "page_view", Category = "web",    Amount = 0,     Timestamp = new DateTime(2024, 2, 1, 8, 0, 0) },
+        new() { EventId = 8,  UserId = 300, EventType = "click",     Category = "web",    Amount = 0,     Timestamp = new DateTime(2024, 2, 1, 8, 15, 0) },
+        new() { EventId = 9,  UserId = 300, EventType = "purchase",  Category = "web",    Amount = 99.99m, Timestamp = new DateTime(2024, 2, 1, 8, 30, 0) },
+        new() { EventId = 10, UserId = 100, EventType = "page_view", Category = "web",    Amount = 0,     Timestamp = new DateTime(2024, 2, 15, 14, 0, 0) },
+        new() { EventId = 11, UserId = 100, EventType = "purchase",  Category = "web",    Amount = 75.00m, Timestamp = new DateTime(2024, 2, 15, 14, 30, 0) },
+        new() { EventId = 12, UserId = 400, EventType = "page_view", Category = "mobile", Amount = 0,     Timestamp = new DateTime(2024, 3, 1, 12, 0, 0) },
+    });
 
-foreach (var evt in basicResults)
-{
-    Console.WriteLine($"  {evt.Timestamp:yyyy-MM-dd HH:mm:ss} | {evt.EventType,-10} | Value: ${evt.Value:F2}");
+    Console.WriteLine("Seeded 12 event records.\n");
 }
 
-// ============================================================
-// Example 2: Strongly-Typed View Access (NEW!)
-// ============================================================
-Console.WriteLine("\n--- Example 2: Strongly-Typed View Access (NEW!) ---");
-Console.WriteLine("Using ClickHouseParameterizedView<T> for type-safe access:\n");
-
-// Access the view through the strongly-typed accessor
-var recentPurchases = await context.UserEventsView
-    .Query(new { user_id = 100UL, start_date = new DateTime(2024, 1, 1), end_date = new DateTime(2024, 2, 1) })
-    .Where(e => e.EventType == "purchase")
-    .OrderByDescending(e => e.Timestamp)
-    .ToListAsync();
-
-foreach (var evt in recentPurchases)
+// -----------------------------------------------------------------
+// Demo 1: Create a Parameterized View
+// -----------------------------------------------------------------
+static async Task DemoCreateParameterizedView(string connectionString)
 {
-    Console.WriteLine($"  {evt.Timestamp:yyyy-MM-dd HH:mm:ss} | Purchase: ${evt.Value:F2}");
+    Console.WriteLine("=== 1. Create Parameterized View ===\n");
+
+    await using var context = new ViewDemoContext(connectionString);
+
+    // Create a parameterized view that filters events by user and date range.
+    // Parameters use ClickHouse syntax: {name:Type}
+    await context.Database.CreateParameterizedViewAsync(
+        "user_events_view",
+        """
+        SELECT EventId, UserId, EventType, Category, Amount, Timestamp
+        FROM events
+        WHERE UserId = {user_id:UInt64}
+          AND Timestamp >= {start_date:DateTime}
+        """);
+
+    Console.WriteLine("Created parameterized view: user_events_view");
+    Console.WriteLine("Parameters: user_id (UInt64), start_date (DateTime)");
+    Console.WriteLine();
+
+    // Create a second view for category summary with more parameters
+    await context.Database.CreateParameterizedViewAsync(
+        "category_summary_view",
+        """
+        SELECT
+            Category,
+            count() AS EventCount,
+            sum(Amount) AS TotalAmount
+        FROM events
+        WHERE Timestamp >= {start_date:DateTime}
+          AND Timestamp < {end_date:DateTime}
+        GROUP BY Category
+        """);
+
+    Console.WriteLine("Created parameterized view: category_summary_view");
+    Console.WriteLine("Parameters: start_date (DateTime), end_date (DateTime)");
 }
 
-// Convenience methods
-var purchaseCount = await context.UserEventsView.CountAsync(
-    new { user_id = 100UL, start_date = new DateTime(2024, 1, 1), end_date = new DateTime(2024, 2, 1) });
-Console.WriteLine($"\n  Total events for user 100: {purchaseCount}");
+// -----------------------------------------------------------------
+// Demo 2: Query a Parameterized View
+// -----------------------------------------------------------------
+static async Task DemoQueryParameterizedView(string connectionString)
+{
+    Console.WriteLine("\n=== 2. Query Parameterized View ===\n");
 
-// ============================================================
-// Example 3: LINQ Composition - Where + OrderBy + Take
-// ============================================================
-Console.WriteLine("\n--- Example 3: LINQ Composition ---");
-Console.WriteLine("Getting last 3 purchase events for user 100:\n");
+    await using var context = new ViewDemoContext(connectionString);
 
-var purchaseEvents = await context.FromParameterizedView<UserEventView>(
-    "user_events_view",
-    new
+    // Query using anonymous object for parameters.
+    // Property names are converted to snake_case automatically
+    // (UserId -> user_id, StartDate -> start_date).
+    Console.WriteLine("--- Query with anonymous object parameters ---");
+    var userEvents = await context.FromParameterizedView<EventView>(
+            "user_events_view",
+            new { UserId = 100UL, StartDate = new DateTime(2024, 1, 1) })
+        .ToListAsync();
+
+    Console.WriteLine($"Events for user 100 since 2024-01-01: {userEvents.Count} results");
+    foreach (var evt in userEvents)
     {
-        user_id = 100UL,
-        start_date = new DateTime(2024, 1, 1),
-        end_date = new DateTime(2024, 2, 1)
-    })
-    .Where(e => e.EventType == "purchase")
-    .OrderByDescending(e => e.Timestamp)
-    .Take(3)
-    .ToListAsync();
+        Console.WriteLine($"  [{evt.EventId}] {evt.EventType} ({evt.Category}) - ${evt.Amount:F2} at {evt.Timestamp:yyyy-MM-dd HH:mm}");
+    }
 
-foreach (var evt in purchaseEvents)
-{
-    Console.WriteLine($"  {evt.Timestamp:yyyy-MM-dd HH:mm:ss} | Purchase: ${evt.Value:F2}");
-}
+    // Query with further LINQ composition (Where, OrderBy, etc.)
+    Console.WriteLine("\n--- Query with LINQ composition ---");
+    var purchases = await context.FromParameterizedView<EventView>(
+            "user_events_view",
+            new { UserId = 100UL, StartDate = new DateTime(2024, 1, 1) })
+        .Where(e => e.EventType == "purchase")
+        .OrderByDescending(e => e.Amount)
+        .ToListAsync();
 
-// ============================================================
-// Example 4: Aggregation with GroupBy
-// ============================================================
-Console.WriteLine("\n--- Example 4: Aggregation ---");
-Console.WriteLine("Event type summary for user 100 in January:\n");
-
-var summary = await context.FromParameterizedView<UserEventView>(
-    "user_events_view",
-    new
+    Console.WriteLine($"Purchases by user 100: {purchases.Count} results");
+    foreach (var evt in purchases)
     {
-        user_id = 100UL,
-        start_date = new DateTime(2024, 1, 1),
-        end_date = new DateTime(2024, 2, 1)
-    })
-    .GroupBy(e => e.EventType)
-    .Select(g => new
+        Console.WriteLine($"  [{evt.EventId}] ${evt.Amount:F2} at {evt.Timestamp:yyyy-MM-dd HH:mm}");
+    }
+
+    // Query using dictionary parameters
+    Console.WriteLine("\n--- Query with dictionary parameters ---");
+    var parameters = new Dictionary<string, object?>
     {
-        EventType = g.Key,
-        Count = g.Count(),
-        TotalValue = g.Sum(e => e.Value)
-    })
-    .OrderBy(x => x.EventType)
-    .ToListAsync();
+        ["user_id"] = 200UL,
+        ["start_date"] = new DateTime(2024, 1, 1)
+    };
+    var user200Events = await context.FromParameterizedView<EventView>(
+            "user_events_view",
+            parameters)
+        .ToListAsync();
 
-foreach (var item in summary)
-{
-    Console.WriteLine($"  {item.EventType,-12}: {item.Count} events, Total: ${item.TotalValue:F2}");
-}
-
-// ============================================================
-// Example 5: Different User Query
-// ============================================================
-Console.WriteLine("\n--- Example 5: Different User ---");
-Console.WriteLine("Events for user 200:\n");
-
-var user200Events = await context.FromParameterizedView<UserEventView>(
-    "user_events_view",
-    new
+    Console.WriteLine($"Events for user 200: {user200Events.Count} results");
+    foreach (var evt in user200Events)
     {
-        user_id = 200UL,
-        start_date = new DateTime(2024, 1, 1),
-        end_date = new DateTime(2024, 2, 1)
-    })
-    .OrderBy(e => e.Timestamp)
-    .ToListAsync();
+        Console.WriteLine($"  [{evt.EventId}] {evt.EventType} at {evt.Timestamp:yyyy-MM-dd HH:mm}");
+    }
 
-foreach (var evt in user200Events)
-{
-    Console.WriteLine($"  {evt.Timestamp:yyyy-MM-dd HH:mm:ss} | {evt.EventType,-10} | Value: ${evt.Value:F2}");
+    // Query the category summary view
+    Console.WriteLine("\n--- Category summary (January 2024) ---");
+    var summary = await context.FromParameterizedView<CategorySummaryView>(
+            "category_summary_view",
+            new
+            {
+                StartDate = new DateTime(2024, 1, 1),
+                EndDate = new DateTime(2024, 2, 1)
+            })
+        .OrderByDescending(s => s.TotalAmount)
+        .ToListAsync();
+
+    foreach (var row in summary)
+    {
+        Console.WriteLine($"  {row.Category}: {row.EventCount} events, ${row.TotalAmount:F2} total");
+    }
 }
 
-// ============================================================
-// Example 6: Using Dictionary Parameters
-// ============================================================
-Console.WriteLine("\n--- Example 6: Dictionary Parameters ---");
-Console.WriteLine("Dynamic parameter query for user 300:\n");
-
-var dynamicParams = new Dictionary<string, object?>
+// -----------------------------------------------------------------
+// Demo 3: Drop a Parameterized View
+// -----------------------------------------------------------------
+static async Task DemoDropParameterizedView(string connectionString)
 {
-    ["user_id"] = 300UL,
-    ["start_date"] = new DateTime(2024, 1, 1),
-    ["end_date"] = new DateTime(2024, 2, 1)
-};
+    Console.WriteLine("\n=== 3. Drop Parameterized View ===\n");
 
-var dynamicResults = await context.FromParameterizedView<UserEventView>(
-    "user_events_view",
-    dynamicParams)
-    .ToListAsync();
+    await using var context = new ViewDemoContext(connectionString);
 
-foreach (var evt in dynamicResults)
-{
-    Console.WriteLine($"  {evt.Timestamp:yyyy-MM-dd HH:mm:ss} | {evt.EventType,-10}");
+    // Drop with IF EXISTS (default)
+    await context.Database.DropParameterizedViewAsync("category_summary_view");
+    Console.WriteLine("Dropped view: category_summary_view (IF EXISTS)");
+
+    // Drop with explicit ifExists: false would throw if the view does not exist
+    await context.Database.DropParameterizedViewAsync("user_events_view", ifExists: true);
+    Console.WriteLine("Dropped view: user_events_view (IF EXISTS)");
+
+    // Dropping a non-existent view with ifExists: true is safe
+    await context.Database.DropParameterizedViewAsync("nonexistent_view", ifExists: true);
+    Console.WriteLine("Dropped view: nonexistent_view (IF EXISTS, no error)");
 }
 
-Console.WriteLine("\nDone!");
+// -----------------------------------------------------------------
+// Demo 4: EnsureParameterizedViewsAsync (Idempotent)
+// -----------------------------------------------------------------
+static async Task DemoEnsureParameterizedViews(string connectionString)
+{
+    Console.WriteLine("\n=== 4. EnsureParameterizedViewsAsync ===\n");
 
-// ============================================================
-// Entity Definitions
-// ============================================================
+    await using var context = new ViewDemoContext(connectionString);
 
-/// <summary>
-/// Source entity representing the events table.
-/// </summary>
+    Console.WriteLine("EnsureParameterizedViewsAsync creates all views configured via");
+    Console.WriteLine("the fluent API in OnModelCreating. It is idempotent (uses IF NOT EXISTS).\n");
+
+    Console.WriteLine("Usage pattern (at application startup):");
+    Console.WriteLine("""
+      await context.Database.EnsureCreatedAsync();
+      await context.Database.EnsureParameterizedViewsAsync();
+    """);
+
+    Console.WriteLine("\nNote: This method only creates views that are configured with full");
+    Console.WriteLine("metadata (view definition and parameters) via the fluent API.");
+    Console.WriteLine("Views created via CreateParameterizedViewAsync are not tracked here.\n");
+
+    // Recreate views manually for verification
+    await context.Database.CreateParameterizedViewAsync(
+        "user_events_view",
+        """
+        SELECT EventId, UserId, EventType, Category, Amount, Timestamp
+        FROM events
+        WHERE UserId = {user_id:UInt64}
+          AND Timestamp >= {start_date:DateTime}
+        """,
+        ifNotExists: true);
+
+    Console.WriteLine("Recreated user_events_view with IF NOT EXISTS.");
+
+    // Verify it works
+    var events = await context.FromParameterizedView<EventView>(
+            "user_events_view",
+            new { UserId = 300UL, StartDate = new DateTime(2024, 1, 1) })
+        .ToListAsync();
+
+    Console.WriteLine($"Verification query returned {events.Count} events for user 300.");
+}
+
+// -----------------------------------------------------------------
+// Entities
+// -----------------------------------------------------------------
+
+// Source table entity
 public class Event
 {
     public ulong EventId { get; set; }
-    public string EventType { get; set; } = string.Empty;
     public ulong UserId { get; set; }
+    public string EventType { get; set; } = string.Empty;
+    public string Category { get; set; } = string.Empty;
+    public decimal Amount { get; set; }
     public DateTime Timestamp { get; set; }
-    public decimal Value { get; set; }
 }
 
-/// <summary>
-/// Result entity for the parameterized view.
-/// </summary>
-public class UserEventView
+// View result entity (must be keyless for FromSqlRaw)
+public class EventView
 {
     public ulong EventId { get; set; }
-    public string EventType { get; set; } = string.Empty;
     public ulong UserId { get; set; }
+    public string EventType { get; set; } = string.Empty;
+    public string Category { get; set; } = string.Empty;
+    public decimal Amount { get; set; }
     public DateTime Timestamp { get; set; }
-    public decimal Value { get; set; }
 }
 
-// ============================================================
-// DbContext Definition
-// ============================================================
-
-public class AnalyticsDbContext : DbContext
+// Category summary view result
+public class CategorySummaryView
 {
-    public DbSet<UserEventView> UserEventViews => Set<UserEventView>();
+    public string Category { get; set; } = string.Empty;
+    public ulong EventCount { get; set; }
+    public decimal TotalAmount { get; set; }
+}
 
-    // Strongly-typed view accessor (NEW!)
-    private ClickHouseParameterizedView<UserEventView>? _userEventsView;
-    public ClickHouseParameterizedView<UserEventView> UserEventsView
-        => _userEventsView ??= new ClickHouseParameterizedView<UserEventView>(this);
+// -----------------------------------------------------------------
+// DbContext
+// -----------------------------------------------------------------
 
-    protected override void OnConfiguring(DbContextOptionsBuilder options)
+public class ViewDemoContext(string connectionString) : DbContext
+{
+    public DbSet<Event> Events => Set<Event>();
+
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
     {
-        options.UseClickHouse("Host=localhost;Database=parameterized_view_sample");
+        optionsBuilder.UseClickHouse(connectionString);
     }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
-        // Configure the result entity for the parameterized view
-        modelBuilder.Entity<UserEventView>(entity =>
+        // Source table
+        modelBuilder.Entity<Event>(entity =>
         {
-            entity.HasParameterizedView("user_events_view");
+            entity.HasNoKey();
+            entity.ToTable("events");
+            entity.UseMergeTree(x => new { x.Timestamp, x.EventId });
+            entity.HasPartitionByMonth(x => x.Timestamp);
+        });
+
+        // Keyless entity for parameterized view results.
+        // This entity does not map to a table -- it is used with FromParameterizedView.
+        modelBuilder.Entity<EventView>(entity =>
+        {
+            entity.HasNoKey();
+            entity.ToTable((string?)null); // No table mapping
+        });
+
+        // Keyless entity for category summary view results
+        modelBuilder.Entity<CategorySummaryView>(entity =>
+        {
+            entity.HasNoKey();
+            entity.ToTable((string?)null);
         });
     }
 }

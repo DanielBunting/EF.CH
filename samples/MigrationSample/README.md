@@ -1,163 +1,112 @@
-# MigrationSample
+# Migration Sample
 
-Demonstrates EF Core migrations with ClickHouse, including keyless entities and partitioning.
+Demonstrates the EF Core migration workflow with ClickHouse using EF.CH.
 
-## What This Shows
+## What it demonstrates
 
-- Creating migrations with `dotnet ef migrations add`
-- ClickHouse-specific DDL generation (ENGINE, ORDER BY, PARTITION BY)
-- Keyless entities for append-only tables
-- Applying migrations to create database schema
+- Separating entity definitions and `DbContext` into their own file (`SampleDbContext.cs`)
+- Configuring MergeTree engine with ORDER BY and monthly partitioning
+- Running migrations programmatically via `MigrateAsync()`
+- The CLI migration workflow (`dotnet ef migrations add`, `dotnet ef database update`)
+- Inserting and querying data after schema creation
 
 ## Prerequisites
 
-- .NET 10.0+
-- ClickHouse server running on localhost:8123
-- EF Core tools: `dotnet tool install --global dotnet-ef`
+- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
+- [EF Core CLI tools](https://learn.microsoft.com/en-us/ef/core/cli/dotnet): `dotnet tool install --global dotnet-ef`
+- A running ClickHouse instance (Docker is the easiest option)
 
-## Project Structure
+## How to run
 
-```
-MigrationSample/
-├── Program.cs              # Entry point
-├── SampleDbContext.cs      # DbContext with entity configurations
-├── MigrationSample.csproj  # Project file with EF.CH and Design packages
-└── Migrations/             # Generated migration files
-    ├── *_InitialCreate.cs
-    └── SampleDbContextModelSnapshot.cs
-```
-
-## Entities
-
-### Product (With Key)
-
-```csharp
-public class Product
-{
-    public Guid Id { get; set; }
-    public string Name { get; set; }
-    public decimal Price { get; set; }
-    public DateTime CreatedAt { get; set; }
-}
-```
-
-### Order (With Partitioning)
-
-```csharp
-public class Order
-{
-    public Guid Id { get; set; }
-    public Guid ProductId { get; set; }
-    public int Quantity { get; set; }
-    public DateTime OrderDate { get; set; }
-    public string CustomerName { get; set; }
-}
-```
-
-Configuration:
-```csharp
-entity.UseMergeTree(x => new { x.OrderDate, x.Id });
-entity.HasPartitionByMonth(x => x.OrderDate);
-```
-
-### EventLog (Keyless)
-
-```csharp
-public class EventLog
-{
-    public DateTime Timestamp { get; set; }
-    public string EventType { get; set; }
-    public string Message { get; set; }
-    public string? UserId { get; set; }
-}
-```
-
-Configuration:
-```csharp
-entity.HasNoKey();
-entity.UseMergeTree(x => new { x.Timestamp, x.EventType });
-entity.HasPartitionByDay(x => x.Timestamp);
-```
-
-## Creating Migrations
-
-### Initial Migration
+1. Start a ClickHouse server:
 
 ```bash
-cd samples/MigrationSample
+docker run -d --name clickhouse -p 8123:8123 clickhouse/clickhouse-server:latest
+```
+
+2. Run the sample (uses `EnsureCreatedAsync` for quick setup):
+
+```bash
+dotnet run
+```
+
+## Step-by-step migration workflow
+
+For a real project, you would use EF Core migrations instead of `EnsureCreatedAsync`:
+
+### 1. Create the initial migration
+
+```bash
 dotnet ef migrations add InitialCreate
 ```
 
-### View Generated SQL
+This generates files in a `Migrations/` folder containing the SQL to create your tables with ClickHouse-specific DDL (MergeTree engine, ORDER BY, PARTITION BY, etc.).
+
+### 2. Preview the generated SQL
 
 ```bash
 dotnet ef migrations script
 ```
 
-## Generated DDL
+Review the output to see the exact ClickHouse DDL that will be executed.
 
-The migration generates ClickHouse-specific DDL:
-
-```sql
--- Products table
-CREATE TABLE "Products" (
-    "Id" UUID NOT NULL,
-    "Name" String NOT NULL,
-    "Price" Decimal(18, 4) NOT NULL,
-    "CreatedAt" DateTime64(3) NOT NULL
-)
-ENGINE = MergeTree
-ORDER BY ("Id")
-
--- Orders table with partitioning
-CREATE TABLE "Orders" (
-    "Id" UUID NOT NULL,
-    "ProductId" UUID NOT NULL,
-    "Quantity" Int32 NOT NULL,
-    "OrderDate" DateTime64(3) NOT NULL,
-    "CustomerName" String NOT NULL
-)
-ENGINE = MergeTree
-PARTITION BY toYYYYMM("OrderDate")
-ORDER BY ("OrderDate", "Id")
-
--- EventLogs table (keyless)
-CREATE TABLE "EventLogs" (
-    "Timestamp" DateTime64(3) NOT NULL,
-    "EventType" String NOT NULL,
-    "Message" String NOT NULL,
-    "UserId" String NULL,
-    "Metadata" String NULL
-)
-ENGINE = MergeTree
-PARTITION BY toYYYYMMDD("Timestamp")
-ORDER BY ("Timestamp", "EventType")
-```
-
-## Applying Migrations
-
-### To Database
+### 3. Apply the migration
 
 ```bash
 dotnet ef database update
 ```
 
-### Programmatically
+Or apply programmatically in your application startup:
 
 ```csharp
 await context.Database.MigrateAsync();
 ```
 
-## Adding New Migrations
+### 4. Evolve the schema
 
-After changing entities:
+When you change your entity model (add a column, change a type, etc.):
 
 ```bash
-dotnet ef migrations add AddNewColumn
+dotnet ef migrations add AddStockQuantityColumn
+dotnet ef database update
 ```
 
-## Learn More
+EF.CH generates the appropriate `ALTER TABLE` statements for ClickHouse.
 
-- [Migrations Documentation](../../docs/migrations.md)
-- [Keyless Entities](../../docs/features/keyless-entities.md)
-- [Partitioning](../../docs/features/partitioning.md)
+## Expected output
+
+```
+=== EF.CH Migration Sample ===
+
+[1] Applying migrations...
+    Calling context.Database.MigrateAsync()
+    This creates or updates the database schema based on migration files.
+
+    Schema applied successfully.
+
+[2] Inserting sample products...
+    Inserted 5 products.
+
+[3] Querying products by category...
+    Electronics     Count=3  AvgPrice=64.32  TotalStock=730
+    Furniture       Count=2  AvgPrice=269.50  TotalStock=100
+
+[4] All products (ordered by price desc)...
+    Standing Desk             Furniture       $449.00    Stock=25
+    Mechanical Keyboard       Electronics     $149.99    Stock=80
+    Monitor Arm               Furniture       $89.99     Stock=75
+    Wireless Mouse            Electronics     $29.99     Stock=150
+    USB-C Cable               Electronics     $12.99     Stock=500
+
+=== Done ===
+```
+
+## Project structure
+
+```
+MigrationSample/
+  MigrationSample.csproj    -- Project file with EF.CH and Design package references
+  SampleDbContext.cs         -- DbContext and entity definitions (separate file)
+  Program.cs                 -- Application entry point demonstrating the workflow
+  Migrations/                -- Generated by 'dotnet ef migrations add' (not included)
+```

@@ -3,72 +3,65 @@ using Microsoft.EntityFrameworkCore;
 
 namespace MigrationSample;
 
+// ---------------------------------------------------------------------------
+// Entities
+// ---------------------------------------------------------------------------
+
+public class Product
+{
+    public Guid Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string Category { get; set; } = string.Empty;
+    public decimal Price { get; set; }
+    public int StockQuantity { get; set; }
+    public DateTime CreatedAt { get; set; }
+}
+
+// ---------------------------------------------------------------------------
+// DbContext
+// ---------------------------------------------------------------------------
+
 public class SampleDbContext : DbContext
 {
     public DbSet<Product> Products => Set<Product>();
-    public DbSet<Order> Orders => Set<Order>();
-    public DbSet<EventLog> EventLogs => Set<EventLog>();
+
+    private readonly string _connectionString;
+
+    public SampleDbContext(string connectionString)
+    {
+        _connectionString = connectionString;
+    }
+
+    /// <summary>
+    /// Parameterless constructor required by EF Core design-time tools (Add-Migration, etc.).
+    /// When used by the design-time factory, the connection string comes from
+    /// IDesignTimeDbContextFactory or falls back to a default.
+    /// </summary>
+    public SampleDbContext()
+    {
+        _connectionString = "Host=localhost;Port=8123;Database=default";
+    }
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
     {
-        optionsBuilder.UseClickHouse("Host=localhost;Database=migration_sample;User=default");
+        if (!optionsBuilder.IsConfigured)
+        {
+            optionsBuilder.UseClickHouse(_connectionString);
+        }
     }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<Product>(entity =>
         {
-            entity.ToTable("Products");
             entity.HasKey(e => e.Id);
-            entity.UseMergeTree(x => x.Id);  // Expression-based syntax
-        });
 
-        modelBuilder.Entity<Order>(entity =>
-        {
-            entity.ToTable("Orders");
-            entity.HasKey(e => e.Id);
-            entity.UseMergeTree(x => new { x.OrderDate, x.Id });  // Multiple columns with anonymous type
-            entity.HasPartitionByMonth(x => x.OrderDate);  // Type-safe partition by month
-        });
+            // MergeTree engine ordered by Category then CreatedAt for efficient
+            // category-based range queries
+            entity.UseMergeTree(x => new { x.Category, x.CreatedAt });
 
-        // Keyless entity - append-only event log with no primary key
-        // ORDER BY is on timestamp columns, not a unique identifier
-        modelBuilder.Entity<EventLog>(entity =>
-        {
-            entity.ToTable("EventLogs");
-            entity.HasNoKey();
-            entity.UseMergeTree(x => new { x.Timestamp, x.EventType });
-            entity.HasPartitionByDay(x => x.Timestamp);  // Type-safe partition by day
+            // Monthly partitioning for time-based data management and TTL
+            entity.HasPartitionByMonth<Product, DateTime>(x => x.CreatedAt);
         });
     }
-}
-
-public class Product
-{
-    public Guid Id { get; set; }
-    public string Name { get; set; } = string.Empty;
-    public decimal Price { get; set; }
-    public DateTime CreatedAt { get; set; }
-}
-
-public class Order
-{
-    public Guid Id { get; set; }
-    public Guid ProductId { get; set; }
-    public int Quantity { get; set; }
-    public DateTime OrderDate { get; set; }
-    public string CustomerName { get; set; } = string.Empty;
-}
-
-/// <summary>
-/// Keyless entity for append-only event logging.
-/// No primary key - uses MergeTree ORDER BY for sorting.
-/// </summary>
-public class EventLog
-{
-    public DateTime Timestamp { get; set; }
-    public string EventType { get; set; } = string.Empty;
-    public string Message { get; set; } = string.Empty;
-    public string? UserId { get; set; }
-    public string? Metadata { get; set; }
 }
