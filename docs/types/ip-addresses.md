@@ -1,298 +1,194 @@
 # IP Address Types
 
-ClickHouse has native types for IP addresses: `IPv4` and `IPv6`. EF.CH provides custom struct types for efficient IP address handling.
+## CLR to ClickHouse Mapping
 
-## Type Mappings
-
-| .NET Type | ClickHouse Type | Storage |
-|-----------|-----------------|---------|
-| `ClickHouseIPv4` | `IPv4` | 4 bytes |
-| `ClickHouseIPv6` | `IPv6` | 16 bytes |
-| `IPAddress` | `IPv6` | 16 bytes |
-
-## Using EF.CH IP Types
-
-Import the types namespace:
-
-```csharp
-using EF.CH.Types;
+```
+ClickHouseIPv4  --> IPv4
+ClickHouseIPv6  --> IPv6
+IPAddress       --> IPv6
 ```
 
-### Entity Definition
+## ClickHouseIPv4
+
+A custom `readonly struct` that wraps a `UInt32` value, providing type-safe IPv4 handling:
 
 ```csharp
-using EF.CH.Types;
+using EF.CH;
 
-public class AccessLog
+public class Server
 {
-    public Guid Id { get; set; }
-    public DateTime Timestamp { get; set; }
-    public ClickHouseIPv4 ClientIPv4 { get; set; }  // IPv4
-    public ClickHouseIPv6 ClientIPv6 { get; set; }  // IPv6
-    public string Endpoint { get; set; } = string.Empty;
-    public int StatusCode { get; set; }
+    public uint Id { get; set; }
+    public ClickHouseIPv4 Address { get; set; }
 }
 ```
 
-### Using System.Net.IPAddress
+```sql
+CREATE TABLE "Servers" (
+    "Id" UInt32,
+    "Address" IPv4
+) ENGINE = MergeTree() ORDER BY ("Id")
+```
 
-You can also use `System.Net.IPAddress`, which maps to `IPv6`:
+### Creating ClickHouseIPv4 Values
+
+```csharp
+// From string (implicit conversion)
+ClickHouseIPv4 ip = "192.168.1.1";
+
+// From UInt32
+var ip = new ClickHouseIPv4(3232235777u);
+
+// From IPAddress
+var ip = new ClickHouseIPv4(IPAddress.Parse("192.168.1.1"));
+
+// Parse
+var ip = ClickHouseIPv4.Parse("10.0.0.1");
+
+// TryParse
+if (ClickHouseIPv4.TryParse("10.0.0.1", out var ip)) { }
+```
+
+The struct supports comparison operators (`==`, `!=`, `<`, `>`, `<=`, `>=`) and implements `IEquatable<ClickHouseIPv4>` and `IComparable<ClickHouseIPv4>`.
+
+### SQL Literal
+
+```sql
+toIPv4('192.168.1.1')
+```
+
+## ClickHouseIPv6
+
+A custom `readonly struct` that wraps a 16-byte array, providing type-safe IPv6 handling:
+
+```csharp
+public class NetworkEvent
+{
+    public uint Id { get; set; }
+    public ClickHouseIPv6 SourceIp { get; set; }
+}
+```
+
+```sql
+"SourceIp" IPv6
+```
+
+### Creating ClickHouseIPv6 Values
+
+```csharp
+// From string (implicit conversion)
+ClickHouseIPv6 ip = "2001:db8::1";
+
+// From byte array (must be exactly 16 bytes)
+var ip = new ClickHouseIPv6(new byte[16] { ... });
+
+// From IPAddress (IPv4 addresses are auto-mapped to IPv6)
+var ip = new ClickHouseIPv6(IPAddress.Parse("2001:db8::1"));
+
+// Parse
+var ip = ClickHouseIPv6.Parse("::1");
+```
+
+IPv4 addresses provided to `ClickHouseIPv6` are automatically mapped to IPv4-mapped IPv6 format (`::ffff:192.168.1.1`).
+
+### SQL Literal
+
+```sql
+toIPv6('2001:db8::1')
+```
+
+## System.Net.IPAddress
+
+For maximum compatibility, `IPAddress` maps to IPv6 (which can store both IPv4-mapped and native IPv6 addresses):
 
 ```csharp
 using System.Net;
 
-public class NetworkEvent
-{
-    public Guid Id { get; set; }
-    public IPAddress SourceIP { get; set; } = IPAddress.None;  // IPv6
-    public IPAddress DestinationIP { get; set; } = IPAddress.None;
-}
-```
-
-**Note:** `IPAddress` always maps to `IPv6`. IPv4 addresses are stored in IPv6-compatible format.
-
-## Configuration
-
-IP types work without special configuration:
-
-```csharp
-modelBuilder.Entity<AccessLog>(entity =>
-{
-    entity.HasKey(e => e.Id);
-    entity.UseMergeTree(x => new { x.Timestamp, x.Id });
-    // IP properties just work
-});
-```
-
-## Creating IP Values
-
-### ClickHouseIPv4
-
-```csharp
-// From string
-var ip1 = ClickHouseIPv4.Parse("192.168.1.1");
-
-// From bytes
-var ip2 = new ClickHouseIPv4(192, 168, 1, 1);
-
-// From uint
-var ip3 = new ClickHouseIPv4(3232235777); // 192.168.1.1
-
-// From IPAddress
-var ip4 = ClickHouseIPv4.FromIPAddress(IPAddress.Parse("192.168.1.1"));
-```
-
-### ClickHouseIPv6
-
-```csharp
-// From string
-var ip1 = ClickHouseIPv6.Parse("2001:db8::1");
-
-// From IPAddress
-var ip2 = ClickHouseIPv6.FromIPAddress(IPAddress.Parse("2001:db8::1"));
-
-// IPv4-mapped IPv6
-var ip3 = ClickHouseIPv6.Parse("::ffff:192.168.1.1");
-```
-
-## Inserting Data
-
-```csharp
-context.AccessLogs.Add(new AccessLog
-{
-    Id = Guid.NewGuid(),
-    Timestamp = DateTime.UtcNow,
-    ClientIPv4 = ClickHouseIPv4.Parse("192.168.1.100"),
-    ClientIPv6 = ClickHouseIPv6.Parse("2001:db8::1"),
-    Endpoint = "/api/users",
-    StatusCode = 200
-});
-await context.SaveChangesAsync();
-```
-
-## Querying
-
-### Filter by IP
-
-```csharp
-var targetIP = ClickHouseIPv4.Parse("192.168.1.100");
-
-var logs = await context.AccessLogs
-    .Where(l => l.ClientIPv4 == targetIP)
-    .ToListAsync();
-```
-
-### IP Range Queries
-
-IP addresses support comparison operators:
-
-```csharp
-var startIP = ClickHouseIPv4.Parse("192.168.1.0");
-var endIP = ClickHouseIPv4.Parse("192.168.1.255");
-
-var subnetLogs = await context.AccessLogs
-    .Where(l => l.ClientIPv4 >= startIP && l.ClientIPv4 <= endIP)
-    .ToListAsync();
-```
-
-### Group by IP
-
-```csharp
-var ipCounts = await context.AccessLogs
-    .GroupBy(l => l.ClientIPv4)
-    .Select(g => new { IP = g.Key, Count = g.Count() })
-    .OrderByDescending(x => x.Count)
-    .Take(10)
-    .ToListAsync();
-```
-
-## Generated DDL
-
-```csharp
 public class AccessLog
 {
-    public Guid Id { get; set; }
-    public ClickHouseIPv4 ClientIPv4 { get; set; }
-    public ClickHouseIPv6 ClientIPv6 { get; set; }
+    public uint Id { get; set; }
+    public IPAddress ClientIp { get; set; }
 }
 ```
-
-Generates:
 
 ```sql
-CREATE TABLE "AccessLogs" (
-    "Id" UUID NOT NULL,
-    "ClientIPv4" IPv4 NOT NULL,
-    "ClientIPv6" IPv6 NOT NULL
-)
-ENGINE = MergeTree
-ORDER BY ("Id")
+"ClientIp" IPv6
 ```
 
-## Converting Between Types
+The provider uses a string-based value converter:
 
-### To String
+- **Write**: `IPAddress.ToString()` produces the string representation
+- **Read**: `IPAddress.Parse(s)` reconstructs the address
+
+### SQL Literal
+
+```sql
+toIPv6('192.168.1.1')    -- IPv4-mapped
+toIPv6('2001:db8::1')    -- Native IPv6
+```
+
+## IP Functions
+
+ClickHouse IP functions are available through `EF.Functions`:
 
 ```csharp
-ClickHouseIPv4 ip = ClickHouseIPv4.Parse("192.168.1.1");
-string str = ip.ToString();  // "192.168.1.1"
+using Microsoft.EntityFrameworkCore;
+
+// IPv4NumToString: Convert UInt32 to dotted-decimal string
+context.Servers.Select(s => EF.Functions.IPv4NumToString(s.RawIp))
 ```
 
-### To IPAddress
+```sql
+SELECT IPv4NumToString("RawIp") FROM "Servers"
+```
 
 ```csharp
-ClickHouseIPv4 ip4 = ClickHouseIPv4.Parse("192.168.1.1");
-IPAddress addr = ip4.ToIPAddress();
-
-ClickHouseIPv6 ip6 = ClickHouseIPv6.Parse("2001:db8::1");
-IPAddress addr6 = ip6.ToIPAddress();
+// IPv4StringToNum: Convert dotted-decimal string to UInt32
+context.Logs.Select(l => EF.Functions.IPv4StringToNum(l.IpString))
 ```
 
-### IPv4 ↔ IPv6
+```sql
+SELECT IPv4StringToNum("IpString") FROM "Logs"
+```
 
 ```csharp
-// IPv4 to IPv6 (IPv4-mapped)
-var ipv4 = ClickHouseIPv4.Parse("192.168.1.1");
-var ipv6 = ipv4.ToIPv6();  // ::ffff:192.168.1.1
-
-// IPv6 to IPv4 (if IPv4-mapped)
-var mapped = ClickHouseIPv6.Parse("::ffff:192.168.1.1");
-if (mapped.IsIPv4Mapped)
-{
-    var back = mapped.ToIPv4();
-}
+// IsIPAddressInRange: Check if IP is within a CIDR range
+context.Logs.Where(l => EF.Functions.IsIPAddressInRange(l.ClientIp, "10.0.0.0/8"))
 ```
 
-## Real-World Examples
-
-### Web Access Log
+```sql
+SELECT * FROM "Logs" WHERE isIPAddressInRange("ClientIp", '10.0.0.0/8')
+```
 
 ```csharp
-public class WebAccessLog
-{
-    public DateTime Timestamp { get; set; }
-    public ClickHouseIPv4 ClientIP { get; set; }
-    public string Method { get; set; } = string.Empty;
-    public string Path { get; set; } = string.Empty;
-    public int StatusCode { get; set; }
-    public int ResponseTimeMs { get; set; }
-    public string? UserAgent { get; set; }
-}
-
-modelBuilder.Entity<WebAccessLog>(entity =>
-{
-    entity.HasNoKey();
-    entity.UseMergeTree(x => new { x.Timestamp, x.ClientIP });
-    entity.HasPartitionByDay(x => x.Timestamp);
-});
+// IsIPv4String / IsIPv6String: Validate IP address format
+context.Logs.Where(l => EF.Functions.IsIPv4String(l.IpString))
+context.Logs.Where(l => EF.Functions.IsIPv6String(l.IpString))
 ```
 
-### Network Flow Data
-
-```csharp
-public class NetworkFlow
-{
-    public DateTime Timestamp { get; set; }
-    public ClickHouseIPv4 SourceIP { get; set; }
-    public ClickHouseIPv4 DestinationIP { get; set; }
-    public ushort SourcePort { get; set; }
-    public ushort DestinationPort { get; set; }
-    public string Protocol { get; set; } = string.Empty;
-    public long Bytes { get; set; }
-    public long Packets { get; set; }
-}
+```sql
+SELECT * FROM "Logs" WHERE isIPv4String("IpString")
+SELECT * FROM "Logs" WHERE isIPv6String("IpString")
 ```
 
-### Security Events
+## Choosing the Right Type
 
-```csharp
-public class SecurityEvent
-{
-    public Guid Id { get; set; }
-    public DateTime Timestamp { get; set; }
-    public string EventType { get; set; } = string.Empty;
-    public ClickHouseIPv4 SourceIP { get; set; }
-    public ClickHouseIPv4? TargetIP { get; set; }  // Nullable
-    public string Severity { get; set; } = string.Empty;
-    public string Description { get; set; } = string.Empty;
-}
-```
+| Use Case | Recommended Type | ClickHouse Type |
+|----------|-----------------|-----------------|
+| IPv4 only, need comparisons and sorting | `ClickHouseIPv4` | `IPv4` |
+| IPv6 only | `ClickHouseIPv6` | `IPv6` |
+| Mixed IPv4/IPv6, standard .NET interop | `IPAddress` | `IPv6` |
+| IPv4 for storage, raw UInt32 operations | `uint` + IP functions | `UInt32` |
 
-## Scaffolding
+## Function Reference
 
-When reverse-engineering a ClickHouse database:
-
-| ClickHouse Type | Generated .NET Type |
-|-----------------|---------------------|
-| `IPv4` | `ClickHouseIPv4` |
-| `IPv6` | `ClickHouseIPv6` |
-| `Nullable(IPv4)` | `ClickHouseIPv4?` |
-
-## IPv4 vs IPv6
-
-| Feature | IPv4 | IPv6 |
-|---------|------|------|
-| Storage | 4 bytes | 16 bytes |
-| Format | `192.168.1.1` | `2001:db8::1` |
-| Address space | ~4 billion | ~340 undecillion |
-| Use case | Most common | Modern/dual-stack |
-
-**Choose IPv4 when:**
-- You only deal with IPv4 addresses
-- Storage efficiency matters
-- Legacy systems
-
-**Choose IPv6 when:**
-- You need to store both IPv4 and IPv6
-- Using `IPAddress` from .NET
-- Future-proofing
-
-## Limitations
-
-- **No CIDR Operations**: Subnet matching requires raw SQL or application code
-- **No Geo Functions**: Use ClickHouse functions via raw SQL for geolocation
+| C# Method | ClickHouse SQL |
+|-----------|----------------|
+| `EF.Functions.IPv4NumToString(ip)` | `IPv4NumToString(ip)` |
+| `EF.Functions.IPv4StringToNum(s)` | `IPv4StringToNum(s)` |
+| `EF.Functions.IsIPAddressInRange(addr, cidr)` | `isIPAddressInRange(addr, cidr)` |
+| `EF.Functions.IsIPv4String(s)` | `isIPv4String(s)` |
+| `EF.Functions.IsIPv6String(s)` | `isIPv6String(s)` |
 
 ## See Also
 
-- [Type Mappings Overview](overview.md)
-- [ClickHouse IPv4/IPv6 Docs](https://clickhouse.com/docs/en/sql-reference/data-types/ipv4)
+- [Type System Overview](overview.md)

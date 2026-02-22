@@ -1,310 +1,236 @@
 # Limitations
 
-This page documents what doesn't work in EF.CH and provides workarounds.
+EF.CH maps Entity Framework Core concepts onto ClickHouse, but ClickHouse is a columnar analytics database, not a transactional RDBMS. Several EF Core features are unsupported or behave differently. This page catalogs each limitation and its workaround.
 
-## Database-Level Limitations
+## Unsupported EF Core Features
 
-These are inherent to ClickHouse, not the EF Core provider:
+### SaveChanges for Updates and Deletes
 
-### No ACID Transactions
+EF Core's change tracker detects modified and deleted entities and emits `UPDATE` / `DELETE` statements on `SaveChanges()`. ClickHouse does not support standard SQL `UPDATE` or `DELETE` -- it uses `ALTER TABLE UPDATE` (async mutation) and lightweight `DELETE` instead.
 
-ClickHouse doesn't support transactions. `SaveChanges()` batches operations but there's no rollback.
+`SaveChanges()` works for **inserts only**. Attempting to update or delete tracked entities through the change tracker will not work.
+
+**Workaround:** Use `ExecuteUpdateAsync` and `ExecuteDeleteAsync`:
 
 ```csharp
-// No transaction wrapping these operations
-context.Orders.Add(order1);
-context.Orders.Add(order2);
-await context.SaveChangesAsync();  // If order2 fails, order1 is still inserted
+// Update
+await context.Events
+    .Where(e => e.Status == "pending")
+    .ExecuteUpdateAsync(s => s.SetProperty(e => e.Status, "processed"));
 ```
 
-**Workaround:** Design for idempotency. Use unique IDs to detect duplicates.
-
-### No Row-Level UPDATE (via SaveChanges)
-
-```csharp
-var order = await context.Orders.FindAsync(id);
-order.Status = "Completed";
-await context.SaveChangesAsync();  // Throws ClickHouseUnsupportedOperationException
+```sql
+ALTER TABLE "Events" UPDATE "Status" = 'processed' WHERE "Status" = 'pending'
 ```
 
-**Solutions:**
-
-1. **`ExecuteUpdateAsync`** (recommended for bulk updates): Generates `ALTER TABLE ... UPDATE`
-   ```csharp
-   await context.Orders
-       .Where(o => o.Status == "pending")
-       .ExecuteUpdateAsync(s => s.SetProperty(o => o.Status, "Completed"));
-   ```
-
-2. **ReplacingMergeTree**: Insert new version, merge deduplicates
-   ```csharp
-   entity.UseReplacingMergeTree(x => x.Version, x => x.Id);
-   ```
-
-3. **Delete and re-insert**:
-   ```csharp
-   context.Orders.Remove(order);
-   await context.SaveChangesAsync();
-
-   order.Status = "Completed";
-   context.Orders.Add(order);
-   await context.SaveChangesAsync();
-   ```
-
-4. **Append-only design**: Track changes as events instead of updating state.
-
-See [Update Operations](features/update-operations.md) for full documentation.
-
-### No Auto-Increment / IDENTITY
-
 ```csharp
-public class Order
-{
-    public int Id { get; set; }  // No IDENTITY support
-}
+// Delete
+await context.Events
+    .Where(e => e.Timestamp < cutoff)
+    .ExecuteDeleteAsync();
 ```
 
-**Workaround:** Use UUID or application-generated IDs:
+> **Note:** Mutations are asynchronous. The `ALTER TABLE UPDATE` command returns immediately, but the actual data rewrite happens in the background. Allow time for completion or call `OPTIMIZE TABLE ... FINAL` to force it.
+
+### Transactions
+
+ClickHouse does not support multi-statement transactions. EF.CH provides a no-op transaction object to satisfy the `IDbContextTransaction` interface, but no isolation or rollback capability exists.
 
 ```csharp
-public class Order
+// This compiles and runs, but provides no transactional guarantees
+using var transaction = await context.Database.BeginTransactionAsync();
+// ... operations execute independently ...
+await transaction.CommitAsync(); // no-op
+```
+
+**Workaround:** Design for idempotency. Use `ReplacingMergeTree` with version columns so duplicate inserts resolve correctly. If you need atomic multi-table writes, consider writing to a staging table and using `INSERT ... SELECT` to move data.
+
+### Foreign Keys and Navigation Properties
+
+ClickHouse does not enforce foreign key constraints. EF Core navigation properties (`HasOne`, `HasMany`) and eager loading (`Include`) are not supported.
+
+**Workaround:** Denormalize your data at write time, or use ClickHouse dictionaries for lookup joins:
+
+```csharp
+// Define a dictionary for lookups
+entity.AsDictionary<ProductLookup, Product>(cfg => cfg
+    .HasKey(x => x.Id)
+    .FromTable(projection: p => new ProductLookup { Id = p.Id, Name = p.Name })
+    .UseHashedLayout()
+    .HasLifetime(minSeconds: 60, maxSeconds: 300)
+);
+
+// Query using dictGet
+var name = dict.Get<string>(productId, x => x.Name);
+```
+
+### Database-Generated Values (IDENTITY / Sequences)
+
+ClickHouse has no `IDENTITY`, `SERIAL`, `AUTO_INCREMENT`, or sequence support. There are no server-generated incrementing IDs.
+
+**Workaround:** Generate identifiers on the client:
+
+```csharp
+public class Event
 {
     public Guid Id { get; set; } = Guid.NewGuid();
+    // ...
 }
 ```
 
-### No Foreign Key Enforcement
+Or use a server-side UUID default:
 
 ```csharp
-modelBuilder.Entity<Order>()
-    .HasOne<Customer>()
-    .WithMany()
-    .HasForeignKey(o => o.CustomerId);  // Not enforced by database
+entity.Property(x => x.Id).HasDefaultExpression("generateUUIDv4()");
 ```
 
-**Workaround:** Validate relationships in application code:
+### Eager Loading with Include
+
+`Include()` and `ThenInclude()` rely on foreign key relationships, which ClickHouse does not support.
+
+**Workaround:** Execute separate queries and join the results in application code, or denormalize the data into a single table. For lookup data, use dictionaries.
+
+### Database-Generated Timestamps
+
+EF Core's `ValueGeneratedOnAdd` and `ValueGeneratedOnUpdate` rely on database triggers or output clauses that ClickHouse does not support.
+
+**Workaround:** Use `HasDefaultExpression` for insert-time defaults:
 
 ```csharp
-public async Task CreateOrder(Order order)
-{
-    var customerExists = await context.Customers.AnyAsync(c => c.Id == order.CustomerId);
-    if (!customerExists)
-        throw new InvalidOperationException("Customer not found");
-
-    context.Orders.Add(order);
-    await context.SaveChangesAsync();
-}
+entity.Property(x => x.CreatedAt).HasDefaultExpression("now()");
 ```
 
-### DELETE Returns 0 Rows Affected
+This generates a `DEFAULT now()` clause in the column definition. The value is computed on insert if no explicit value is provided.
 
-`ExecuteDeleteAsync()` may return 0 even when rows are deleted. This is a ClickHouse HTTP interface limitation.
+### Migrations: Limited ALTER TABLE Support
+
+ClickHouse's `ALTER TABLE` supports adding columns, dropping columns, modifying columns, and renaming columns. It does not support:
+
+- Renaming tables (use `RENAME TABLE` via raw SQL)
+- Changing the ORDER BY or ENGINE of an existing table
+- Adding or removing partitioning from an existing table
+
+**Workaround:** For schema changes that ClickHouse does not support via `ALTER TABLE`, create a new table with the desired schema and use `INSERT ... SELECT` to migrate data.
+
+## ClickHouse Version-Specific Limitations
+
+### JSON Type (requires ClickHouse 24.8+)
+
+The `JSON` column type is only available in ClickHouse 24.8 and later. Earlier versions will return an error when creating tables with JSON columns.
 
 ```csharp
-var affected = await context.Orders
-    .Where(o => o.CreatedAt < cutoff)
-    .ExecuteDeleteAsync();
-// affected may be 0 even if rows were deleted
+// Requires ClickHouse 24.8+
+entity.Property(x => x.Metadata).HasColumnType("JSON");
 ```
 
-**Workaround:** Don't rely on the return value. Query afterward if you need confirmation.
+**Workaround for older versions:** Store JSON as a `String` column and parse it in application code.
 
-## EF Core Feature Limitations
+### isDeleted Column in ReplacingMergeTree (requires ClickHouse 23.2+)
 
-### Migrations: No Column Rename
+The `is_deleted` column parameter in `ReplacingMergeTree` (which allows marking rows as deleted during background merges) requires ClickHouse 23.2 or later.
 
 ```csharp
-// This migration operation throws NotSupportedException
-migrationBuilder.RenameColumn(
-    name: "OldName",
-    table: "Orders",
-    newName: "NewName");
+// Requires ClickHouse 23.2+
+entity.UseReplacingMergeTree(
+    x => x.Version,
+    x => new { x.Id },
+    isDeletedColumn: x => x.IsDeleted
+);
 ```
 
-**Workaround:** Add new column, migrate data, drop old column:
+**Workaround for older versions:** Use `CollapsingMergeTree` with a sign column for state cancellation, or filter out deleted rows at query time.
+
+### Lightweight DELETE (requires ClickHouse 23.3+)
+
+The lightweight `DELETE FROM` syntax (as opposed to `ALTER TABLE DELETE`) was stabilized in ClickHouse 23.3.
+
+**Workaround for older versions:** Configure the mutation-based delete strategy:
 
 ```csharp
-migrationBuilder.AddColumn<string>(name: "NewName", table: "Orders");
-// Manually migrate data via raw SQL
-migrationBuilder.DropColumn(name: "OldName", table: "Orders");
+options.UseClickHouse(connectionString, o => o
+    .UseDeleteStrategy(ClickHouseDeleteStrategy.Mutation));
 ```
 
-### Migrations: No Primary Key Constraints
+### Date32 Extended Range (requires ClickHouse 21.9+)
 
-Primary keys in ClickHouse are defined by `ORDER BY`, not constraints:
+`Date32` supports the extended date range 1900-2299. The standard `Date` type covers 1970-2149.
+
+### Parameterized Views (requires ClickHouse 22.6+)
+
+Parameterized views using `CREATE VIEW ... AS SELECT ... WHERE col = {param:Type}` syntax require ClickHouse 22.6 or later.
+
+## Behavioral Differences from Standard EF Core
+
+### OrNull Aggregate Translation
+
+EF.CH translates standard LINQ aggregates differently from other EF Core providers:
+
+| LINQ Method | SQL Server | ClickHouse (EF.CH) |
+|-------------|-----------|---------------------|
+| `Sum()` | `SUM(col)` | `sumOrNull(col)` |
+| `Average()` | `AVG(col)` | `avgOrNull(CAST(col AS Float64))` |
+| `Min()` | `MIN(col)` | `minOrNull(col)` |
+| `Max()` | `MAX(col)` | `maxOrNull(col)` |
+
+The `OrNull` variants return `NULL` for empty result sets instead of zero or throwing, which is safer for analytical queries.
+
+### Set Operations Require Explicit Type
+
+ClickHouse does not support bare `UNION` -- it requires `UNION ALL` or `UNION DISTINCT`. EF.CH provides explicit extension methods:
 
 ```csharp
-// This throws NotSupportedException
-migrationBuilder.AddPrimaryKey(
-    name: "PK_Orders",
-    table: "Orders",
-    column: "Id");
+var combined = query1.UnionAll(query2);
+var distinct = query1.UnionDistinct(query2);
 ```
 
-**Workaround:** Use `HasKey()` and engine configuration:
+### DELETE/UPDATE Without Table Aliases
 
-```csharp
-entity.HasKey(e => e.Id);
-entity.UseMergeTree(x => x.Id);
-```
+ClickHouse mutation syntax does not support table aliases in the column references. EF.CH automatically suppresses table qualifiers when generating `ALTER TABLE UPDATE` and `ALTER TABLE DELETE` statements.
 
-### Migrations: No Unique Constraints
+### WHERE Required for UPDATE Mutations
 
-```csharp
-// This throws NotSupportedException
-migrationBuilder.AddUniqueConstraint(
-    name: "UQ_Email",
-    table: "Users",
-    column: "Email");
-```
+`ALTER TABLE UPDATE` requires a `WHERE` clause. If no predicate is specified, EF.CH emits `WHERE 1` to satisfy the syntax requirement.
 
-**Workaround:** Use `ReplacingMergeTree` for deduplication or enforce uniqueness in application code.
+## Known Issues
 
-### Change Tracking: Limited for Keyless Entities
+### Async Mutation Visibility
 
-Keyless entities can't be tracked:
+After `ExecuteUpdateAsync` or `ExecuteDeleteAsync`, the changes may not be immediately visible to subsequent queries. ClickHouse processes mutations asynchronously in the background.
 
-```csharp
-entity.HasNoKey();
-
-// Can insert
-context.Events.Add(event);
-await context.SaveChangesAsync();
-
-// Cannot update or delete via tracking
-context.Events.Remove(event);  // Throws
-```
-
-**Workaround:** Use bulk operations:
+**Mitigation:** If you need to read your own writes after a mutation, add a delay or force a merge:
 
 ```csharp
 await context.Events
-    .Where(e => e.Id == targetId)
+    .Where(e => e.Old)
     .ExecuteDeleteAsync();
+
+// Option 1: wait for mutation processing
+await Task.Delay(500);
+
+// Option 2: force merge
+await context.Database.OptimizeTableFinalAsync<Event>();
 ```
 
-### Navigation Properties
+### Large Result Sets and Memory
 
-Navigation properties work for queries but:
-- No cascade delete
-- No automatic include based on foreign keys
-- Must configure relationships explicitly
+ClickHouse can return very large result sets. Unlike SQL Server which streams rows, the ClickHouse driver may buffer significant amounts of data in memory.
+
+**Mitigation:** Always use `Take()` to limit result sets, or use the streaming export methods:
 
 ```csharp
-// Works for querying
-var ordersWithCustomer = await context.Orders
-    .Include(o => o.Customer)
-    .ToListAsync();
-
-// Cascade delete doesn't work
-context.Customers.Remove(customer);  // Won't delete related orders
+// Stream large results to a file
+await using var stream = File.Create("export.parquet");
+await context.Events
+    .Where(e => e.Date > cutoff)
+    .ToFormatStreamAsync(context, "Parquet", stream);
 ```
 
-## Query Limitations
+### Empty Table Aggregation
 
-### Complex Joins
-
-ClickHouse handles simple joins but complex multi-table joins can be slow:
-
-```csharp
-// May be slow
-var result = await context.Orders
-    .Join(context.Customers, o => o.CustomerId, c => c.Id, (o, c) => new { o, c })
-    .Join(context.Products, x => x.o.ProductId, p => p.Id, (x, p) => new { x.o, x.c, p })
-    .ToListAsync();
-```
-
-**Workaround:**
-- Denormalize data
-- Use materialized views for pre-joined data
-- Query tables separately and join in application
-
-### Subqueries
-
-Some subquery patterns may not translate:
-
-```csharp
-// May fail or be inefficient
-var customers = await context.Customers
-    .Where(c => context.Orders.Any(o => o.CustomerId == c.Id && o.Total > 1000))
-    .ToListAsync();
-```
-
-**Workaround:** Use raw SQL or restructure query:
-
-```csharp
-var customerIds = await context.Orders
-    .Where(o => o.Total > 1000)
-    .Select(o => o.CustomerId)
-    .Distinct()
-    .ToListAsync();
-
-var customers = await context.Customers
-    .Where(c => customerIds.Contains(c.Id))
-    .ToListAsync();
-```
-
-## Performance Considerations
-
-### Single-Row Operations
-
-ClickHouse is optimized for batch operations. Single-row inserts are inefficient:
-
-```csharp
-// Inefficient
-foreach (var item in items)
-{
-    context.Items.Add(item);
-    await context.SaveChangesAsync();
-}
-
-// Better
-context.Items.AddRange(items);
-await context.SaveChangesAsync();
-```
-
-### FINAL Modifier Overhead
-
-Using `.Final()` forces deduplication but adds query overhead:
-
-```csharp
-// Fast but may return duplicates
-var users = await context.Users.ToListAsync();
-
-// Slower but deduplicated
-var users = await context.Users.Final().ToListAsync();
-```
-
-### Query on Non-Primary Columns
-
-Queries that don't filter on `ORDER BY` columns scan more data:
-
-```csharp
-// Fast: Timestamp is in ORDER BY
-context.Events.Where(e => e.Timestamp > cutoff)
-
-// Slow: Full scan
-context.Events.Where(e => e.UserId == userId)
-```
-
-## Feature Support Matrix
-
-| Feature | SQL Server | ClickHouse | Notes |
-|---------|-----------|------------|-------|
-| Transactions | ✅ | ❌ | Eventual consistency |
-| UPDATE | ✅ | ⚠️ | Bulk via `ExecuteUpdateAsync`; no row-level tracking |
-| DELETE | ✅ | ⚠️ | Async/eventual |
-| Auto-increment | ✅ | ❌ | Use UUID |
-| Foreign keys | ✅ | ❌ | Application-level |
-| Unique constraints | ✅ | ❌ | ReplacingMergeTree |
-| Check constraints | ✅ | ❌ | Application-level |
-| Column rename | ✅ | ❌ | Add/drop columns |
-| Complex joins | ✅ | ⚠️ | Simple joins OK |
-| Subqueries | ✅ | ⚠️ | May need restructuring |
+Aggregating over an empty table in ClickHouse may return different results than SQL Server. For example, `COUNT()` on an empty table returns 0, but `SUM()` returns NULL (via `sumOrNull`). EF.CH's `OrNull` translation handles this correctly, but be aware of the difference if you use raw SQL.
 
 ## See Also
 
-- [ClickHouse Concepts](clickhouse-concepts.md) - Understanding ClickHouse architecture
-- [ReplacingMergeTree](engines/replacing-mergetree.md) - Deduplication workaround
-- [Update Operations](features/update-operations.md) - Bulk update via ExecuteUpdateAsync
-- [Delete Operations](features/delete-operations.md) - Delete strategies
+- [Getting Started](getting-started.md) -- installation and first project walkthrough
+- [ClickHouse for EF Developers](clickhouse-for-ef-developers.md) -- mental model differences and best practices
+- [Engines Overview](engines/overview.md) -- choosing the right table engine

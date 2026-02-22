@@ -1,885 +1,187 @@
-# EF.CH - Entity Framework Core Provider for ClickHouse
+# EF.CH
 
-An Entity Framework Core provider for [ClickHouse](https://clickhouse.com/), built on the [ClickHouse.Driver](https://github.com/ClickHouse/clickhouse-cs) ADO.NET driver.
+**Entity Framework Core provider for ClickHouse**
 
-## Features
+[![NuGet Version](https://img.shields.io/nuget/v/EF.CH)](https://www.nuget.org/packages/EF.CH)
+[![NuGet Downloads](https://img.shields.io/nuget/dt/EF.CH)](https://www.nuget.org/packages/EF.CH)
+[![Build](https://github.com/DanielBunting/EF.CH/actions/workflows/dotnet.yml/badge.svg)](https://github.com/DanielBunting/EF.CH/actions)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-- **LINQ to ClickHouse SQL** - Full query translation with ClickHouse-specific optimizations
-- **MergeTree Engine Family** - MergeTree, ReplacingMergeTree, SummingMergeTree, AggregatingMergeTree, CollapsingMergeTree
-- **Rich Type System** - Arrays, Maps, Tuples, Nested types, Enums, IPv4/IPv6, DateTime64
-- **Materialized Views** - LINQ-based and raw SQL definitions
-- **Projections** - Pre-sorted and pre-aggregated table-level optimizations
-- **EF Core Migrations** - DDL generation with ClickHouse-specific clauses
-- **DELETE Support** - Lightweight and mutation-based strategies
-- **UPDATE Support** - Bulk mutations via `ExecuteUpdateAsync` (ALTER TABLE UPDATE)
-- **Set Operations** - UNION ALL, UNION DISTINCT, INTERSECT, EXCEPT with convenience extensions
-- **CTEs** - Common Table Expressions via `AsCte()` for analytical queries
-- **Dictionaries** - In-memory key-value stores with dictGet translation
-- **External Entities** - Query PostgreSQL, MySQL, Redis, and ODBC sources via table functions
-- **Scaffolding** - Reverse engineering with C# enum generation
-- **Compression Codecs** - Per-column compression via fluent API and attributes
-- **Window Functions** - Row numbering, ranking, lag/lead, running totals with fluent API
-- **Data Skipping Indices** - Minmax, bloom filter, token/ngram bloom filters, and set indices
-- **Time Series Gap Filling** - WITH FILL and INTERPOLATE for continuous time series data
-- **Query Modifiers** - FINAL, SAMPLE, PREWHERE, and SETTINGS for query-level hints
-- **Computed Columns** - MATERIALIZED, ALIAS, and DEFAULT expression columns
-- **Aggregate Combinators** - State, Merge, If, and Array combinators for AggregatingMergeTree
-- **Native JSON Type** - ClickHouse 24.8+ subcolumn access with extension method API
+EF.CH brings ClickHouse into the Entity Framework Core ecosystem. Define your models in C#, write LINQ queries, and run migrations -- all against ClickHouse's columnar analytics engine.
+
+---
 
 ## Quick Start
-
-```csharp
-// 1. Install the package
-// dotnet add package EF.CH
-
-// 2. Create your entity
-public class Order
-{
-    public Guid Id { get; set; }
-    public DateTime OrderDate { get; set; }
-    public string CustomerId { get; set; } = string.Empty;
-    public decimal Total { get; set; }
-}
-
-// 3. Create your DbContext
-public class MyDbContext : DbContext
-{
-    public DbSet<Order> Orders => Set<Order>();
-
-    protected override void OnConfiguring(DbContextOptionsBuilder options)
-        => options.UseClickHouse("Host=localhost;Database=mydb");
-
-    protected override void OnModelCreating(ModelBuilder modelBuilder)
-    {
-        modelBuilder.Entity<Order>(entity =>
-        {
-            entity.HasKey(e => e.Id);
-            entity.UseMergeTree(x => new { x.OrderDate, x.Id });  // Required: ORDER BY
-            entity.HasPartitionByMonth(x => x.OrderDate);         // Optional: partitioning
-        });
-    }
-}
-
-// 4. Use it
-await using var context = new MyDbContext();
-await context.Database.EnsureCreatedAsync();
-
-context.Orders.Add(new Order
-{
-    Id = Guid.NewGuid(),
-    OrderDate = DateTime.UtcNow,
-    CustomerId = "customer-123",
-    Total = 99.99m
-});
-await context.SaveChangesAsync();
-
-var recentOrders = await context.Orders
-    .Where(o => o.OrderDate > DateTime.UtcNow.AddDays(-7))
-    .ToListAsync();
-```
-
-## Installation
 
 ```bash
 dotnet add package EF.CH
 ```
 
-**Requirements:**
-- .NET 8.0+
-- ClickHouse 22.0+
-- EF Core 8.0+
-
-## ClickHouse Concepts for EF Core Developers
-
-If you're coming from SQL Server or PostgreSQL, ClickHouse works differently. Understanding these differences is essential:
-
-### Every Table Needs an ENGINE
-
-Unlike SQL Server where tables "just work", ClickHouse requires you to specify a table engine. The MergeTree family is most common:
-
 ```csharp
-// This is REQUIRED - there's no default engine
-entity.UseMergeTree(x => new { x.OrderDate, x.Id });
-```
+using Microsoft.EntityFrameworkCore;
+using EF.CH.Extensions;
 
-### No ACID Transactions
-
-ClickHouse uses eventual consistency. `SaveChanges()` batches INSERTs but there's no rollback on failure. Design your application accordingly.
-
-### No Row-Level UPDATE
-
-ClickHouse doesn't support efficient row-level `UPDATE` via `SaveChanges()`. Modifying a tracked entity and calling `SaveChanges()` throws `NotSupportedException`. Instead:
-- Use `ExecuteUpdateAsync` for bulk mutations (generates `ALTER TABLE ... UPDATE`)
-- Use `ReplacingMergeTree` with a version column for "last write wins" semantics
-- Use delete-and-reinsert patterns for infrequent updates
-
-```csharp
-// Bulk update via ExecuteUpdateAsync
-await context.Products
-    .Where(p => p.Category == "electronics")
-    .ExecuteUpdateAsync(s => s.SetProperty(p => p.Price, p => p.Price * 1.1m));
-```
-
-### Batch-Oriented, Not Row-at-a-Time
-
-ClickHouse is optimized for bulk inserts (thousands of rows). Single-row inserts work but aren't efficient. Batch your writes when possible.
-
-### No Auto-Increment
-
-There's no `IDENTITY` or auto-increment. Use `Guid` or application-generated IDs:
-
-```csharp
-public Guid Id { get; set; } = Guid.NewGuid();
-```
-
-### No Foreign Key Enforcement
-
-ClickHouse doesn't enforce referential integrity. Foreign keys are your application's responsibility.
-
-## Table Engines
-
-Choose the right engine for your use case:
-
-| Engine | Use Case | Configuration |
-|--------|----------|---------------|
-| **MergeTree** | General purpose, append-only | `entity.UseMergeTree(x => x.Id)` |
-| **ReplacingMergeTree** | Deduplication by key with version | `entity.UseReplacingMergeTree(x => x.Version, x => x.Id)` |
-| **SummingMergeTree** | Auto-sum numeric columns | `entity.UseSummingMergeTree(x => new { x.Date, x.ProductId })` |
-| **AggregatingMergeTree** | Pre-aggregated state | `entity.UseAggregatingMergeTree(x => x.Key)` |
-| **CollapsingMergeTree** | Row cancellation with sign | `entity.UseCollapsingMergeTree(x => x.Sign, x => x.Key)` |
-| **VersionedCollapsingMergeTree** | Out-of-order row cancellation | `entity.UseVersionedCollapsingMergeTree(x => x.Sign, x => x.Version, x => x.Key)` |
-
-See [docs/engines/](docs/engines/) for detailed documentation on each engine.
-
-## Type Mappings
-
-| .NET Type | ClickHouse Type |
-|-----------|-----------------|
-| `int`, `long`, `short`, `sbyte` | `Int32`, `Int64`, `Int16`, `Int8` |
-| `uint`, `ulong`, `ushort`, `byte` | `UInt32`, `UInt64`, `UInt16`, `UInt8` |
-| `float`, `double` | `Float32`, `Float64` |
-| `decimal` | `Decimal(18, 4)` |
-| `string` | `String` |
-| `bool` | `Bool` |
-| `Guid` | `UUID` |
-| `DateTime` | `DateTime64(3)` |
-| `DateTimeOffset` | `DateTime64(3)` with timezone |
-| `DateOnly` | `Date` |
-| `TimeOnly` | `Time` |
-| `T[]`, `List<T>` | `Array(T)` |
-| `Dictionary<K,V>` | `Map(K, V)` |
-| `enum` | `Enum8` or `Enum16` (auto-selected) |
-| `JsonElement`, `JsonDocument` | `JSON` |
-| `T` (POCO class) | `JSON` (via value converter) |
-
-See [docs/types/](docs/types/) for the complete type mapping reference.
-
-## Key Differences from SQL Server/PostgreSQL
-
-| Feature | SQL Server/PostgreSQL | ClickHouse |
-|---------|----------------------|------------|
-| Transactions | Full ACID | Eventual consistency |
-| UPDATE | Efficient row updates | Bulk via `ExecuteUpdateAsync`; no row-level tracking |
-| DELETE | Immediate | Lightweight (marks) or mutation (async rewrite) |
-| Auto-increment | `IDENTITY`, `SERIAL` | Not available - use UUID |
-| Foreign Keys | Enforced constraints | Application-level only |
-| Indexes | B-tree, hash, etc. | Primary key (ORDER BY) + skip indices |
-| Insert Pattern | Row-at-a-time OK | Batch thousands of rows |
-| Use Case | OLTP | OLAP/Analytics |
-
-## Table Options
-
-```csharp
-// Partitioning - improves query performance and data management
-entity.HasPartitionByMonth(x => x.CreatedAt);  // PARTITION BY toYYYYMM()
-entity.HasPartitionByDay(x => x.EventDate);    // PARTITION BY toYYYYMMDD()
-
-// TTL - automatic data expiration
-entity.HasTtl("CreatedAt + INTERVAL 90 DAY");
-
-// Sampling - for approximate queries on large datasets
-entity.HasSampleBy("intHash32(UserId)");
-```
-
-## Computed Columns
-
-ClickHouse supports three types of computed columns:
-
-```csharp
-public class Order
+public class Event
 {
     public Guid Id { get; set; }
-    public decimal Amount { get; set; }
-    public string FirstName { get; set; } = string.Empty;
-    public string LastName { get; set; } = string.Empty;
-
-    // MATERIALIZED - computed on INSERT, stored on disk
-    [MaterializedColumn("Amount * 1.1")]
-    public decimal TotalWithTax { get; set; }
-
-    // ALIAS - computed at query time, not stored
-    [AliasColumn("concat(FirstName, ' ', LastName)")]
-    public string FullName { get; set; } = string.Empty;
-
-    // DEFAULT expression - computed if no value provided
-    [DefaultExpression("now()")]
-    public DateTime CreatedAt { get; set; }
-}
-
-// Or via fluent API
-modelBuilder.Entity<Order>(entity =>
-{
-    entity.Property(e => e.TotalWithTax).HasMaterializedExpression("Amount * 1.1");
-    entity.Property(e => e.FullName).HasAliasExpression("concat(FirstName, ' ', LastName)");
-    entity.Property(e => e.CreatedAt).HasDefaultExpression("now()");
-});
-```
-
-| Type | Storage | Performance | Use Case |
-|------|---------|-------------|----------|
-| `MATERIALIZED` | Stored on disk | Fast reads | Derived values needed frequently |
-| `ALIAS` | Not stored | Computed each query | Virtual columns, rarely used |
-| `DEFAULT` | Stored when provided | Normal | Auto-generated values like timestamps |
-
-**Note:** MATERIALIZED columns are excluded from `SELECT *` by default. Use explicit column selection to read them.
-
-See [docs/features/computed-columns.md](docs/features/computed-columns.md) for full documentation.
-
-## Query Modifiers
-
-ClickHouse-specific query hints via LINQ extension methods:
-
-```csharp
-using EF.CH.Extensions;
-
-// FINAL - force deduplication for ReplacingMergeTree
-var users = await context.Users
-    .Final()
-    .ToListAsync();
-
-// SAMPLE - probabilistic sampling (~10% of rows)
-var sample = await context.Events
-    .Sample(0.1)
-    .ToListAsync();
-
-// PREWHERE - optimized pre-filtering (reads filter columns first)
-var filtered = await context.Events
-    .PreWhere(e => e.Date > cutoffDate)
-    .ToListAsync();
-
-// SETTINGS - query-level execution hints
-var events = await context.Events
-    .WithSetting("max_threads", 4)
-    .ToListAsync();
-```
-
-**When to use PREWHERE:**
-- Filter on indexed/sorted columns (ORDER BY key columns)
-- Highly selective filters that eliminate most rows
-- Large tables where I/O reduction matters
-
-See [docs/features/query-modifiers.md](docs/features/query-modifiers.md) for full documentation.
-
-## UPDATE Operations
-
-ClickHouse supports bulk updates via `ALTER TABLE ... UPDATE` mutations. Use EF Core's `ExecuteUpdateAsync`:
-
-```csharp
-// Single column update
-await context.Products
-    .Where(p => p.Status == "discontinued")
-    .ExecuteUpdateAsync(s => s.SetProperty(p => p.Status, "archived"));
-
-// Multiple columns
-await context.Orders
-    .Where(o => o.Region == "NA")
-    .ExecuteUpdateAsync(s => s
-        .SetProperty(o => o.Region, "North America")
-        .SetProperty(o => o.UpdatedAt, DateTime.UtcNow));
-
-// Expression-based (computed values)
-await context.Products
-    .Where(p => p.Category == "electronics")
-    .ExecuteUpdateAsync(s => s.SetProperty(p => p.Price, p => p.Price * 1.1m));
-```
-
-**Note:** Row-level tracked updates via `SaveChanges()` remain blocked by design (single-row mutations are inefficient). Use `ExecuteUpdateAsync` for bulk operations.
-
-See [docs/features/update-operations.md](docs/features/update-operations.md) for full documentation.
-
-## DELETE Operations
-
-```csharp
-// Via change tracker (lightweight delete by default)
-var entity = await context.Orders.FindAsync(id);
-context.Orders.Remove(entity);
-await context.SaveChangesAsync();
-
-// Bulk delete
-await context.Orders
-    .Where(o => o.OrderDate < cutoffDate)
-    .ExecuteDeleteAsync();
-
-// Configure mutation-based delete
-options.UseClickHouse("...", o => o.UseDeleteStrategy(ClickHouseDeleteStrategy.Mutation));
-```
-
-## Set Operations
-
-Combine queries with ClickHouse-compatible set operations:
-
-```csharp
-using EF.CH.Extensions;
-
-// UNION ALL (keeps duplicates)
-var all = await query1.Concat(query2).ToListAsync();
-
-// UNION DISTINCT (removes duplicates)
-var distinct = await query1.Union(query2).ToListAsync();
-
-// INTERSECT / EXCEPT
-var common = await query1.Intersect(query2).ToListAsync();
-var diff = await query1.Except(query2).ToListAsync();
-
-// Convenience: chain multiple unions
-var combined = await query1.UnionAll(query2, query3, query4).ToListAsync();
-
-// Fluent builder
-var result = await query1
-    .AsSetOperation()
-    .UnionAll(query2)
-    .Except(query3)
-    .Build()
-    .OrderBy(e => e.Timestamp)
-    .Take(100)
-    .ToListAsync();
-```
-
-See [docs/features/set-operations.md](docs/features/set-operations.md) for full documentation.
-
-## Common Table Expressions (CTEs)
-
-Wrap subqueries as named CTEs for analytical queries:
-
-```csharp
-using EF.CH.Extensions;
-
-var result = await context.Events
-    .Where(e => e.Category == "electronics")
-    .AsCte("filtered")
-    .OrderByDescending(e => e.Amount)
-    .Take(10)
-    .ToListAsync();
-
-// Generates:
-// WITH "filtered" AS (
-//     SELECT ... FROM "Events" WHERE "Category" = 'electronics'
-// )
-// SELECT ... FROM "filtered" ORDER BY "Amount" DESC LIMIT 10
-```
-
-See [docs/features/cte.md](docs/features/cte.md) for full documentation.
-
-## Window Functions
-
-```csharp
-using EF.CH.Extensions;
-
-var analytics = context.Orders.Select(o => new
-{
-    o.Id,
-    // Lambda style (recommended) - no .Value needed
-    RowNum = Window.RowNumber(w => w
-        .PartitionBy(o.Region)
-        .OrderBy(o.OrderDate)),
-
-    PrevAmount = Window.Lag(o.Amount, 1, w => w
-        .OrderBy(o.OrderDate)),
-
-    RunningTotal = Window.Sum(o.Amount, w => w
-        .PartitionBy(o.Region)
-        .OrderBy(o.OrderDate)
-        .Rows().UnboundedPreceding().CurrentRow())
-});
-```
-
-**Available Functions:** `RowNumber`, `Rank`, `DenseRank`, `PercentRank`, `NTile`, `Lag`, `Lead`, `FirstValue`, `LastValue`, `NthValue`, `Sum`, `Avg`, `Count`, `Min`, `Max`
-
-See [docs/features/window-functions.md](docs/features/window-functions.md) for full documentation including fluent API style.
-
-## Time Series Gap Filling
-
-Fill gaps in time series data with ClickHouse's `WITH FILL` and `INTERPOLATE` clauses:
-
-```csharp
-using EF.CH.Extensions;
-
-// Basic gap filling - insert missing hourly rows
-var hourlyData = context.Readings
-    .OrderBy(x => x.Hour)
-    .Interpolate(x => x.Hour, TimeSpan.FromHours(1));
-
-// With FROM/TO bounds for complete date range
-var fullRange = context.Readings
-    .OrderBy(x => x.Date)
-    .Interpolate(x => x.Date, TimeSpan.FromDays(1), startDate, endDate);
-
-// Forward-fill values from previous row
-var filledData = context.Readings
-    .OrderBy(x => x.Hour)
-    .Interpolate(x => x.Hour, TimeSpan.FromHours(1),
-                 x => x.Value, InterpolateMode.Prev);
-
-// Multiple columns with builder
-var multiColumn = context.Readings
-    .OrderBy(x => x.Hour)
-    .Interpolate(x => x.Hour, TimeSpan.FromHours(1), i => i
-        .Fill(x => x.Temperature, InterpolateMode.Prev)
-        .Fill(x => x.Count, 0));
-```
-
-**Step Types:**
-
-| Type | Use Case | Example |
-|------|----------|---------|
-| `TimeSpan` | Hours, minutes, seconds, days | `TimeSpan.FromHours(1)` |
-| `ClickHouseInterval` | Months, quarters, years | `ClickHouseInterval.Months(1)` |
-| `int` | Numeric sequences | `10` |
-
-See [docs/features/interpolate.md](docs/features/interpolate.md) for full documentation.
-
-## Data Skipping Indices
-
-Skip indices allow ClickHouse to skip reading granules that don't match query predicates, dramatically improving query performance for selective filters.
-
-```csharp
-modelBuilder.Entity<LogEvent>(entity =>
-{
-    entity.UseMergeTree(x => new { x.Timestamp, x.Id });
-
-    // Minmax for datetime range queries
-    entity.HasIndex(x => x.Timestamp)
-        .UseMinmax()
-        .HasGranularity(4);
-
-    // Bloom filter for array membership (has(Tags, 'error'))
-    entity.HasIndex(x => x.Tags)
-        .UseBloomFilter(falsePositive: 0.025)
-        .HasGranularity(3);
-
-    // Token bloom filter for log search (LIKE '%exception%')
-    entity.HasIndex(x => x.Message)
-        .UseTokenBF(size: 10240, hashes: 3, seed: 0)
-        .HasGranularity(4);
-
-    // Set index for low-cardinality columns
-    entity.HasIndex(x => x.Status)
-        .UseSet(maxRows: 100)
-        .HasGranularity(2);
-});
-```
-
-**Or use attributes:**
-
-```csharp
-public class LogEvent
-{
-    [MinMaxIndex(Granularity = 4)]
     public DateTime Timestamp { get; set; }
-
-    [BloomFilterIndex(FalsePositive = 0.025, Granularity = 3)]
-    public string[] Tags { get; set; } = [];
-
-    [TokenBFIndex(Granularity = 4)]
-    public string Message { get; set; } = string.Empty;
-
-    [SetIndex(MaxRows = 100, Granularity = 2)]
-    public string Status { get; set; } = string.Empty;
-}
-```
-
-**Index Types:**
-
-| Type | Use Case |
-|------|----------|
-| `UseMinmax()` | Numeric/datetime range queries |
-| `UseBloomFilter(fpp)` | Exact matching, array membership |
-| `UseTokenBF(...)` | Tokenized text search (logs, URLs) |
-| `UseNgramBF(...)` | Fuzzy/substring text matching |
-| `UseSet(maxRows)` | Low-cardinality exact matching |
-
-See [docs/features/skip-indices.md](docs/features/skip-indices.md) for full documentation.
-
-## Materialized Views
-
-```csharp
-// LINQ-based (type-safe)
-modelBuilder.Entity<HourlySummary>(entity =>
-{
-    entity.UseSummingMergeTree(x => new { x.Hour, x.ProductId });
-    entity.AsMaterializedView<HourlySummary, Order>(
-        query: orders => orders
-            .GroupBy(o => new { Hour = o.OrderDate.Date, o.ProductId })
-            .Select(g => new HourlySummary
-            {
-                Hour = g.Key.Hour,
-                ProductId = g.Key.ProductId,
-                OrderCount = g.Count(),
-                TotalRevenue = g.Sum(o => o.Total)
-            }),
-        populate: false);
-});
-```
-
-## Projections
-
-Projections are table-level optimizations stored alongside the main table data. Unlike materialized views, projections are **not separately queryable** - the query optimizer automatically uses them when beneficial.
-
-```csharp
-// Sort-order projection - auto-named: orders__prj_ord__customer_id__order_date
-entity.HasProjection()
-    .OrderBy(x => x.CustomerId)
-    .ThenBy(x => x.OrderDate)
-    .Build();
-
-// Aggregation projection - explicit name, anonymous type
-entity.HasProjection("daily_stats")
-    .GroupBy(x => x.OrderDate.Date)
-    .Select(g => new {
-        Date = g.Key,
-        TotalAmount = g.Sum(o => o.Amount),
-        OrderCount = g.Count()
-    })
-    .Build();
-
-// ClickHouse-specific aggregates (uniq, argMax, quantile, etc.)
-entity.HasProjection("advanced_stats")
-    .GroupBy(x => x.Date)
-    .Select(g => new {
-        Date = g.Key,
-        UniqueUsers = ClickHouseAggregates.Uniq(g, o => o.UserId),
-        TopProduct = ClickHouseAggregates.ArgMax(g, o => o.ProductId, o => o.Revenue)
-    })
-    .Build();
-```
-
-See [docs/features/projections.md](docs/features/projections.md) for full documentation including all ClickHouse aggregate functions.
-
-## Aggregate Combinators
-
-ClickHouse aggregate combinators modify aggregate function behavior. Use these for AggregatingMergeTree workflows with full LINQ support:
-
-```csharp
-using EF.CH.Extensions;
-
-// Store aggregate states in byte[] columns
-public class HourlySummary
-{
-    public DateTime Hour { get; set; }
-    public byte[] CountState { get; set; } = [];
-    public byte[] SumAmountState { get; set; } = [];
-    public byte[] AvgTimeState { get; set; } = [];
+    public string EventType { get; set; } = string.Empty;
+    public decimal Amount { get; set; }
 }
 
-// Configure AggregateFunction columns
-modelBuilder.Entity<HourlySummary>(entity =>
+public class AppDbContext : DbContext
 {
-    entity.HasNoKey();
-    entity.UseAggregatingMergeTree(x => x.Hour);
+    public DbSet<Event> Events => Set<Event>();
 
-    entity.Property(e => e.CountState).HasAggregateFunction("count", typeof(ulong));
-    entity.Property(e => e.SumAmountState).HasAggregateFunction("sum", typeof(long));
-    entity.Property(e => e.AvgTimeState).HasAggregateFunction("avg", typeof(double));
-});
+    protected override void OnConfiguring(DbContextOptionsBuilder options)
+        => options.UseClickHouse("Host=localhost;Port=8123;Database=default");
 
-// Materialize with State combinators
-.Select(g => new HourlySummary
-{
-    Hour = g.Key,
-    CountState = g.CountState(),              // countState()
-    SumAmountState = g.SumState(x => x.Amount), // sumState(Amount)
-    AvgTimeState = g.AvgState(x => x.ResponseTime)
-})
-
-// Query with Merge combinators to produce final values
-context.HourlySummary
-    .GroupBy(s => s.Hour.Date)
-    .Select(g => new
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
-        Date = g.Key,
-        TotalCount = g.CountMerge(s => s.CountState),     // countMerge()
-        TotalAmount = g.SumMerge<HourlySummary, long>(s => s.SumAmountState),
-        AvgTime = g.AvgMerge(s => s.AvgTimeState)
-    })
-
-// Conditional aggregation with If combinators
-.Select(g => new
-{
-    HighValueCount = g.CountIf(x => x.Amount > 1000),      // countIf()
-    HighValueSum = g.SumIf(x => x.Amount, x => x.Amount > 1000)
-})
-
-// Array element aggregation
-.Select(p => new
-{
-    TotalPrices = p.Prices.ArraySum(),   // arraySum()
-    AvgPrice = p.Prices.ArrayAvg()       // arrayAvg()
-})
-```
-
-| Combinator | Methods | Use Case |
-|------------|---------|----------|
-| `-State` | `CountState`, `SumState`, `AvgState`, `MinState`, `MaxState`, `UniqState`, `QuantileState` | Store aggregate state |
-| `-Merge` | `CountMerge`, `SumMerge`, `AvgMerge`, `MinMerge`, `MaxMerge`, `UniqMerge`, `QuantileMerge` | Combine states |
-| `-If` | `CountIf`, `SumIf`, `AvgIf`, `MinIf`, `MaxIf`, `UniqIf` | Conditional aggregation |
-| `Array*` | `ArraySum`, `ArrayAvg`, `ArrayMin`, `ArrayMax`, `ArrayCount` | Array element aggregation |
-
-See [docs/features/aggregate-combinators.md](docs/features/aggregate-combinators.md) for full documentation.
-
-## Native JSON Type
-
-Query JSON columns with ClickHouse 24.8+ native subcolumn syntax via extension methods.
-
-```csharp
-using EF.CH.Extensions;
-
-// Configure JSON column
-modelBuilder.Entity<Event>(entity =>
-{
-    entity.Property(e => e.Payload)
-        .HasColumnType("JSON")
-        .HasMaxDynamicPaths(2048);  // Optional
-});
-
-// Query with extension methods - translates to subcolumn syntax
-var results = await context.Events
-    .Where(e => e.Payload.GetPath<string>("user.email") == "test@example.com")
-    .Where(e => e.Payload.HasPath("metrics.score"))
-    .Select(e => new {
-        e.Id,
-        Email = e.Payload.GetPath<string>("user.email"),
-        Score = e.Payload.GetPathOrDefault<int>("metrics.score", 0),
-        FirstTag = e.Payload.GetPath<string>("tags[0]")
-    })
-    .ToListAsync();
-
-// Generated SQL:
-// SELECT "Id", "Payload"."user"."email",
-//        ifNull("Payload"."metrics"."score", 0),
-//        "Payload"."tags"[1]
-// FROM "Events"
-// WHERE "Payload"."user"."email" = 'test@example.com'
-//   AND "Payload"."metrics"."score" IS NOT NULL
-```
-
-**Extension Methods:**
-
-| Method | SQL | Description |
-|--------|-----|-------------|
-| `GetPath<T>(path)` | `"col"."path"` | Extract typed value |
-| `GetPathOrDefault<T>(path, default)` | `ifNull("col"."path", default)` | With fallback |
-| `HasPath(path)` | `"col"."path" IS NOT NULL` | Check existence |
-| `GetArray<T>(path)` | `"col"."path"` | Extract array |
-
-**Typed POCO Support:**
-
-```csharp
-public class Order
-{
-    [ClickHouseJson(IsTyped = true)]
-    public OrderMetadata Metadata { get; set; } = new();
-}
-```
-
-See [docs/types/json.md](docs/types/json.md) for full documentation.
-
-## Clustering & Replication
-
-EF.CH supports multi-datacenter ClickHouse deployments with full replication and sharding:
-
-- **Replicated Engines** - ReplicatedMergeTree variants with fluent configuration
-- **ON CLUSTER DDL** - Automatic cluster-aware schema management
-- **Connection Routing** - Read/write endpoint splitting with failover
-- **Table Groups** - Logical grouping with inherited cluster settings
-
-```csharp
-// Replicated engine for high availability (same data on all nodes)
-// Fluent cluster configuration
-modelBuilder.Entity<Order>(entity =>
-{
-    entity.UseReplicatedReplacingMergeTree(x => x.Version, x => new { x.OrderDate, x.Id })
-          .WithCluster("geo_cluster")
-          .WithReplication("/clickhouse/tables/{database}/{table}");
-});
-
-// Distributed table for horizontal scaling (data split across shards)
-modelBuilder.Entity<Event>(entity =>
-{
-    entity.UseDistributed("shard_cluster", "events_local")
-          .WithShardingKey("cityHash64(UserId)");
-});
-```
-
-Configure connections with read/write separation:
-
-```csharp
-options.UseClickHouse("Host=primary;Database=myapp", ch =>
-{
-    ch.AddConnection("Primary", conn => conn
-        .WriteEndpoint("dc1-clickhouse:8123")
-        .ReadEndpoints("dc1-clickhouse:8123", "dc2-clickhouse:8123")
-        .ReadStrategy(ReadStrategy.RoundRobin));
-
-    ch.AddCluster("geo_cluster", cluster => cluster
-        .UseConnection("Primary"));
-
-    ch.UseConnectionRouting();  // Enable read/write splitting
-});
-```
-
-| Pattern | Use Case | Sample |
-|---------|----------|--------|
-| **Replication** | High availability, read scaling | [ClusterSample](samples/ClusterSample/) |
-| **Sharding** | Horizontal scaling, large datasets | [DistributedSample](samples/DistributedSample/) |
-s
-See [Clustering Documentation](docs/features/clustering.md) and [ClusterSample](samples/ClusterSample/) for details.
-
-## Dictionaries
-
-ClickHouse dictionaries are in-memory key-value stores for fast lookups:
-
-```csharp
-// Define dictionary entity with marker interface
-public class CountryLookup : IClickHouseDictionary
-{
-    public ulong Id { get; set; }
-    public string Name { get; set; } = string.Empty;
+        modelBuilder.Entity<Event>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.UseMergeTree(e => new { e.Timestamp, e.EventType })
+                .HasPartitionByMonth(e => e.Timestamp);
+        });
+    }
 }
 
-// Configure in OnModelCreating
-entity.AsDictionary<CountryLookup, Country>(cfg => cfg
-    .HasKey(x => x.Id)
-    .FromTable()
-    .UseHashedLayout()
-    .HasLifetime(300));
+// Insert
+await using var db = new AppDbContext();
+await db.Database.EnsureCreatedAsync();
 
-// Use in LINQ queries - translates to dictGet()
-var orders = db.Orders
-    .Select(o => new {
-        o.Id,
-        CountryName = db.CountryDict.Get(o.CountryId, c => c.Name)
-    });
-```
-
-**Layouts:** `Flat`, `Hashed`, `ComplexKeyHashed`, `Cache`, `Direct`
-
-## External Entities
-
-Query remote databases directly through ClickHouse table functions:
-
-```csharp
-// Define external entity (keyless - uses table function, not a ClickHouse table)
-public class ExternalCustomer
+db.Events.Add(new Event
 {
-    public int id { get; set; }
-    public string name { get; set; } = string.Empty;
-    public string email { get; set; } = string.Empty;
-}
+    Id = Guid.NewGuid(),
+    Timestamp = DateTime.UtcNow,
+    EventType = "purchase",
+    Amount = 99.95m
+});
+await db.SaveChangesAsync();
 
-// Configure in OnModelCreating
-modelBuilder.ExternalPostgresEntity<ExternalCustomer>(ext => ext
-    .FromTable("customers", schema: "public")
-    .Connection(c => c
-        .HostPort(env: "PG_HOST")
-        .Database(env: "PG_DATABASE")
-        .Credentials("PG_USER", "PG_PASSWORD")));
-
-// Query like any other entity - generates postgresql() table function
-var customers = await context.ExternalCustomers
-    .Where(c => c.name.StartsWith("A"))
-    .ToListAsync();
-
-// JOIN with native ClickHouse tables
-var orderSummary = await context.Orders
-    .Join(context.ExternalCustomers, o => o.CustomerId, c => c.id,
-        (o, c) => new { c.name, o.Amount })
+// Query
+var summary = await db.Events
+    .GroupBy(e => e.EventType)
+    .Select(g => new { Type = g.Key, Total = g.Sum(e => e.Amount) })
     .ToListAsync();
 ```
 
-**Supported Providers:**
+---
 
-| Provider | Extension Method | Use Case |
-|----------|------------------|----------|
-| PostgreSQL | `ExternalPostgresEntity<T>()` | Direct credentials |
-| MySQL | `ExternalMySqlEntity<T>()` | REPLACE INTO, ON DUPLICATE KEY |
-| ODBC | `ExternalOdbcEntity<T>()` | SQL Server, Oracle via DSN |
-| Redis | `ExternalRedisEntity<T>()` | Key-value with auto-generated schema |
+## Feature Highlights
 
-See [docs/features/external-entities.md](docs/features/external-entities.md) for detailed configuration.
+| Category | Highlights | Docs |
+|---|---|---|
+| **Engines** | 14 table engines: MergeTree, ReplacingMergeTree, SummingMergeTree, AggregatingMergeTree, CollapsingMergeTree, VersionedCollapsingMergeTree, Replicated variants, Distributed, Null | [docs/engines/](docs/engines/) |
+| **Type System** | Arrays, Maps, Tuples, Nested, JSON, IPv4/IPv6, Enums, DateTime64 with timezones, LowCardinality, 40+ type mappings | [docs/types/](docs/types/) |
+| **Query Power** | FINAL, SAMPLE, PREWHERE, LimitBy, CTEs, Window Functions, Set Operations, Interpolate, 22+ LINQ extensions | [docs/querying/](docs/querying/) |
+| **Analytics** | 66+ aggregate functions, materialized views, projections, aggregate combinators (-If, -Array, -State, -Merge) | [docs/functions/](docs/functions/), [docs/advanced/](docs/advanced/) |
+| **Data Operations** | Bulk insert, INSERT...SELECT, export to CSV/JSON/Parquet, temp tables | [docs/data-operations/](docs/data-operations/) |
+| **Enterprise** | Multi-DC clustering, connection routing, replicated engines, EF Core migrations with ClickHouse DDL | [docs/clustering/](docs/clustering/), [docs/migrations/](docs/migrations/) |
+
+---
+
+## ClickHouse for EF Core Developers
+
+If you are coming from SQL Server or PostgreSQL, ClickHouse works differently in several fundamental ways. EF.CH bridges these gaps where possible and surfaces the differences clearly where it cannot.
+
+| SQL Server / PostgreSQL | ClickHouse | EF.CH API |
+|---|---|---|
+| Table just works | Must specify ENGINE | `.UseMergeTree(x => ...)` |
+| IDENTITY / SERIAL | No auto-increment | Guid / application-generated IDs |
+| `UPDATE SET ... WHERE` | `ALTER TABLE UPDATE` (async) | `.ExecuteUpdateAsync()` |
+| Transaction scope | No transactions | Design for idempotency |
+| Foreign keys | None | Application-level joins |
+| `COUNT(DISTINCT x)` | `uniq(x)` (approx) or `uniqExact(x)` | `.Uniq()` / `.UniqExact()` |
+| Clustered index | ORDER BY in MergeTree | Engine ORDER BY expression |
+| Row-level updates | Part-level merges | Background async processing |
+
+See [ClickHouse for EF Developers](docs/clickhouse-for-ef-developers.md) for the full guide.
+
+---
+
+## Requirements
+
+| Dependency | Minimum Version |
+|---|---|
+| .NET | 8.0+ |
+| ClickHouse | 22.0+ |
+| EF Core | 8.0+ |
+
+**Runtime dependencies:** [ClickHouse.Driver](https://www.nuget.org/packages/ClickHouse.Driver) 0.9.0, [Microsoft.EntityFrameworkCore.Relational](https://www.nuget.org/packages/Microsoft.EntityFrameworkCore.Relational) 8.0.13.
+
+---
 
 ## Documentation
 
-| Topic | Description |
-|-------|-------------|
-| [Getting Started](docs/getting-started.md) | Installation and first project |
-| [ClickHouse Concepts](docs/clickhouse-concepts.md) | Key differences from RDBMS |
-| [Table Engines](docs/engines/) | MergeTree family guide |
-| [Type Mappings](docs/types/) | Complete type reference |
-| [JSON Types](docs/types/json.md) | Native JSON with extension method API |
-| [Features](docs/features/) | Materialized views, partitioning, TTL, etc. |
-| [Projections](docs/features/projections.md) | Table-level sort and aggregation optimizations |
-| [Compression Codecs](docs/features/compression-codecs.md) | Per-column compression configuration |
-| [Window Functions](docs/features/window-functions.md) | Ranking, lead/lag, running totals |
-| [Data Skipping Indices](docs/features/skip-indices.md) | Bloom filter, minmax, set, and token indices |
-| [Time Series Gap Filling](docs/features/interpolate.md) | WITH FILL and INTERPOLATE for continuous data |
-| [Update Operations](docs/features/update-operations.md) | Bulk updates via ExecuteUpdateAsync |
-| [Set Operations](docs/features/set-operations.md) | UNION, INTERSECT, EXCEPT with convenience extensions |
-| [CTEs](docs/features/cte.md) | Common Table Expressions via AsCte() |
-| [Query Modifiers](docs/features/query-modifiers.md) | FINAL, SAMPLE, PREWHERE, SETTINGS query hints |
-| [Computed Columns](docs/features/computed-columns.md) | MATERIALIZED, ALIAS, DEFAULT expression columns |
-| [Aggregate Combinators](docs/features/aggregate-combinators.md) | State, Merge, If, Array combinators for pre-aggregation |
-| [Clustering](docs/features/clustering.md) | Multi-datacenter deployments with replication |
-| [Replicated Engines](docs/features/replicated-engines.md) | ReplicatedMergeTree variants with fluent API |
-| [Connection Routing](docs/features/connection-routing.md) | Read/write splitting and failover |
-| [External Entities](docs/features/external-entities.md) | Query remote PostgreSQL, MySQL, Redis, ODBC |
-| [Migrations](docs/migrations.md) | EF Core migrations with ClickHouse |
-| [Scaffolding](docs/scaffolding.md) | Reverse engineering |
-| [Limitations](docs/limitations.md) | What doesn't work |
+| Section | Description |
+|---|---|
+| [Getting Started](docs/getting-started.md) | Installation, first DbContext, connection strings |
+| [ClickHouse for EF Developers](docs/clickhouse-for-ef-developers.md) | Conceptual differences from SQL Server / PostgreSQL |
+| [Engines](docs/engines/) | MergeTree family, Replicated, Distributed, Null |
+| [Types](docs/types/) | Arrays, Maps, Nested, JSON, IPv4/IPv6, Enums, DateTime |
+| [Modeling](docs/modeling/) | Computed columns, codecs, LowCardinality, skip indices, TTL |
+| [Querying](docs/querying/) | FINAL, SAMPLE, PREWHERE, LimitBy, CTEs, Window Functions |
+| [Functions](docs/functions/) | 66+ aggregates, string, date, hash, IP, URL, encoding functions |
+| [Data Operations](docs/data-operations/) | Bulk insert, INSERT...SELECT, export, temp tables |
+| [Advanced](docs/advanced/) | Materialized views, projections, parameterized views, dictionaries |
+| [Clustering](docs/clustering/) | Multi-node setup, connection routing, Distributed engine |
+| [Migrations](docs/migrations/) | DDL generation, migration splitting, custom operations |
+| [Scaffolding](docs/scaffolding.md) | Reverse-engineering existing ClickHouse databases |
+| [Limitations](docs/limitations.md) | Known gaps and workarounds |
+
+---
 
 ## Samples
 
+All samples are standalone projects in the [`samples/`](samples/) directory. Build individually:
+
+```bash
+dotnet build samples/QuickStartSample/
+```
+
+### Getting Started
+
 | Sample | Description |
-|--------|-------------|
-| [QuickStartSample](samples/QuickStartSample/) | Minimal working example |
-| [MigrationSample](samples/MigrationSample/) | EF Core migrations |
-| [KeylessSample](samples/KeylessSample/) | Keyless entities for append-only data |
-| [ReplacingMergeTreeSample](samples/ReplacingMergeTreeSample/) | Deduplication patterns |
-| [SummingMergeTreeSample](samples/SummingMergeTreeSample/) | Auto-aggregation with SummingMergeTree |
-| [CollapsingMergeTreeSample](samples/CollapsingMergeTreeSample/) | Row cancellation with sign column |
-| [MaterializedViewSample](samples/MaterializedViewSample/) | Real-time aggregation |
-| [ArrayTypeSample](samples/ArrayTypeSample/) | Working with arrays |
-| [MapTypeSample](samples/MapTypeSample/) | Working with Map(K, V) dictionaries |
-| [EnumTypeSample](samples/EnumTypeSample/) | ClickHouse enum type mapping |
-| [PartitioningSample](samples/PartitioningSample/) | Table partitioning strategies |
-| [QueryModifiersSample](samples/QueryModifiersSample/) | Final(), Sample(), PreWhere(), WithSettings() |
-| [DeleteStrategiesSample](samples/DeleteStrategiesSample/) | Lightweight vs mutation deletes |
-| [OptimizeTableSample](samples/OptimizeTableSample/) | Programmatic OPTIMIZE TABLE |
-| [DictionarySample](samples/DictionarySample/) | In-memory dictionary lookups |
-| [DictionaryJoinSample](samples/DictionaryJoinSample/) | Dictionaries as JOIN replacement |
-| [ExternalPostgresSample](samples/ExternalPostgresSample/) | Query PostgreSQL from ClickHouse |
-| [ExternalRedisSample](samples/ExternalRedisSample/) | Redis key-value integration |
-| [JsonTypeSample](samples/JsonTypeSample/) | Native JSON with subcolumn queries |
-| [ClusterSample](samples/ClusterSample/) | Multi-node cluster with replication |
-| [DistributedSample](samples/DistributedSample/) | Sharding with Distributed tables |
-| [LightweightUpdateSample](samples/LightweightUpdateSample/) | Bulk updates via ExecuteUpdateAsync |
-| [SetOperationsSample](samples/SetOperationsSample/) | UNION, INTERSECT, EXCEPT, fluent builder |
-| [CteSample](samples/CteSample/) | Common Table Expressions for analytics |
+|---|---|
+| [QuickStartSample](samples/QuickStartSample/) | Minimal setup: DbContext, insert, query |
+| [TypesSample](samples/TypesSample/) | ClickHouse type mappings: arrays, maps, enums, IPv4/IPv6 |
+| [MigrationSample](samples/MigrationSample/) | EF Core migrations with ClickHouse DDL |
+
+### Core Features
+
+| Sample | Description |
+|---|---|
+| [EnginesSample](samples/EnginesSample/) | MergeTree family, ReplacingMergeTree, SummingMergeTree |
+| [QueryFeaturesSample](samples/QueryFeaturesSample/) | FINAL, SAMPLE, PREWHERE, LimitBy, CTEs |
+| [BulkOperationsSample](samples/BulkOperationsSample/) | High-throughput bulk insert and INSERT...SELECT |
+| [MaterializedViewSample](samples/MaterializedViewSample/) | Materialized views with source and target tables |
+| [DeleteUpdateSample](samples/DeleteUpdateSample/) | Lightweight deletes, ALTER TABLE UPDATE strategies |
+
+### Advanced
+
+| Sample | Description |
+|---|---|
+| [DictionarySample](samples/DictionarySample/) | ClickHouse dictionaries with EF Core |
+| [ExternalEntitiesSample](samples/ExternalEntitiesSample/) | External tables and data sources in queries |
+| [ClusterSample](samples/ClusterSample/) | Multi-node cluster with Distributed tables |
+| [QueryProfilingSample](samples/QueryProfilingSample/) | Query profiling and performance analysis |
+| [ParameterizedViewSample](samples/ParameterizedViewSample/) | Parameterized views with typed arguments |
+
+### Real-World Patterns
+
+| Sample | Description |
+|---|---|
+| [EventAnalyticsSample](samples/EventAnalyticsSample/) | End-to-end event analytics pipeline |
+| [TempTableWorkflowSample](samples/TempTableWorkflowSample/) | Temp tables for complex multi-step queries |
+
+---
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+MIT. See [LICENSE](LICENSE) for details.
 
 ## Acknowledgments
 
-- [ClickHouse.Driver](https://github.com/ClickHouse/clickhouse-cs) - The ADO.NET driver this provider builds on
-- [EntityFrameworkCore.ClickHouse](https://github.com/denis-ivanov/EntityFrameworkCore.ClickHouse) - Reference implementation
+Built by [Daniel Bunting](https://github.com/DanielBunting). Powered by [ClickHouse.Driver](https://github.com/pach1co/clickhouse-driver-csharp) and [Microsoft.EntityFrameworkCore](https://github.com/dotnet/efcore).
