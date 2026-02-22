@@ -4,7 +4,7 @@
 
 [![NuGet Version](https://img.shields.io/nuget/v/EF.CH)](https://www.nuget.org/packages/EF.CH)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/EF.CH)](https://www.nuget.org/packages/EF.CH)
-[![Build](https://github.com/DanielBunting/EF.CH/actions/workflows/dotnet.yml/badge.svg)](https://github.com/DanielBunting/EF.CH/actions)
+[![Build & Test](https://github.com/DanielBunting/EF.CH/actions/workflows/pr.yml/badge.svg)](https://github.com/DanielBunting/EF.CH/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 EF.CH brings ClickHouse into the Entity Framework Core ecosystem. Define your models in C#, write LINQ queries, and run migrations -- all against ClickHouse's columnar analytics engine.
