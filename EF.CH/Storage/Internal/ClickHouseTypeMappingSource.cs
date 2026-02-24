@@ -328,6 +328,13 @@ public partial class ClickHouseTypeMappingSource : RelationalTypeMappingSource
             var innerMapping = ParseStoreType(innerType, clrType);
             if (innerMapping is not null)
             {
+                // ClickHouse.Driver 1.0.0+ returns string directly for LowCardinality(FixedString(...))
+                // instead of byte[], so use a string mapping without the byte array converter
+                if (innerMapping is ClickHouseFixedStringTypeMapping)
+                {
+                    return new ClickHouseStringTypeMapping($"LowCardinality({innerMapping.StoreType})");
+                }
+
                 // LowCardinality doesn't change the CLR type, just the storage
                 return innerMapping.WithStoreTypeAndSize($"LowCardinality({innerMapping.StoreType})", null);
             }
