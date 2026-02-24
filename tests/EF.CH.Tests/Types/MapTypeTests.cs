@@ -164,12 +164,12 @@ public class MapTypeTests : IAsyncLifetime
             ORDER BY "Id"
             """);
 
-        // Insert products with different attributes (double braces to escape)
+        // Insert products with different attributes using map() function syntax
         await context.Database.ExecuteSqlRawAsync(
             @"INSERT INTO ""ProductAttributes"" (""Id"", ""ProductName"", ""Attributes"") VALUES
-            ('" + Guid.NewGuid() + @"', 'Laptop', {{'brand': 'Dell', 'color': 'silver'}}),
-            ('" + Guid.NewGuid() + @"', 'Phone', {{'brand': 'Apple', 'color': 'black'}}),
-            ('" + Guid.NewGuid() + @"', 'Tablet', {{'brand': 'Dell', 'size': 'large'}})");
+            ('" + Guid.NewGuid() + @"', 'Laptop', map('brand', 'Dell', 'color', 'silver')),
+            ('" + Guid.NewGuid() + @"', 'Phone', map('brand', 'Apple', 'color', 'black')),
+            ('" + Guid.NewGuid() + @"', 'Tablet', map('brand', 'Dell', 'size', 'large'))");
 
         // Query using mapContains
         var hasColor = await context.Database.SqlQueryRaw<long>(

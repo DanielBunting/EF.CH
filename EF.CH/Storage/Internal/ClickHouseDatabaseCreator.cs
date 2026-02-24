@@ -62,35 +62,59 @@ public class ClickHouseDatabaseCreator : RelationalDatabaseCreator
 
     public override bool Exists()
     {
+        var database = _connection.DbConnection.Database;
+        if (string.IsNullOrEmpty(database))
+            return true;
+
         try
         {
-            _connection.Open();
-            return true;
+            using var masterConnection = CreateMasterConnection();
+            using var command = masterConnection.CreateCommand();
+            command.CommandText = $"SELECT count() FROM system.databases WHERE name = '{database}'";
+
+            masterConnection.Open();
+            try
+            {
+                var result = command.ExecuteScalar();
+                return result is not null && Convert.ToInt64(result) > 0;
+            }
+            finally
+            {
+                masterConnection.Close();
+            }
         }
         catch
         {
             return false;
-        }
-        finally
-        {
-            _connection.Close();
         }
     }
 
     public override async Task<bool> ExistsAsync(CancellationToken cancellationToken = default)
     {
+        var database = _connection.DbConnection.Database;
+        if (string.IsNullOrEmpty(database))
+            return true;
+
         try
         {
-            await _connection.OpenAsync(cancellationToken);
-            return true;
+            await using var masterConnection = CreateMasterConnection();
+            await using var command = masterConnection.CreateCommand();
+            command.CommandText = $"SELECT count() FROM system.databases WHERE name = '{database}'";
+
+            await masterConnection.OpenAsync(cancellationToken);
+            try
+            {
+                var result = await command.ExecuteScalarAsync(cancellationToken);
+                return result is not null && Convert.ToInt64(result) > 0;
+            }
+            finally
+            {
+                await masterConnection.CloseAsync();
+            }
         }
         catch
         {
             return false;
-        }
-        finally
-        {
-            await _connection.CloseAsync();
         }
     }
 

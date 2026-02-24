@@ -1,5 +1,7 @@
 using System.Data.Common;
 using System.Diagnostics;
+using System.Text;
+using ClickHouse.Driver;
 using ClickHouse.Driver.ADO;
 using EF.CH.BulkInsert.Internal;
 using Microsoft.EntityFrameworkCore;
@@ -156,6 +158,22 @@ public sealed class ClickHouseBulkInserter : IClickHouseBulkInserter
             return;
         }
 
+        // JSONEachRow format sends JSON data with braces that ClickHouse.Driver 1.0.0's
+        // SqlParameterTypeExtractor misinterprets as parameter type hints.
+        // Use PostStreamAsync to send the INSERT query and data separately.
+        if (options.Format == ClickHouseBulkInsertFormat.JsonEachRow)
+        {
+            var connectionString = _relationalConnection.ConnectionString
+                ?? throw new InvalidOperationException("Connection string is not available.");
+
+            var (insertQuery, jsonData) = _jsonBuilder.BuildSeparate(batch, propertyInfo, settings);
+            using var client = new ClickHouseClient(connectionString);
+            using var stream = new MemoryStream(Encoding.UTF8.GetBytes(jsonData));
+            using var response = await client.PostStreamAsync(insertQuery, stream, false, cancellationToken);
+            response.EnsureSuccessStatusCode();
+            return;
+        }
+
         var sql = BuildSql(batch, propertyInfo, settings, options.Format);
 
         await _relationalConnection.OpenAsync(cancellationToken);
@@ -196,21 +214,33 @@ public sealed class ClickHouseBulkInserter : IClickHouseBulkInserter
             await semaphore.WaitAsync(cancellationToken);
             try
             {
-                var sql = BuildSql(batch, propertyInfo, settings, options.Format);
-
-                // Create a new connection for parallel execution
-                await using var connection = new ClickHouseConnection(connectionString);
-                await connection.OpenAsync(cancellationToken);
-
-                await using var command = connection.CreateCommand();
-                command.CommandText = sql;
-
-                if (options.Timeout.HasValue)
+                if (options.Format == ClickHouseBulkInsertFormat.JsonEachRow)
                 {
-                    command.CommandTimeout = (int)options.Timeout.Value.TotalSeconds;
+                    var (insertQuery, jsonData) = _jsonBuilder.BuildSeparate(batch, propertyInfo, settings);
+                    using var client = new ClickHouseClient(connectionString);
+                    using var stream = new MemoryStream(Encoding.UTF8.GetBytes(jsonData));
+                    using var response = await client.PostStreamAsync(insertQuery, stream, false, cancellationToken);
+                    response.EnsureSuccessStatusCode();
+                }
+                else
+                {
+                    var sql = BuildSql(batch, propertyInfo, settings, options.Format);
+
+                    // Create a new connection for parallel execution
+                    await using var connection = new ClickHouseConnection(connectionString);
+                    await connection.OpenAsync(cancellationToken);
+
+                    await using var command = connection.CreateCommand();
+                    command.CommandText = sql;
+
+                    if (options.Timeout.HasValue)
+                    {
+                        command.CommandTimeout = (int)options.Timeout.Value.TotalSeconds;
+                    }
+
+                    await command.ExecuteNonQueryAsync(cancellationToken);
                 }
 
-                await command.ExecuteNonQueryAsync(cancellationToken);
                 onBatchComplete((index, batch.Count));
             }
             finally
@@ -228,11 +258,7 @@ public sealed class ClickHouseBulkInserter : IClickHouseBulkInserter
         Dictionary<string, object> settings,
         ClickHouseBulkInsertFormat format) where TEntity : class
     {
-        return format switch
-        {
-            ClickHouseBulkInsertFormat.JsonEachRow => _jsonBuilder.Build(batch, propertyInfo, settings),
-            _ => _valuesSqlBuilder.Build(batch, propertyInfo, settings)
-        };
+        return _valuesSqlBuilder.Build(batch, propertyInfo, settings);
     }
 
     private static IEnumerable<List<TEntity>> CreateBatches<TEntity>(

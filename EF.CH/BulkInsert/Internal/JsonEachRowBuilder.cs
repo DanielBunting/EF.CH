@@ -12,41 +12,38 @@ namespace EF.CH.BulkInsert.Internal;
 internal sealed class JsonEachRowBuilder
 {
     /// <summary>
-    /// Builds an INSERT statement for a batch of entities using JSONEachRow format.
+    /// Builds the INSERT query (without data) and JSON data separately.
+    /// Separating these avoids ClickHouse.Driver 1.0.0's SqlParameterTypeExtractor
+    /// misinterpreting JSON braces as parameter type hints.
     /// </summary>
-    public string Build<TEntity>(
+    public (string InsertQuery, string JsonData) BuildSeparate<TEntity>(
         IReadOnlyList<TEntity> entities,
         EntityPropertyInfo propertyInfo,
         Dictionary<string, object> settings) where TEntity : class
     {
-        if (entities.Count == 0)
-        {
-            return string.Empty;
-        }
-
-        var sb = new StringBuilder();
+        var querySb = new StringBuilder();
 
         // Build INSERT INTO clause with FORMAT
-        sb.Append("INSERT INTO ");
-        sb.Append(propertyInfo.QuotedTableName);
-        sb.Append(" (");
-        sb.Append(propertyInfo.ColumnList);
-        sb.Append(')');
+        querySb.Append("INSERT INTO ");
+        querySb.Append(propertyInfo.QuotedTableName);
+        querySb.Append(" (");
+        querySb.Append(propertyInfo.ColumnList);
+        querySb.Append(')');
 
         // Append settings before FORMAT
-        AppendSettings(sb, settings);
+        AppendSettings(querySb, settings);
 
-        sb.Append(" FORMAT JSONEachRow");
-        sb.AppendLine();
+        querySb.Append(" FORMAT JSONEachRow");
 
-        // Build JSON object for each entity
+        // Build JSON data separately
+        var dataSb = new StringBuilder();
         foreach (var entity in entities)
         {
-            AppendEntityJson(sb, entity, propertyInfo.Properties);
-            sb.AppendLine();
+            AppendEntityJson(dataSb, entity, propertyInfo.Properties);
+            dataSb.AppendLine();
         }
 
-        return sb.ToString();
+        return (querySb.ToString(), dataSb.ToString());
     }
 
     private static void AppendEntityJson<TEntity>(
