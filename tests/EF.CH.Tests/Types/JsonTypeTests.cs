@@ -395,7 +395,7 @@ public class JsonTypeIntegrationTests : IAsyncLifetime
         """;
 
     private readonly ClickHouseContainer _container = new ClickHouseBuilder()
-        .WithImage("clickhouse/clickhouse-server:24.8")
+        .WithImage("clickhouse/clickhouse-server:latest")
         .WithResourceMapping(
             System.Text.Encoding.UTF8.GetBytes(UsersConfig),
             "/etc/clickhouse-server/users.d/json.xml")
