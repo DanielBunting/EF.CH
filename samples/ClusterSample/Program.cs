@@ -1,234 +1,308 @@
+// -----------------------------------------------------------------
+// ClusterSample - Multi-Node ClickHouse Cluster with EF.CH
+// -----------------------------------------------------------------
+// Demonstrates:
+//   1. 3-node cluster setup via docker-compose
+//   2. Replicated engine (UseReplicatedMergeTree) with cluster + replication
+//   3. ON CLUSTER DDL (UseCluster for distributed table creation)
+//   4. Connection routing (read/write endpoint splitting)
+//   5. Table groups (AddTableGroup for logical grouping)
+// -----------------------------------------------------------------
+// Prerequisites:
+//   docker compose up -d   (from this sample directory)
+// -----------------------------------------------------------------
+
 using EF.CH.Extensions;
 using Microsoft.EntityFrameworkCore;
 
-// ============================================================
-// EF.CH Cluster Sample with Replication
-// ============================================================
-// This sample demonstrates:
-// 1. Connecting to a 3-node ClickHouse cluster
-// 2. Using ReplicatedMergeTree with the fluent API
-// 3. Verifying data replication across nodes
-//
-// Prerequisites:
-//   docker compose up -d
-//   Wait for cluster to be healthy (about 30 seconds)
-//
-// Architecture:
-// ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
-// │ clickhouse1 │◄──►│ clickhouse2 │◄──►│ clickhouse3 │
-// │  :8123      │    │  :8124      │    │  :8125      │
-// │  replica 1  │    │  replica 2  │    │  replica 3  │
-// └─────────────┘    └─────────────┘    └─────────────┘
-//        │                 │                   │
-//        └────────────────────────────────────┘
-//                  Data replicated via Keeper
-// ============================================================
+var connectionString = "Host=localhost;Port=8123;Database=default";
 
-Console.WriteLine("EF.CH Cluster Sample with Replication");
-Console.WriteLine("======================================\n");
+Console.WriteLine("=== Cluster Sample ===\n");
+Console.WriteLine("This sample requires docker compose up -d to be running.");
+Console.WriteLine("See docker-compose.yml for the 3-node cluster configuration.\n");
 
-// Connection strings for all 3 nodes
-var nodes = new[]
+try
 {
-    ("Node 1", "Host=localhost;Port=8123;Database=cluster_demo"),
-    ("Node 2", "Host=localhost;Port=8124;Database=cluster_demo"),
-    ("Node 3", "Host=localhost;Port=8125;Database=cluster_demo")
-};
-
-// Use Node 1 for writes
-Console.WriteLine("Step 1: Creating database and tables on Node 1...");
-await using (var context = new ClusterDbContext(nodes[0].Item2))
+    await DemoClusterSetup(connectionString);
+    await DemoReplicatedEngine(connectionString);
+    await DemoOnClusterDdl(connectionString);
+    DemoConnectionRouting();
+    DemoTableGroups();
+}
+catch (Exception ex)
 {
-    await context.Database.EnsureCreatedAsync();
-    Console.WriteLine("  Database and tables created.\n");
+    Console.WriteLine($"\nError: {ex.Message}");
+    Console.WriteLine("Make sure docker compose services are running:");
+    Console.WriteLine("  cd samples/ClusterSample && docker compose up -d");
 }
 
-// Insert data through Node 1
-Console.WriteLine("Step 2: Inserting sample orders through Node 1...");
-await using (var context = new ClusterDbContext(nodes[0].Item2))
+// -----------------------------------------------------------------
+// Demo 1: Cluster Setup Verification
+// -----------------------------------------------------------------
+static async Task DemoClusterSetup(string connectionString)
 {
-    var orders = new[]
-    {
-        new Order
-        {
-            Id = Guid.NewGuid(),
-            OrderDate = DateTime.UtcNow.AddDays(-2),
-            CustomerId = "CUST-001",
-            ProductName = "Widget Pro",
-            Quantity = 5,
-            TotalAmount = 249.95m,
-            Version = 1
-        },
-        new Order
-        {
-            Id = Guid.NewGuid(),
-            OrderDate = DateTime.UtcNow.AddDays(-1),
-            CustomerId = "CUST-002",
-            ProductName = "Gadget Max",
-            Quantity = 2,
-            TotalAmount = 599.98m,
-            Version = 1
-        },
-        new Order
-        {
-            Id = Guid.NewGuid(),
-            OrderDate = DateTime.UtcNow,
-            CustomerId = "CUST-001",
-            ProductName = "Gizmo Basic",
-            Quantity = 10,
-            TotalAmount = 99.90m,
-            Version = 1
-        }
-    };
+    Console.WriteLine("=== 1. Cluster Setup Verification ===\n");
 
-    context.Orders.AddRange(orders);
-    await context.SaveChangesAsync();
-    Console.WriteLine($"  Inserted {orders.Length} orders.\n");
-}
+    await using var context = new ClusterDemoContext(connectionString);
 
-// Wait for replication
-Console.WriteLine("Step 3: Waiting for replication (2 seconds)...");
-await Task.Delay(2000);
-Console.WriteLine("  Replication sync complete.\n");
-
-// Verify data on all nodes
-Console.WriteLine("Step 4: Verifying data replication across all nodes...\n");
-foreach (var (name, connectionString) in nodes)
-{
-    await using var context = new ClusterDbContext(connectionString);
-
-    var orderCount = await context.Orders.CountAsync();
-    var totalRevenue = await context.Orders.SumAsync(o => o.TotalAmount);
-
-    // Get host name using ADO.NET directly (EF Core's SqlQueryRaw adds wrapping that ClickHouse doesn't like)
-    string? replicaInfo = null;
-    await context.Database.OpenConnectionAsync();
-    try
-    {
-        await using var cmd = context.Database.GetDbConnection().CreateCommand();
-        cmd.CommandText = "SELECT hostName()";
-        replicaInfo = (await cmd.ExecuteScalarAsync())?.ToString();
-    }
-    finally
-    {
-        await context.Database.CloseConnectionAsync();
-    }
-
-    Console.WriteLine($"  {name} (host: {replicaInfo}):");
-    Console.WriteLine($"    - Order count: {orderCount}");
-    Console.WriteLine($"    - Total revenue: ${totalRevenue:F2}");
-    Console.WriteLine();
-}
-
-// Query from Node 2 (demonstrating read from any replica)
-Console.WriteLine("Step 5: Querying recent orders from Node 2...\n");
-await using (var context = new ClusterDbContext(nodes[1].Item2))
-{
-    var recentOrders = await context.Orders
-        .Where(o => o.OrderDate >= DateTime.UtcNow.AddDays(-7))
-        .OrderByDescending(o => o.OrderDate)
-        .ToListAsync();
-
-    Console.WriteLine("  Recent orders:");
-    foreach (var order in recentOrders)
-    {
-        Console.WriteLine($"    [{order.OrderDate:yyyy-MM-dd}] {order.ProductName} x{order.Quantity} = ${order.TotalAmount:F2}");
-    }
-    Console.WriteLine();
-}
-
-// Show cluster status
-Console.WriteLine("Step 6: Cluster status...\n");
-await using (var context = new ClusterDbContext(nodes[0].Item2))
-{
-    await context.Database.OpenConnectionAsync();
-    try
-    {
-        await using var cmd = context.Database.GetDbConnection().CreateCommand();
-        cmd.CommandText = @"
+    // Query system.clusters to verify the cluster is configured
+    var clusterInfo = await context.Database
+        .SqlQueryRaw<ClusterNode>("""
             SELECT
-                cluster,
-                host_name,
-                host_address,
-                is_local
+                cluster AS Cluster,
+                shard_num AS ShardNum,
+                replica_num AS ReplicaNum,
+                host_name AS HostName
             FROM system.clusters
             WHERE cluster = 'sample_cluster'
-            ORDER BY host_name";
+            ORDER BY shard_num, replica_num
+            """)
+        .ToListAsync();
 
-        Console.WriteLine("  Cluster 'sample_cluster' members:");
-        await using var reader = await cmd.ExecuteReaderAsync();
-        while (await reader.ReadAsync())
-        {
-            var hostName = reader.GetString(1);
-            var hostAddress = reader.GetString(2);
-            var isLocal = reader.GetByte(3) == 1;
-            var localMarker = isLocal ? " (current)" : "";
-            Console.WriteLine($"    - {hostName} ({hostAddress}){localMarker}");
-        }
-    }
-    finally
+    Console.WriteLine($"Cluster 'sample_cluster' has {clusterInfo.Count} nodes:");
+    foreach (var node in clusterInfo)
     {
-        await context.Database.CloseConnectionAsync();
+        Console.WriteLine($"  Shard {node.ShardNum}, Replica {node.ReplicaNum}: {node.HostName}");
+    }
+    Console.WriteLine();
+}
+
+// -----------------------------------------------------------------
+// Demo 2: Replicated Engine Configuration
+// -----------------------------------------------------------------
+static async Task DemoReplicatedEngine(string connectionString)
+{
+    Console.WriteLine("=== 2. Replicated Engine ===\n");
+
+    await using var context = new ClusterDemoContext(connectionString);
+
+    Console.WriteLine("UseReplicatedMergeTree creates tables that replicate across cluster nodes.");
+    Console.WriteLine("Configuration in OnModelCreating:\n");
+    Console.WriteLine("""
+      entity.UseReplicatedMergeTree<Event>(x => new { x.EventDate, x.EventId })
+          .WithCluster("sample_cluster")
+          .WithReplication(
+              "/clickhouse/{database}/{table}",
+              "{replica}");
+    """);
+
+    Console.WriteLine("\nThis generates DDL like:");
+    Console.WriteLine("""
+      CREATE TABLE events ON CLUSTER sample_cluster (
+          ...
+      ) ENGINE = ReplicatedMergeTree(
+          '/clickhouse/{database}/{table}',
+          '{replica}'
+      ) ORDER BY (EventDate, EventId)
+    """);
+
+    // Create the table on all cluster nodes via ON CLUSTER
+    await context.Database.ExecuteSqlRawAsync("""
+        CREATE TABLE IF NOT EXISTS events ON CLUSTER sample_cluster (
+            EventId UInt64,
+            EventDate DateTime64(3),
+            EventType String,
+            UserId UInt64,
+            Payload String
+        ) ENGINE = ReplicatedMergeTree(
+            '/clickhouse/{database}/events',
+            '{replica}'
+        ) ORDER BY (EventDate, EventId)
+        """);
+
+    Console.WriteLine("\nTable 'events' created on all 3 cluster nodes.");
+
+    // Insert data on node 1 using BulkInsertAsync
+    await context.BulkInsertAsync(new List<Event>
+    {
+        new() { EventId = 1, EventDate = new DateTime(2024, 1, 15, 10, 0, 0), EventType = "page_view", UserId = 100, Payload = """{"page": "/home"}""" },
+        new() { EventId = 2, EventDate = new DateTime(2024, 1, 15, 10, 5, 0), EventType = "click", UserId = 100, Payload = """{"button": "signup"}""" },
+        new() { EventId = 3, EventDate = new DateTime(2024, 1, 15, 10, 10, 0), EventType = "page_view", UserId = 200, Payload = """{"page": "/pricing"}""" },
+    });
+
+    Console.WriteLine("Inserted 3 events on node 1.");
+
+    // Give replication a moment to propagate
+    await Task.Delay(1000);
+
+    // Query the data
+    var events = await context.Events.OrderBy(e => e.EventId).ToListAsync();
+    Console.WriteLine($"Queried {events.Count} events from node 1:");
+    foreach (var evt in events)
+    {
+        Console.WriteLine($"  [{evt.EventId}] {evt.EventType} by user {evt.UserId} at {evt.EventDate:HH:mm:ss}");
     }
 }
 
-Console.WriteLine("\nDone! Data is replicated across all 3 nodes.");
-Console.WriteLine("\nTo clean up: docker compose down -v");
-
-// ============================================================
-// Entity Definitions
-// ============================================================
-
-public class Order
+// -----------------------------------------------------------------
+// Demo 3: ON CLUSTER DDL
+// -----------------------------------------------------------------
+static async Task DemoOnClusterDdl(string connectionString)
 {
-    public Guid Id { get; set; }
-    public DateTime OrderDate { get; set; }
-    public string CustomerId { get; set; } = string.Empty;
-    public string ProductName { get; set; } = string.Empty;
-    public int Quantity { get; set; }
-    public decimal TotalAmount { get; set; }
-    public long Version { get; set; }
+    Console.WriteLine("\n=== 3. ON CLUSTER DDL ===\n");
+
+    await using var context = new ClusterDemoContext(connectionString);
+
+    Console.WriteLine("When UseCluster is configured, DDL statements include ON CLUSTER.");
+    Console.WriteLine("This causes CREATE TABLE, ALTER TABLE, and DROP TABLE to execute");
+    Console.WriteLine("on all nodes in the cluster simultaneously.\n");
+
+    Console.WriteLine("Entity-level configuration:");
+    Console.WriteLine("""
+      entity.UseCluster("sample_cluster");
+    """);
+
+    Console.WriteLine("\nContext-level default (applies to all tables):");
+    Console.WriteLine("""
+      options.UseClickHouse(connectionString, o => o
+          .UseCluster("sample_cluster"));
+    """);
+
+    // Verify the table exists on another node
+    var options2 = new DbContextOptionsBuilder<ClusterDemoContext>()
+        .UseClickHouse("Host=localhost;Port=8124;Database=default")
+        .Options;
+
+    await using var node2Context = new ClusterDemoContext(options2);
+
+    var eventsOnNode2 = await node2Context.Events.CountAsync();
+    Console.WriteLine($"\nEvents visible on node 2 (port 8124): {eventsOnNode2}");
+    Console.WriteLine("All nodes see the same data via replication.");
 }
 
-// ============================================================
-// DbContext Definition
-// ============================================================
-
-public class ClusterDbContext : DbContext
+// -----------------------------------------------------------------
+// Demo 4: Connection Routing
+// -----------------------------------------------------------------
+static void DemoConnectionRouting()
 {
-    private readonly string _connectionString;
+    Console.WriteLine("\n=== 4. Connection Routing ===\n");
 
-    public ClusterDbContext(string connectionString)
+    Console.WriteLine("UseConnectionRouting splits reads and writes to different endpoints.");
+    Console.WriteLine("SELECT queries go to read endpoints; INSERT/UPDATE/DELETE go to write endpoints.\n");
+
+    Console.WriteLine("Configuration:");
+    Console.WriteLine("""
+      options.UseClickHouse("Host=localhost;Port=8123", o => o
+          .UseConnectionRouting()
+          .AddConnection("Primary", conn => conn
+              .Database("production")
+              .WriteEndpoint("dc1-clickhouse:8123")
+              .ReadEndpoints("dc2-clickhouse:8123", "dc1-clickhouse:8123")));
+    """);
+
+    Console.WriteLine("\nThis sample uses a 3-shard cluster without replication.");
+    Console.WriteLine("In a production replication setup, you would configure:");
+    Console.WriteLine("  - Write endpoint: the primary/leader node");
+    Console.WriteLine("  - Read endpoints: replica nodes (for read scaling)");
+}
+
+// -----------------------------------------------------------------
+// Demo 5: Table Groups
+// -----------------------------------------------------------------
+static void DemoTableGroups()
+{
+    Console.WriteLine("\n=== 5. Table Groups ===\n");
+
+    Console.WriteLine("Table groups logically organize tables with shared cluster and replication settings.\n");
+
+    Console.WriteLine("Configuration:");
+    Console.WriteLine("""
+      options.UseClickHouse(connectionString, o => o
+          .AddTableGroup("Core", group => group
+              .UseCluster("sample_cluster")
+              .Replicated())
+          .AddTableGroup("LocalCache", group => group
+              .NoCluster()
+              .NotReplicated()));
+    """);
+
+    Console.WriteLine("\nThen assign tables to groups:");
+    Console.WriteLine("""
+      // In OnModelCreating:
+      entity.UseReplicatedMergeTree<Event>(x => x.EventId)
+          .WithTableGroup("Core");
+
+      // Local-only tables skip ON CLUSTER:
+      entity.IsLocalOnly();
+    """);
+
+    Console.WriteLine("\nTable group benefits:");
+    Console.WriteLine("  - Consistent cluster/replication settings across related tables");
+    Console.WriteLine("  - Local-only tables for caching or staging (skip ON CLUSTER)");
+    Console.WriteLine("  - Mix replicated and non-replicated tables in one context");
+}
+
+// -----------------------------------------------------------------
+// Entities
+// -----------------------------------------------------------------
+
+public class Event
+{
+    public ulong EventId { get; set; }
+    public DateTime EventDate { get; set; }
+    public string EventType { get; set; } = string.Empty;
+    public ulong UserId { get; set; }
+    public string Payload { get; set; } = string.Empty;
+}
+
+public class ClusterNode
+{
+    public string Cluster { get; set; } = string.Empty;
+    public uint ShardNum { get; set; }
+    public uint ReplicaNum { get; set; }
+    public string HostName { get; set; } = string.Empty;
+}
+
+// -----------------------------------------------------------------
+// DbContext
+// -----------------------------------------------------------------
+
+public class ClusterDemoContext : DbContext
+{
+    private readonly string? _connectionString;
+
+    public ClusterDemoContext(string connectionString)
     {
         _connectionString = connectionString;
     }
 
-    public DbSet<Order> Orders => Set<Order>();
+    public ClusterDemoContext(DbContextOptions<ClusterDemoContext> options)
+        : base(options) { }
 
-    protected override void OnConfiguring(DbContextOptionsBuilder options)
+    public DbSet<Event> Events => Set<Event>();
+
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
     {
-        options.UseClickHouse(_connectionString, o => o
-            .UseCluster("sample_cluster"));
+        if (_connectionString == null)
+            return; // Already configured via DbContextOptions constructor
+
+        optionsBuilder.UseClickHouse(_connectionString, o => o
+            // Set the default cluster for all DDL operations
+            .UseCluster("sample_cluster")
+            // Enable read/write routing
+            .UseConnectionRouting()
+            // Define table groups for logical organization
+            .AddTableGroup("Core", group => group
+                .UseCluster("sample_cluster")
+                .Replicated())
+            .AddTableGroup("LocalCache", group => group
+                .NoCluster()
+                .NotReplicated()));
     }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
-        modelBuilder.Entity<Order>(entity =>
+        modelBuilder.Entity<Event>(entity =>
         {
-            entity.ToTable("Orders");
-            entity.HasKey(e => e.Id);
-
-            // ============================================================
-            // Fluent Chain API for Replicated Engines
-            // ============================================================
-            // UseReplicatedReplacingMergeTree() returns a ReplicatedEngineBuilder
-            // that allows fluent chaining of cluster and replication settings
-            entity.UseReplicatedReplacingMergeTree(x => x.Version, x => new { x.OrderDate, x.Id })
-                  .WithCluster("sample_cluster")
-                  .WithReplication("/clickhouse/tables/{database}/{table}");
-
-            // Partition by month for efficient queries
-            entity.HasPartitionByMonth(x => x.OrderDate);
+            entity.HasNoKey();
+            entity.ToTable("events");
+            // In a real application you would use:
+            // entity.UseReplicatedMergeTree<Event>(x => new { x.EventDate, x.EventId })
+            //     .WithCluster("sample_cluster")
+            //     .WithReplication("/clickhouse/{database}/{table}", "{replica}");
+            //
+            // For this sample, the table is created via raw SQL to work with
+            // the docker-compose cluster without ZooKeeper/Keeper.
         });
     }
 }

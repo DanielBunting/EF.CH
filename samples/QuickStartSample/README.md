@@ -1,95 +1,57 @@
-# QuickStartSample
+# QuickStart Sample
 
-The simplest possible EF.CH application - insert and query events in ClickHouse.
+A minimal example showing how to get started with EF.CH, the Entity Framework Core provider for ClickHouse.
 
-## What This Shows
+## What it demonstrates
 
-- Connecting to ClickHouse with `UseClickHouse()`
-- Configuring a table with `UseMergeTree()`
-- Adding partitioning with `HasPartitionByMonth()`
-- Inserting data via `SaveChangesAsync()`
-- Querying with LINQ
+- Defining an entity (`Event`) and a `DbContext` with ClickHouse configuration
+- Configuring the **MergeTree** engine with `UseMergeTree` for ORDER BY
+- Monthly partitioning with `HasPartitionByMonth`
+- Creating tables via `EnsureCreatedAsync`
+- Inserting rows with `AddRange` + `SaveChangesAsync`
+- Aggregation queries using `GroupBy`, `Count`, and `Sum`
+- Filtered and ordered queries with standard LINQ
 
 ## Prerequisites
 
-- .NET 10.0+
-- ClickHouse server running on localhost:8123
+- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
+- A running ClickHouse instance (Docker is the easiest option)
 
-## Running
+## How to run
+
+1. Start a ClickHouse server:
+
+```bash
+docker run -d --name clickhouse -p 8123:8123 clickhouse/clickhouse-server:latest
+```
+
+2. Run the sample:
 
 ```bash
 dotnet run
 ```
 
-## Expected Output
+## Expected output
 
 ```
-EF.CH Quick Start Sample
-========================
+=== EF.CH QuickStart Sample ===
 
-Creating database and tables...
-Inserting sample data...
-Inserted 3 events.
+[1] Creating table...
+    Table 'Events' created.
 
-Querying recent events...
-Found 3 events:
+[2] Inserting sample data...
+    Inserted 8 events.
 
-  [14:32:15] page_view by user-002
-  [14:30:15] button_click by user-001
-  [14:28:15] page_view by user-001
+[3] Aggregating events by type...
+    PageView     Count=3  TotalAmount=0.00
+    Purchase     Count=3  TotalAmount=259.48
+    SignUp       Count=2  TotalAmount=0.00
 
-Event counts by type:
-  page_view: 2
-  button_click: 1
+[4] Querying purchases over $50...
+    2025-01-01 12:00:00  Amount=129.99
+    2025-01-01 10:00:00  Amount=79.50
 
-Done!
+=== Done ===
 ```
 
-## Key Code
-
-### Entity
-
-```csharp
-public class Event
-{
-    public Guid Id { get; set; }
-    public DateTime Timestamp { get; set; }
-    public string EventType { get; set; } = string.Empty;
-    public string UserId { get; set; } = string.Empty;
-    public string? Data { get; set; }
-}
-```
-
-### Configuration
-
-```csharp
-modelBuilder.Entity<Event>(entity =>
-{
-    entity.HasKey(e => e.Id);
-    entity.UseMergeTree(x => new { x.Timestamp, x.Id });  // Required!
-    entity.HasPartitionByMonth(x => x.Timestamp);         // Optional
-});
-```
-
-## Generated SQL
-
-The configuration generates this DDL:
-
-```sql
-CREATE TABLE "Events" (
-    "Id" UUID NOT NULL,
-    "Timestamp" DateTime64(3) NOT NULL,
-    "EventType" String NOT NULL,
-    "UserId" String NOT NULL,
-    "Data" Nullable(String)
-)
-ENGINE = MergeTree
-PARTITION BY toYYYYMM("Timestamp")
-ORDER BY ("Timestamp", "Id")
-```
-
-## Learn More
-
-- [Getting Started](../../docs/getting-started.md) - Full setup guide
-- [ClickHouse Concepts](../../docs/clickhouse-concepts.md) - Key differences from RDBMS
-- [MergeTree Engine](../../docs/engines/mergetree.md) - Engine details
+Note: Exact timestamps and ordering may vary depending on when you run the sample.

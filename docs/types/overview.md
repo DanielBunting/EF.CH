@@ -1,252 +1,235 @@
-# Type Mappings Overview
+# Type System Overview
 
-EF.CH automatically maps .NET types to ClickHouse types. This page provides a complete reference.
+EF.CH maps CLR types to ClickHouse column types automatically. This page is the complete reference for all 40+ supported type mappings.
 
-## Basic Type Mappings
+## Numeric Types
 
-### Numeric Types
-
-| .NET Type | ClickHouse Type | Range |
-|-----------|-----------------|-------|
-| `sbyte` | `Int8` | -128 to 127 |
-| `short` | `Int16` | -32,768 to 32,767 |
-| `int` | `Int32` | -2B to 2B |
-| `long` | `Int64` | -9Q to 9Q |
-| `byte` | `UInt8` | 0 to 255 |
-| `ushort` | `UInt16` | 0 to 65,535 |
-| `uint` | `UInt32` | 0 to 4B |
-| `ulong` | `UInt64` | 0 to 18Q |
-| `float` | `Float32` | IEEE 754 single |
-| `double` | `Float64` | IEEE 754 double |
-| `decimal` | `Decimal(18, 4)` | Fixed precision |
-
-### String and Boolean
-
-| .NET Type | ClickHouse Type | Notes |
-|-----------|-----------------|-------|
-| `string` | `String` | Variable length |
-| `bool` | `Bool` | True/False |
-
-### Date and Time
-
-| .NET Type | ClickHouse Type | Notes |
-|-----------|-----------------|-------|
-| `DateTime` | `DateTime64(3)` | Millisecond precision |
-| `DateTimeOffset` | `DateTime64(3)` | With timezone |
-| `DateOnly` | `Date` | Date only (no time) |
-| `TimeOnly` | `Time` | Time only (no date) |
-| `TimeSpan` | `Int64` | Stored as nanoseconds |
-
-### Identifiers
-
-| .NET Type | ClickHouse Type | Notes |
-|-----------|-----------------|-------|
-| `Guid` | `UUID` | 128-bit UUID |
-
-## Nullable Types
-
-Nullable .NET types map to `Nullable(T)` in ClickHouse:
-
-```csharp
-public class Order
-{
-    public int? OptionalQuantity { get; set; }     // Nullable(Int32)
-    public DateTime? CompletedAt { get; set; }     // Nullable(DateTime64(3))
-    public string? Notes { get; set; }             // Nullable(String)
-}
+```
+CLR Type          ClickHouse Type
+---------         ---------------
+sbyte         --> Int8
+short         --> Int16
+int           --> Int32
+long          --> Int64
+Int128        --> Int128
+byte          --> UInt8
+ushort        --> UInt16
+uint          --> UInt32
+ulong         --> UInt64
+UInt128       --> UInt128
+BigInteger    --> Int256 (default) or UInt256
+float         --> Float32
+double        --> Float64
+decimal       --> Decimal(18,4) (default)
 ```
 
-**Performance Note:** Nullable columns have overhead. For high-volume tables, consider using [HasDefaultForNull](../features/default-for-null.md) to avoid Nullable types.
+| CLR Type | ClickHouse Type | Notes |
+|----------|-----------------|-------|
+| `sbyte` | `Int8` | Signed 8-bit integer |
+| `short` | `Int16` | Signed 16-bit integer |
+| `int` | `Int32` | Signed 32-bit integer |
+| `long` | `Int64` | Signed 64-bit integer |
+| `Int128` | `Int128` | .NET 7+ native 128-bit signed integer |
+| `byte` | `UInt8` | Unsigned 8-bit integer |
+| `ushort` | `UInt16` | Unsigned 16-bit integer |
+| `uint` | `UInt32` | Unsigned 32-bit integer |
+| `ulong` | `UInt64` | Unsigned 64-bit integer |
+| `UInt128` | `UInt128` | .NET 7+ native 128-bit unsigned integer |
+| `BigInteger` | `Int256` | Default mapping; use `HasColumnType("UInt256")` for unsigned |
+| `float` | `Float32` | IEEE 754 single-precision; supports `nan`, `inf`, `-inf` |
+| `double` | `Float64` | IEEE 754 double-precision; supports `nan`, `inf`, `-inf` |
+| `decimal` | `Decimal(18,4)` | Configurable precision/scale; also `Decimal32(S)`, `Decimal64(S)`, `Decimal128(S)` |
 
-## Complex Types
-
-### Arrays
-
-Arrays and lists map to `Array(T)`:
-
-```csharp
-public class Product
-{
-    public Guid Id { get; set; }
-    public string[] Tags { get; set; } = [];           // Array(String)
-    public int[] PriceTiers { get; set; } = [];        // Array(Int32)
-    public List<string> Categories { get; set; } = []; // Array(String)
-}
-```
-
-See [Arrays](arrays.md) for LINQ operations.
-
-### Maps (Dictionaries)
-
-Dictionaries map to `Map(K, V)`:
+### Decimal Variants
 
 ```csharp
-public class Event
-{
-    public Guid Id { get; set; }
-    public Dictionary<string, string> Metadata { get; set; } = new();  // Map(String, String)
-    public Dictionary<string, int> Counters { get; set; } = new();     // Map(String, Int32)
-}
+// Default: Decimal(18, 4)
+entity.Property(x => x.Amount);
+
+// Custom precision and scale
+entity.Property(x => x.Amount).HasColumnType("Decimal(38, 10)");
+
+// Fixed-width variants
+entity.Property(x => x.Price).HasColumnType("Decimal32(2)");   // 9 digits, Int32 storage
+entity.Property(x => x.Total).HasColumnType("Decimal64(4)");   // 18 digits, Int64 storage
+entity.Property(x => x.Big).HasColumnType("Decimal128(6)");    // 38 digits, Int128 storage
 ```
 
-See [Maps](maps.md) for LINQ operations.
+## String Types
 
-### Nested Types
+| CLR Type | ClickHouse Type | Notes |
+|----------|-----------------|-------|
+| `string` | `String` | Variable length, UTF-8 encoded |
+| `string` | `FixedString(N)` | Fixed length in bytes, null-padded; set via `HasColumnType("FixedString(3)")` |
 
-For columnar arrays of structured data:
+## Boolean and GUID
+
+| CLR Type | ClickHouse Type | Notes |
+|----------|-----------------|-------|
+| `bool` | `Bool` | Stored as UInt8 internally (0 or 1) |
+| `Guid` | `UUID` | 128-bit universally unique identifier |
 
 ```csharp
-public record LineItem
-{
-    public Guid ProductId { get; set; }
-    public int Quantity { get; set; }
-    public decimal Price { get; set; }
-}
-
-public class Order
-{
-    public Guid Id { get; set; }
-    public List<LineItem> Items { get; set; } = [];  // Nested(ProductId UUID, Quantity Int32, Price Decimal)
-}
+// Guid.NewGuid() translates to generateUUIDv4()
+var query = context.Events.Select(e => new { Id = Guid.NewGuid() });
+// SQL: SELECT generateUUIDv4() AS "Id"
 ```
 
-See [Nested Types](nested.md) for details.
+## Date/Time Types
 
-### Tuples
-
-Value tuples map to `Tuple(...)`:
+| CLR Type | ClickHouse Type | Notes |
+|----------|-----------------|-------|
+| `DateTime` | `DateTime64(3)` | Configurable precision 0-9; optional timezone |
+| `DateTimeOffset` | `DateTime64(3, 'TZ')` | Stores UTC, reads with timezone offset; IANA timezone required |
+| `DateOnly` | `Date` | Range: 1970-01-01 to 2149-06-06 |
+| `DateOnly` | `Date32` | Extended range: 1900-01-01 to 2299-12-31 |
+| `TimeOnly` | `Time` | Nanosecond precision time-of-day |
+| `TimeSpan` | `Int64` | Stored as nanoseconds via built-in value converter |
 
 ```csharp
-public class Location
-{
-    public Guid Id { get; set; }
-    public (double Lat, double Lon) Coordinates { get; set; }  // Tuple(Float64, Float64)
-}
+// DateTime with custom precision
+entity.Property(x => x.CreatedAt).HasPrecision(6); // microseconds
+
+// DateTimeOffset with timezone
+entity.Property(x => x.EventTime).HasTimeZone("America/New_York");
+
+// DateOnly with extended range
+entity.Property(x => x.BirthDate).HasColumnType("Date32");
 ```
 
-See [Tuples](../features/tuples.md) for details.
+## Collection Types
+
+| CLR Type | ClickHouse Type | Notes |
+|----------|-----------------|-------|
+| `T[]`, `List<T>`, `IList<T>`, `ICollection<T>`, `IReadOnlyList<T>` | `Array(T)` | Any mappable element type; 1-based indexing in ClickHouse |
+| `Dictionary<K,V>`, `IDictionary<K,V>`, `IReadOnlyDictionary<K,V>` | `Map(K, V)` | Keys cannot be Nullable; stored as `Array(Tuple(K, V))` internally |
+| `ValueTuple<T1,...>`, `Tuple<T1,...>` | `Tuple(T1, T2, ...)` | 1-8+ elements; supports named and unnamed tuples |
+| `List<TRecord>`, `TRecord[]` | `Nested(field1 T1, ...)` | Record properties become parallel arrays in ClickHouse |
+
+```csharp
+// Array
+public int[] Tags { get; set; }
+// DDL: "Tags" Array(Int32)
+
+// Map
+public Dictionary<string, int> Attributes { get; set; }
+// DDL: "Attributes" Map(String, Int32)
+
+// Tuple
+public (string Name, int Age) Info { get; set; }
+// DDL: "Info" Tuple(String, Int32)
+
+// Nested
+public List<GoalRecord> Goals { get; set; }
+// DDL: "Goals" Nested("Id" UInt32, "EventTime" DateTime64(3))
+```
 
 ## Enum Types
 
-C# enums map to `Enum8` or `Enum16` (auto-selected based on value range):
+| CLR Type | ClickHouse Type | Notes |
+|----------|-----------------|-------|
+| Any C# `enum` | `Enum8(...)` | Auto-selected when values fit in [-128, 127] and count <= 256 |
+| Any C# `enum` | `Enum16(...)` | Auto-selected when values exceed Enum8 range |
 
 ```csharp
-public enum OrderStatus
-{
-    Pending = 0,
-    Processing = 1,
-    Shipped = 2,
-    Delivered = 3,
-    Cancelled = 4
-}
-
-public class Order
-{
-    public Guid Id { get; set; }
-    public OrderStatus Status { get; set; }  // Enum8('Pending'=0, 'Processing'=1, ...)
-}
+public enum OrderStatus { Pending = 0, Shipped = 1, Delivered = 2 }
+// DDL: Enum8('Pending' = 0, 'Shipped' = 1, 'Delivered' = 2)
 ```
 
-See [Enums](enums.md) for scaffolding and edge cases.
+## JSON Type
+
+| CLR Type | ClickHouse Type | Notes |
+|----------|-----------------|-------|
+| `JsonElement` | `JSON` | Requires ClickHouse 24.8+; native subcolumn access |
+| `JsonDocument` | `JSON` | Same mapping; optional `max_dynamic_paths`, `max_dynamic_types` |
+
+```csharp
+entity.Property(x => x.Metadata)
+    .HasColumnType("JSON")
+    .HasMaxDynamicPaths(2048)
+    .HasMaxDynamicTypes(64);
+```
 
 ## IP Address Types
 
-Special types for network addresses:
+| CLR Type | ClickHouse Type | Notes |
+|----------|-----------------|-------|
+| `ClickHouseIPv4` | `IPv4` | Custom struct wrapping UInt32 |
+| `ClickHouseIPv6` | `IPv6` | Custom struct wrapping 16 bytes |
+| `IPAddress` | `IPv6` | `System.Net.IPAddress`; maps to IPv6 for maximum compatibility |
 
 ```csharp
-using EF.CH.Types;
+public ClickHouseIPv4 ServerIp { get; set; }
+// DDL: "ServerIp" IPv4
 
-public class AccessLog
-{
-    public Guid Id { get; set; }
-    public ClickHouseIPv4 ClientIPv4 { get; set; }  // IPv4
-    public ClickHouseIPv6 ClientIPv6 { get; set; }  // IPv6
-    public IPAddress ClientIP { get; set; }         // IPv6 (stores both v4 and v6)
-}
+public IPAddress ClientIp { get; set; }
+// DDL: "ClientIp" IPv6
 ```
 
-See [IP Addresses](ip-addresses.md) for details.
+## Aggregate Function Types
 
-## Large Integers
-
-For values beyond `long`:
-
-| .NET Type | ClickHouse Type |
-|-----------|-----------------|
-| `Int128` | `Int128` |
-| `UInt128` | `UInt128` |
-| `BigInteger` | `Int256` |
-
-## JSON Types
-
-For semi-structured data:
+| CLR Type | ClickHouse Type | Notes |
+|----------|-----------------|-------|
+| `byte[]` | `AggregateFunction(func, T)` | Opaque binary intermediate state for -State/-Merge pattern |
+| `T` (direct value) | `SimpleAggregateFunction(func, T)` | Stores final result directly; for `max`, `min`, `sum`, `any`, `anyLast` |
 
 ```csharp
-using System.Text.Json;
+// AggregateFunction: stores opaque binary state
+entity.Property(x => x.SumState)
+    .HasAggregateFunction("sum", typeof(long));
+// DDL: "SumState" AggregateFunction(sum, Int64)
 
-public class Event
-{
-    public Guid Id { get; set; }
-    public JsonElement Payload { get; set; }    // JSON
-    public JsonDocument Document { get; set; }  // JSON
-}
+// SimpleAggregateFunction: stores result directly
+entity.Property(x => x.MaxValue)
+    .HasSimpleAggregateFunction("max");
+// DDL: "MaxValue" SimpleAggregateFunction(max, Float64)
 ```
 
-## Type Optimization
+## Special Type Wrappers
 
-### LowCardinality
+### Nullable(T)
 
-For string columns with few unique values:
+Nullable CLR types (`int?`, `string?`, etc.) are automatically wrapped in `Nullable(T)` in ClickHouse. ClickHouse nullable columns carry a per-row bitmask overhead.
 
 ```csharp
-modelBuilder.Entity<Order>(entity =>
-{
-    entity.Property(e => e.Status)
-        .HasLowCardinality();  // LowCardinality(String)
-
-    entity.Property(e => e.CountryCode)
-        .HasLowCardinalityFixedString(2);  // LowCardinality(FixedString(2))
-});
+public int? Score { get; set; }
+// DDL: "Score" Nullable(Int32)
 ```
 
-See [LowCardinality](../features/low-cardinality.md).
+> **Note:** For columns where NULL is rare or a sentinel value is acceptable, use `HasDefaultForNull()` to avoid the Nullable overhead:
+>
+> ```csharp
+> entity.Property(x => x.Score).HasDefaultForNull(0);
+> // DDL: "Score" Int32 DEFAULT 0
+> ```
 
-### DefaultForNull
+### LowCardinality(T)
 
-Avoid Nullable overhead:
+Dictionary-encoded storage optimization for columns with low cardinality (typically fewer than 10,000 unique values).
 
 ```csharp
-modelBuilder.Entity<Metric>(entity =>
-{
-    entity.Property(e => e.Value)
-        .HasDefaultForNull(0);  // Int32 with default 0 instead of Nullable(Int32)
-});
+entity.Property(x => x.Status).HasLowCardinality();
+// DDL: "Status" LowCardinality(String)
+
+entity.Property(x => x.CountryCode).HasLowCardinalityFixedString(2);
+// DDL: "CountryCode" LowCardinality(FixedString(2))
 ```
 
-See [DefaultForNull](../features/default-for-null.md).
+For nullable properties, the mapping automatically nests:
 
-## Scaffolding
-
-When reverse-engineering an existing ClickHouse database:
-
-| ClickHouse Type | Generated .NET Type |
-|-----------------|---------------------|
-| `Int32` | `int` |
-| `Nullable(Int32)` | `int?` |
-| `String` | `string` |
-| `Array(String)` | `string[]` |
-| `Map(String, Int32)` | `Dictionary<string, int>` |
-| `Enum8(...)` | Generated C# enum |
-| `IPv4` | `ClickHouseIPv4` |
-
-See [Scaffolding](../scaffolding.md) for details.
+```csharp
+entity.Property(x => x.Category).HasLowCardinality(); // nullable string
+// DDL: "Category" LowCardinality(Nullable(String))
+```
 
 ## See Also
 
-- [Arrays](arrays.md) - Array operations in LINQ
-- [Maps](maps.md) - Dictionary operations
-- [Nested Types](nested.md) - Columnar nested structures
-- [Enums](enums.md) - Enum handling and scaffolding
-- [IP Addresses](ip-addresses.md) - IPv4/IPv6 types
-- [DateTime](datetime.md) - DateTime handling and functions
-- [JSON](json.md) - Semi-structured JSON data
+- [Arrays](arrays.md)
+- [Maps](maps.md)
+- [Tuples](tuples.md)
+- [Nested](nested.md)
+- [Enums](enums.md)
+- [JSON](json.md)
+- [DateTime](datetime.md)
+- [IP Addresses](ip-addresses.md)
+- [Large Integers](large-integers.md)

@@ -1,113 +1,38 @@
-# ============================================================
-# ClickHouse 3-Node Cluster with Integrated Keeper
-# ============================================================
-# This docker-compose creates a fully replicated ClickHouse cluster:
-# - 3 ClickHouse nodes (clickhouse1, clickhouse2, clickhouse3)
-# - 3 Keeper nodes (integrated into each ClickHouse instance)
-# - All data replicated across all nodes
-# - Full quorum support (survives 1 node failure)
-#
-# Architecture:
-# ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
-# │ clickhouse1 │◄──►│ clickhouse2 │◄──►│ clickhouse3 │
-# │  :8123 HTTP │    │  :8124 HTTP │    │  :8125 HTTP │
-# │  :9001 TCP  │    │  :9002 TCP  │    │  :9003 TCP  │
-# │  Keeper: 1  │    │  Keeper: 2  │    │  Keeper: 3  │
-# └─────────────┘    └─────────────┘    └─────────────┘
-#        │                 │                   │
-#        └────────────────────────────────────┘
-#                  Replication via Keeper
-#
-# Usage:
-#   docker compose up -d     # Start cluster
-#   docker compose down -v   # Stop and remove volumes
-#   docker compose logs -f   # View logs
-# ============================================================
+version: "3.8"
 
 services:
   clickhouse1:
-    image: clickhouse/clickhouse-server:24.8
-    container_name: clickhouse1
+    image: clickhouse/clickhouse-server:latest
     hostname: clickhouse1
     ports:
-      - "8123:8123"   # HTTP interface
-      - "9001:9000"   # Native TCP
+      - "8123:8123"
+      - "9000:9000"
     volumes:
-      - clickhouse1_data:/var/lib/clickhouse
-      - clickhouse1_logs:/var/log/clickhouse-server
-      - ./config/clickhouse1:/etc/clickhouse-server/config.d:ro
-      - ./config/users.xml:/etc/clickhouse-server/users.d/users.xml:ro
-    networks:
-      - clickhouse-network
-    ulimits:
-      nofile:
-        soft: 262144
-        hard: 262144
-    healthcheck:
-      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-      start_period: 30s
+      - ./config/clickhouse1/config.xml:/etc/clickhouse-server/config.d/cluster.xml
+      - ./config/users.xml:/etc/clickhouse-server/users.d/users.xml
+    environment:
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
 
   clickhouse2:
-    image: clickhouse/clickhouse-server:24.8
-    container_name: clickhouse2
+    image: clickhouse/clickhouse-server:latest
     hostname: clickhouse2
     ports:
-      - "8124:8123"   # HTTP interface
-      - "9002:9000"   # Native TCP
+      - "8124:8123"
+      - "9001:9000"
     volumes:
-      - clickhouse2_data:/var/lib/clickhouse
-      - clickhouse2_logs:/var/log/clickhouse-server
-      - ./config/clickhouse2:/etc/clickhouse-server/config.d:ro
-      - ./config/users.xml:/etc/clickhouse-server/users.d/users.xml:ro
-    networks:
-      - clickhouse-network
-    ulimits:
-      nofile:
-        soft: 262144
-        hard: 262144
-    healthcheck:
-      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-      start_period: 30s
+      - ./config/clickhouse2/config.xml:/etc/clickhouse-server/config.d/cluster.xml
+      - ./config/users.xml:/etc/clickhouse-server/users.d/users.xml
+    environment:
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
 
   clickhouse3:
-    image: clickhouse/clickhouse-server:24.8
-    container_name: clickhouse3
+    image: clickhouse/clickhouse-server:latest
     hostname: clickhouse3
     ports:
-      - "8125:8123"   # HTTP interface
-      - "9003:9000"   # Native TCP
+      - "8125:8123"
+      - "9002:9000"
     volumes:
-      - clickhouse3_data:/var/lib/clickhouse
-      - clickhouse3_logs:/var/log/clickhouse-server
-      - ./config/clickhouse3:/etc/clickhouse-server/config.d:ro
-      - ./config/users.xml:/etc/clickhouse-server/users.d/users.xml:ro
-    networks:
-      - clickhouse-network
-    ulimits:
-      nofile:
-        soft: 262144
-        hard: 262144
-    healthcheck:
-      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-      start_period: 30s
-
-networks:
-  clickhouse-network:
-    driver: bridge
-
-volumes:
-  clickhouse1_data:
-  clickhouse1_logs:
-  clickhouse2_data:
-  clickhouse2_logs:
-  clickhouse3_data:
-  clickhouse3_logs:
+      - ./config/clickhouse3/config.xml:/etc/clickhouse-server/config.d/cluster.xml
+      - ./config/users.xml:/etc/clickhouse-server/users.d/users.xml
+    environment:
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1

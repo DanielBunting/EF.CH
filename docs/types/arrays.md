@@ -1,248 +1,160 @@
-# Array Types
+# Array(T)
 
-Arrays in ClickHouse store multiple values of the same type in a single column. EF.CH maps .NET arrays and lists to ClickHouse `Array(T)`.
+## CLR to ClickHouse Mapping
 
-## Type Mappings
+```
+T[]                    --> Array(T)
+List<T>                --> Array(T)
+IList<T>               --> Array(T)
+ICollection<T>         --> Array(T)
+IEnumerable<T>         --> Array(T)
+IReadOnlyList<T>       --> Array(T)
+IReadOnlyCollection<T> --> Array(T)
+```
 
-| .NET Type | ClickHouse Type |
-|-----------|-----------------|
-| `T[]` | `Array(T)` |
-| `List<T>` | `Array(T)` |
-| `IList<T>` | `Array(T)` |
-| `ICollection<T>` | `Array(T)` |
+Any CLR array or generic list type maps to `Array(T)` where `T` is the ClickHouse mapping of the element type.
 
 ## Entity Definition
 
 ```csharp
-public class Product
+public class Event
 {
-    public Guid Id { get; set; }
-    public string Name { get; set; } = string.Empty;
-    public string[] Tags { get; set; } = [];           // Array(String)
-    public int[] PriceTiers { get; set; } = [];        // Array(Int32)
-    public List<string> Categories { get; set; } = []; // Array(String)
-}
-```
-
-**Important:** Initialize arrays to empty to avoid null reference issues:
-
-```csharp
-public string[] Tags { get; set; } = [];           // Good
-public string[] Tags { get; set; } = Array.Empty<string>(); // Also good
-public string[]? Tags { get; set; }                // Nullable(Array(String))
-```
-
-## Configuration
-
-Arrays work without special configuration:
-
-```csharp
-modelBuilder.Entity<Product>(entity =>
-{
-    entity.HasKey(e => e.Id);
-    entity.UseMergeTree(x => x.Id);
-    // Array properties just work
-});
-```
-
-## LINQ Operations
-
-EF.CH translates common LINQ array operations to ClickHouse functions:
-
-### Contains → has()
-
-```csharp
-// Find products with "electronics" tag
-var products = await context.Products
-    .Where(p => p.Tags.Contains("electronics"))
-    .ToListAsync();
-// SQL: ... WHERE has("Tags", 'electronics')
-```
-
-### Any() → notEmpty()
-
-```csharp
-// Find products with any tags
-var products = await context.Products
-    .Where(p => p.Tags.Any())
-    .ToListAsync();
-// SQL: ... WHERE notEmpty("Tags")
-```
-
-### Length / Count → length()
-
-```csharp
-// Find products with more than 3 tags
-var products = await context.Products
-    .Where(p => p.Tags.Length > 3)
-    .ToListAsync();
-// SQL: ... WHERE length("Tags") > 3
-
-// Also works with List<T>
-var products = await context.Products
-    .Where(p => p.Categories.Count > 2)
-    .ToListAsync();
-```
-
-### First() / Last() → arrayElement()
-
-```csharp
-// Get the first price tier
-var firstPrices = await context.Products
-    .Select(p => new { p.Name, FirstPrice = p.PriceTiers.First() })
-    .ToListAsync();
-// SQL: ... arrayElement("PriceTiers", 1)
-
-// Get the last price tier
-var lastPrices = await context.Products
-    .Select(p => new { p.Name, LastPrice = p.PriceTiers.Last() })
-    .ToListAsync();
-// SQL: ... arrayElement("PriceTiers", -1)
-```
-
-### Index Access → arrayElement()
-
-```csharp
-// Get specific element (0-based in C#, converted to 1-based for ClickHouse)
-var secondTags = await context.Products
-    .Select(p => new { p.Name, SecondTag = p.Tags[1] })
-    .ToListAsync();
-// SQL: ... arrayElement("Tags", 2)
-```
-
-## Inserting Data
-
-```csharp
-context.Products.Add(new Product
-{
-    Id = Guid.NewGuid(),
-    Name = "Laptop",
-    Tags = ["electronics", "computers", "portable"],
-    PriceTiers = [999, 1199, 1499],
-    Categories = ["Technology", "Office"]
-});
-await context.SaveChangesAsync();
-```
-
-## Querying Examples
-
-### Filter by Array Content
-
-```csharp
-// Products in multiple categories
-var techProducts = await context.Products
-    .Where(p => p.Tags.Contains("electronics") || p.Tags.Contains("gadgets"))
-    .ToListAsync();
-```
-
-### Aggregate Array Data
-
-```csharp
-// Count products by tag count
-var tagStats = await context.Products
-    .GroupBy(p => p.Tags.Length)
-    .Select(g => new { TagCount = g.Key, ProductCount = g.Count() })
-    .ToListAsync();
-```
-
-### Combine with Other Filters
-
-```csharp
-// Premium electronics
-var premium = await context.Products
-    .Where(p => p.Tags.Contains("electronics"))
-    .Where(p => p.PriceTiers.Any())
-    .Where(p => p.PriceTiers.First() > 500)
-    .ToListAsync();
-```
-
-## Generated DDL
-
-```csharp
-public class Product
-{
-    public Guid Id { get; set; }
+    public uint Id { get; set; }
     public string[] Tags { get; set; } = [];
-    public int[] PriceTiers { get; set; } = [];
+    public List<int> Scores { get; set; } = [];
 }
 ```
-
-Generates:
 
 ```sql
-CREATE TABLE "Products" (
-    "Id" UUID NOT NULL,
-    "Tags" Array(String) NOT NULL,
-    "PriceTiers" Array(Int32) NOT NULL
-)
-ENGINE = MergeTree
-ORDER BY ("Id")
+CREATE TABLE "Events" (
+    "Id" UInt32,
+    "Tags" Array(String),
+    "Scores" Array(Int32)
+) ENGINE = MergeTree() ORDER BY ("Id")
 ```
 
-## Nested Arrays
+## LINQ Translations
 
-ClickHouse supports nested arrays:
+### Contains
 
 ```csharp
-public class Matrix
-{
-    public Guid Id { get; set; }
-    public int[][] Values { get; set; } = [];  // Array(Array(Int32))
-}
+context.Events.Where(e => e.Tags.Contains("error"))
 ```
 
-**Note:** LINQ operations on nested arrays may be limited.
+```sql
+SELECT * FROM "Events" WHERE has("Tags", 'error')
+```
 
-## Scaffolding
-
-When reverse-engineering a ClickHouse database:
-
-| ClickHouse Type | Generated .NET Type |
-|-----------------|---------------------|
-| `Array(String)` | `string[]` |
-| `Array(Int32)` | `int[]` |
-| `Array(UUID)` | `Guid[]` |
-| `Array(Array(T))` | `T[][]` |
-
-## Limitations
-
-- **No AddRange in LINQ**: Can't use `array.AddRange()` in queries
-- **Limited Nested Operations**: Complex nested array operations may not translate
-- **No Array Modification**: Arrays are immutable in queries; modify in application code
-
-## Best Practices
-
-### Initialize Empty Arrays
+The static `Enumerable.Contains` overload also translates:
 
 ```csharp
-// Good: Non-null default
-public string[] Tags { get; set; } = [];
-
-// Avoid: Null default causes issues
-public string[] Tags { get; set; } = null!;
+context.Events.Where(e => Enumerable.Contains(e.Tags, "error"))
 ```
 
-### Use Contains for Filtering
+```sql
+SELECT * FROM "Events" WHERE has("Tags", 'error')
+```
+
+### Length / Count
 
 ```csharp
-// Efficient: Uses has() function
-.Where(p => p.Tags.Contains("value"))
-
-// Less efficient: May not optimize well
-.Where(p => p.Tags.Any(t => t == "value"))
+context.Events.Select(e => e.Tags.Length)
+context.Events.Select(e => e.Scores.Count)
+context.Events.Select(e => Enumerable.Count(e.Tags))
 ```
 
-### Consider Cardinality
+All three produce:
 
-Arrays work best for:
-- Small to medium lists (< 1000 elements)
-- Frequently queried together
-- Semi-structured data
+```sql
+SELECT length("Tags") FROM "Events"
+SELECT length("Scores") FROM "Events"
+SELECT length("Tags") FROM "Events"
+```
 
-For very large arrays, consider a separate table with a foreign key pattern.
+### Any (notEmpty)
+
+```csharp
+context.Events.Where(e => e.Tags.Any())
+```
+
+```sql
+SELECT * FROM "Events" WHERE notEmpty("Tags")
+```
+
+### First / FirstOrDefault
+
+```csharp
+context.Events.Select(e => e.Tags.First())
+context.Events.Select(e => e.Tags.FirstOrDefault())
+```
+
+```sql
+SELECT arrayElement("Tags", 1) FROM "Events"
+SELECT arrayElement("Tags", 1) FROM "Events"
+```
+
+> **Note:** ClickHouse arrays are 1-based. The provider automatically converts C# 0-based semantics to ClickHouse 1-based indexing. `First()` becomes `arrayElement(arr, 1)`, not `arrayElement(arr, 0)`.
+
+### Last / LastOrDefault
+
+```csharp
+context.Events.Select(e => e.Tags.Last())
+context.Events.Select(e => e.Tags.LastOrDefault())
+```
+
+```sql
+SELECT arrayElement("Tags", -1) FROM "Events"
+SELECT arrayElement("Tags", -1) FROM "Events"
+```
+
+ClickHouse supports negative indexing: `-1` is the last element, `-2` is second to last, and so on.
+
+## Array Aggregate Combinators
+
+Array-level aggregations are available through `ClickHouseAggregates` extension methods:
+
+```csharp
+using EF.CH.Extensions;
+
+context.Events.Select(e => e.Scores.ArraySum())    // arraySum("Scores")
+context.Events.Select(e => e.Scores.ArrayAvg())    // arrayAvg("Scores")
+context.Events.Select(e => e.Scores.ArrayMin())    // arrayMin("Scores")
+context.Events.Select(e => e.Scores.ArrayMax())    // arrayMax("Scores")
+context.Events.Select(e => e.Scores.ArrayCount())  // length("Scores")
+```
+
+## SQL Literal Format
+
+Array literals are generated as bracket-delimited lists:
+
+```sql
+[1, 2, 3]                -- Array(Int32)
+['hello', 'world']       -- Array(String)
+[NULL, 'a', 'b']         -- Array(Nullable(String))
+```
+
+## Translation Reference
+
+| C# Expression | ClickHouse SQL |
+|----------------|----------------|
+| `array.Contains(item)` | `has(array, item)` |
+| `Enumerable.Contains(array, item)` | `has(array, item)` |
+| `array.Length` | `length(array)` |
+| `list.Count` | `length(array)` |
+| `Enumerable.Count(array)` | `length(array)` |
+| `array.Any()` | `notEmpty(array)` |
+| `array.First()` | `arrayElement(array, 1)` |
+| `array.FirstOrDefault()` | `arrayElement(array, 1)` |
+| `array.Last()` | `arrayElement(array, -1)` |
+| `array.LastOrDefault()` | `arrayElement(array, -1)` |
+| `array.ArraySum()` | `arraySum(array)` |
+| `array.ArrayAvg()` | `arrayAvg(array)` |
+| `array.ArrayMin()` | `arrayMin(array)` |
+| `array.ArrayMax()` | `arrayMax(array)` |
+| `array.ArrayCount()` | `length(array)` |
 
 ## See Also
 
-- [Type Mappings Overview](overview.md)
-- [Maps](maps.md) - For key-value data
-- [Nested Types](nested.md) - For structured array data
+- [Type System Overview](overview.md)
+- [Maps](maps.md)
+- [Nested](nested.md)

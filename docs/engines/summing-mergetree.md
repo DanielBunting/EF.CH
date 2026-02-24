@@ -1,296 +1,146 @@
 # SummingMergeTree Engine
 
-SummingMergeTree automatically sums numeric columns when rows with the same ORDER BY key are merged. This is ideal for pre-aggregated metrics and counters.
+SummingMergeTree automatically sums numeric columns when merging rows with the same ORDER BY key. This is designed for pre-aggregated data where you want ClickHouse to maintain running totals during background merges.
 
-## When to Use
-
-- Daily/hourly metrics aggregation
-- Counter tables (page views, clicks, revenue)
-- Materialized view targets
-- Any data where you need running totals by key
-
-## How It Works
-
-1. You insert rows with numeric values
-2. Rows with the same ORDER BY key accumulate during merges
-3. Numeric columns are summed; non-numeric columns take an arbitrary value
-
-```
-Insert: Metrics(date="2024-01-01", product="A", sales=100)
-Insert: Metrics(date="2024-01-01", product="A", sales=50)
-
-Before merge: Two rows exist
-After merge:  One row with sales=150
-```
-
-## Configuration
-
-### Basic Setup
+## Basic Configuration
 
 ```csharp
-public class DailySales
+modelBuilder.Entity<HourlyStats>(entity =>
 {
-    public DateOnly Date { get; set; }
-    public string ProductId { get; set; } = string.Empty;
-    public long TotalQuantity { get; set; }   // Will be summed
-    public decimal TotalRevenue { get; set; } // Will be summed
-}
-
-public class MyDbContext : DbContext
-{
-    public DbSet<DailySales> DailySales => Set<DailySales>();
-
-    protected override void OnModelCreating(ModelBuilder modelBuilder)
-    {
-        modelBuilder.Entity<DailySales>(entity =>
-        {
-            entity.HasNoKey();  // Typically keyless
-            entity.UseSummingMergeTree(x => new { x.Date, x.ProductId });
-        });
-    }
-}
+    entity.UseSummingMergeTree(x => new { x.Hour, x.Category });
+});
 ```
-
-### Specifying Columns to Sum
-
-By default, all numeric columns are summed. To sum specific columns only:
-
-```csharp
-public class Metrics
-{
-    public DateOnly Date { get; set; }
-    public string Category { get; set; } = string.Empty;
-    public long Views { get; set; }      // Sum this
-    public long Clicks { get; set; }     // Sum this
-    public double AvgDuration { get; set; }  // Don't sum (use AggregatingMergeTree for averages)
-}
-```
-
-**Note:** Averaging requires AggregatingMergeTree with aggregate functions. SummingMergeTree only sums.
-
-## Generated DDL
-
-```csharp
-entity.UseSummingMergeTree(x => new { x.Date, x.ProductId });
-entity.HasPartitionByMonth(x => x.Date);
-```
-
-Generates:
 
 ```sql
-CREATE TABLE "DailySales" (
-    "Date" Date NOT NULL,
-    "ProductId" String NOT NULL,
-    "TotalQuantity" Int64 NOT NULL,
-    "TotalRevenue" Decimal(18, 4) NOT NULL
+CREATE TABLE "HourlyStats" (
+    "Hour" DateTime64(3),
+    "Category" String,
+    "Views" Int64,
+    "Clicks" Int64,
+    "Revenue" Decimal(18, 4)
 )
-ENGINE = SummingMergeTree
+ENGINE = SummingMergeTree()
+ORDER BY ("Hour", "Category")
+```
+
+## Which Columns Get Summed
+
+During background merges, ClickHouse collapses rows that share the same ORDER BY key values. The behavior for each column is:
+
+- **ORDER BY columns** (`Hour`, `Category` above): kept as-is (they define the group)
+- **Numeric columns not in ORDER BY** (`Views`, `Clicks`, `Revenue`): values are summed
+- **Non-numeric columns not in ORDER BY**: an arbitrary value is kept (typically the first)
+
+```csharp
+public class HourlyStats
+{
+    public DateTime Hour { get; set; }       // ORDER BY -- kept as-is
+    public string Category { get; set; }      // ORDER BY -- kept as-is
+    public long Views { get; set; }           // summed during merges
+    public long Clicks { get; set; }          // summed during merges
+    public decimal Revenue { get; set; }      // summed during merges
+}
+```
+
+## String Overload
+
+```csharp
+entity.UseSummingMergeTree("Hour", "Category");
+```
+
+```sql
+ENGINE = SummingMergeTree()
+ORDER BY ("Hour", "Category")
+```
+
+## ORDER BY Design
+
+The ORDER BY key determines which rows get merged together. Choose it carefully:
+
+```csharp
+// Per hour, per category
+entity.UseSummingMergeTree(x => new { x.Hour, x.Category });
+
+// Per day only (all categories merged together)
+entity.UseSummingMergeTree(x => x.Day);
+```
+
+> **Note:** Summation only happens during background merges, not at insert time. Until a merge runs, duplicate keys may exist. Always use `GROUP BY` in queries to get correct results regardless of merge state:
+>
+> ```csharp
+> context.HourlyStats
+>     .GroupBy(s => new { s.Hour, s.Category })
+>     .Select(g => new { g.Key.Hour, g.Key.Category, Views = g.Sum(s => s.Views) })
+> ```
+
+## With Partitioning
+
+```csharp
+modelBuilder.Entity<DailyMetrics>(entity =>
+{
+    entity.UseSummingMergeTree(x => new { x.Date, x.MetricName })
+        .HasPartitionByMonth(x => x.Date);
+});
+```
+
+```sql
+ENGINE = SummingMergeTree()
 PARTITION BY toYYYYMM("Date")
-ORDER BY ("Date", "ProductId")
+ORDER BY ("Date", "MetricName")
 ```
 
-## Usage Examples
+> **Note:** Merges only happen within a single partition. Rows with the same ORDER BY key in different partitions are never summed together.
 
-### Incrementing Counters
-
-```csharp
-// Each insert adds to the total
-context.DailySales.Add(new DailySales
-{
-    Date = DateOnly.FromDateTime(DateTime.Today),
-    ProductId = "PROD-001",
-    TotalQuantity = 5,
-    TotalRevenue = 99.95m
-});
-
-context.DailySales.Add(new DailySales
-{
-    Date = DateOnly.FromDateTime(DateTime.Today),
-    ProductId = "PROD-001",
-    TotalQuantity = 3,
-    TotalRevenue = 59.97m
-});
-
-await context.SaveChangesAsync();
-
-// After merge: TotalQuantity=8, TotalRevenue=159.92
-```
-
-### Querying Aggregates
+## Complete Example
 
 ```csharp
-// Get totals by product (may need FINAL for accuracy)
-var productTotals = await context.DailySales
-    .GroupBy(s => s.ProductId)
-    .Select(g => new
-    {
-        ProductId = g.Key,
-        TotalQuantity = g.Sum(s => s.TotalQuantity),
-        TotalRevenue = g.Sum(s => s.TotalRevenue)
-    })
-    .ToListAsync();
-```
-
-### With Materialized View
-
-SummingMergeTree is commonly used as a materialized view target:
-
-```csharp
-// Source table (raw orders)
-modelBuilder.Entity<Order>(entity =>
-{
-    entity.HasKey(e => e.Id);
-    entity.UseMergeTree(x => new { x.OrderDate, x.Id });
-});
-
-// Aggregation target (materialized view)
-modelBuilder.Entity<DailySales>(entity =>
-{
-    entity.HasNoKey();
-    entity.UseSummingMergeTree(x => new { x.Date, x.ProductId });
-    entity.AsMaterializedView<DailySales, Order>(
-        query: orders => orders
-            .GroupBy(o => new { Date = o.OrderDate.Date, o.ProductId })
-            .Select(g => new DailySales
-            {
-                Date = DateOnly.FromDateTime(g.Key.Date),
-                ProductId = g.Key.ProductId,
-                TotalQuantity = g.Sum(o => o.Quantity),
-                TotalRevenue = g.Sum(o => o.Total)
-            }),
-        populate: false);
-});
-```
-
-### Time-Based Aggregation
-
-```csharp
-public class HourlyMetrics
+public class PageStats
 {
     public DateTime Hour { get; set; }
-    public string Endpoint { get; set; } = string.Empty;
-    public long RequestCount { get; set; }
-    public long ErrorCount { get; set; }
-    public long TotalResponseTimeMs { get; set; }
+    public string PageUrl { get; set; } = string.Empty;
+    public long UniqueVisitors { get; set; }
+    public long PageViews { get; set; }
+    public decimal TotalDuration { get; set; }
 }
 
-modelBuilder.Entity<HourlyMetrics>(entity =>
+modelBuilder.Entity<PageStats>(entity =>
 {
+    entity.ToTable("page_stats");
     entity.HasNoKey();
-    entity.UseSummingMergeTree(x => new { x.Hour, x.Endpoint });
-    entity.HasPartitionByMonth(x => x.Hour);
-});
 
-// Insert metrics
-context.HourlyMetrics.Add(new HourlyMetrics
-{
-    Hour = new DateTime(2024, 1, 15, 14, 0, 0),  // Truncated to hour
-    Endpoint = "/api/users",
-    RequestCount = 1,
-    ErrorCount = 0,
-    TotalResponseTimeMs = 45
+    entity.UseSummingMergeTree(x => new { x.Hour, x.PageUrl })
+        .HasPartitionByMonth(x => x.Hour)
+        .HasTtl(x => x.Hour, ClickHouseInterval.Months(6));
 });
 ```
 
-## Best Practices
-
-### Always Group in ORDER BY
-
-Include all grouping dimensions in ORDER BY:
-
-```csharp
-// Good: All dimensions in ORDER BY
-entity.UseSummingMergeTree(x => new { x.Date, x.ProductId, x.Region });
-
-// Bad: Missing dimension - will merge incorrectly
-entity.UseSummingMergeTree(x => new { x.Date });  // Products will be summed together!
+```sql
+CREATE TABLE "page_stats" (
+    "Hour" DateTime64(3),
+    "PageUrl" String,
+    "UniqueVisitors" Int64,
+    "PageViews" Int64,
+    "TotalDuration" Decimal(18, 4)
+)
+ENGINE = SummingMergeTree()
+PARTITION BY toYYYYMM("Hour")
+ORDER BY ("Hour", "PageUrl")
+TTL "Hour" + INTERVAL 6 MONTH
 ```
 
-### Use Integer Types for Counts
+Insert incremental counts:
 
 ```csharp
-public long ViewCount { get; set; }  // Good: Int64
-public int ClickCount { get; set; }  // Good: Int32
-
-// Avoid floats for counts (precision issues)
-public double ViewCount { get; set; }  // Not ideal
-```
-
-### Pre-Truncate Time Values
-
-```csharp
-// Truncate to hour before inserting
-var truncatedHour = new DateTime(
-    timestamp.Year, timestamp.Month, timestamp.Day,
-    timestamp.Hour, 0, 0);
-
-context.HourlyMetrics.Add(new HourlyMetrics
+await context.BulkInsertAsync(new[]
 {
-    Hour = truncatedHour,  // Consistent grouping
-    ...
+    new PageStats { Hour = hour, PageUrl = "/home", PageViews = 1, UniqueVisitors = 1 },
+    new PageStats { Hour = hour, PageUrl = "/home", PageViews = 1, UniqueVisitors = 1 },
 });
+// After merge, these collapse into PageViews = 2, UniqueVisitors = 2
 ```
-
-Or use ClickHouse functions in materialized views:
-
-```csharp
-.Select(g => new HourlyMetrics
-{
-    Hour = g.Key.Timestamp.ToStartOfHour(),  // Uses toStartOfHour()
-    ...
-})
-```
-
-## Querying Considerations
-
-### Pre-Merge vs Post-Merge
-
-Before merging completes, queries may see unmerged rows:
-
-```csharp
-// May count rows multiple times before merge
-var total = await context.DailySales
-    .Where(s => s.Date == today)
-    .SumAsync(s => s.TotalRevenue);
-
-// To get accurate results, use GROUP BY
-var total = await context.DailySales
-    .Where(s => s.Date == today)
-    .GroupBy(s => s.ProductId)
-    .Select(g => g.Sum(s => s.TotalRevenue))
-    .SumAsync();
-```
-
-### FINAL with SummingMergeTree
-
-`FINAL` forces merge-like behavior:
-
-```csharp
-// Force immediate summation
-var totals = await context.DailySales
-    .Final()
-    .ToListAsync();
-```
-
-## Limitations
-
-- **Only Sums**: Can't compute averages, min, max (use AggregatingMergeTree)
-- **Non-Numeric Columns**: Take arbitrary value from merged rows
-- **No Subtraction**: Can't decrement (use CollapsingMergeTree for that)
-- **Merge Timing**: Results may be approximate until merges complete
-
-## When Not to Use
-
-| Scenario | Use Instead |
-|----------|-------------|
-| Need averages/min/max | [AggregatingMergeTree](aggregating-mergetree.md) |
-| Need to subtract/cancel | [CollapsingMergeTree](collapsing-mergetree.md) |
-| Raw event storage | [MergeTree](mergetree.md) |
-| Deduplication by key | [ReplacingMergeTree](replacing-mergetree.md) |
 
 ## See Also
 
-- [Engines Overview](overview.md)
-- [Materialized Views](../features/materialized-views.md)
-- [AggregatingMergeTree](aggregating-mergetree.md) - For complex aggregates
-- [ClickHouse SummingMergeTree Docs](https://clickhouse.com/docs/en/engines/table-engines/mergetree-family/summingmergetree)
+- [MergeTree](mergetree.md) -- base engine without automatic summation
+- [AggregatingMergeTree](aggregating-mergetree.md) -- for complex aggregate functions beyond simple sums
+- [Materialized Views](../features/materialized-views.md) -- combine with SummingMergeTree for real-time aggregation pipelines

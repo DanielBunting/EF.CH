@@ -1,24 +1,21 @@
-# Getting Started with EF.CH
-
-This guide will help you set up EF.CH and create your first ClickHouse-backed application.
-
-## Prerequisites
-
-- **.NET 10.0 SDK** or later
-- **ClickHouse** server (local, Docker, or cloud)
-- Basic familiarity with Entity Framework Core
+# Getting Started
 
 ## Installation
-
-Add the EF.CH package to your project:
 
 ```bash
 dotnet add package EF.CH
 ```
 
-## Setting Up ClickHouse
+EF.CH targets .NET 8.0 and depends on:
 
-### Option 1: Docker (Recommended for Development)
+- `Microsoft.EntityFrameworkCore.Relational` 8.0
+- `ClickHouse.Driver` (ADO.NET driver for ClickHouse)
+
+## Running ClickHouse
+
+You need a ClickHouse server to connect to. There are three common ways to run one locally.
+
+### Option 1: Docker (single instance)
 
 ```bash
 docker run -d \
@@ -28,11 +25,12 @@ docker run -d \
   clickhouse/clickhouse-server:latest
 ```
 
-### Option 2: docker-compose
+Port 8123 is the HTTP interface. Port 9000 is the native TCP interface used by the ClickHouse.Driver ADO.NET client.
 
-Create a `docker-compose.yml`:
+### Option 2: Docker Compose
 
 ```yaml
+# docker-compose.yml
 services:
   clickhouse:
     image: clickhouse/clickhouse-server:latest
@@ -41,212 +39,336 @@ services:
       - "9000:9000"
     volumes:
       - clickhouse-data:/var/lib/clickhouse
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
 
 volumes:
   clickhouse-data:
 ```
 
-Run with `docker-compose up -d`.
-
-### Option 3: ClickHouse Cloud
-
-Sign up at [clickhouse.cloud](https://clickhouse.cloud/) and use your connection string.
-
-## Your First Application
-
-### 1. Create a New Project
-
 ```bash
-dotnet new console -n MyClickHouseApp
-cd MyClickHouseApp
-dotnet add package EF.CH
-dotnet add package Microsoft.EntityFrameworkCore.Design
+docker compose up -d
 ```
 
-### 2. Define Your Entity
+### Option 3: Testcontainers (for tests)
+
+For integration tests, use `Testcontainers.ClickHouse` to spin up a disposable ClickHouse instance per test class.
+
+```bash
+dotnet add package Testcontainers.ClickHouse
+```
 
 ```csharp
-public class Event
+using Testcontainers.ClickHouse;
+
+public class MyTests : IAsyncLifetime
 {
-    public Guid Id { get; set; }
-    public DateTime Timestamp { get; set; }
-    public string EventType { get; set; } = string.Empty;
-    public string UserId { get; set; } = string.Empty;
-    public string? Payload { get; set; }
+    private readonly ClickHouseContainer _container = new ClickHouseBuilder()
+        .WithImage("clickhouse/clickhouse-server:latest")
+        .Build();
+
+    public async Task InitializeAsync() => await _container.StartAsync();
+    public async Task DisposeAsync() => await _container.DisposeAsync();
 }
 ```
 
-### 3. Create Your DbContext
+> **Note:** Testcontainers requires Docker running on the host machine. The container is created fresh for each test class and destroyed afterward.
+
+## Connection Strings
+
+The connection string format uses semicolon-separated key-value pairs:
+
+```
+Host=localhost;Port=8123;Database=default
+```
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `Host` | `localhost` | ClickHouse server hostname |
+| `Port` | `8123` | HTTP interface port |
+| `Database` | `default` | Target database name |
+| `Username` | `default` | ClickHouse user |
+| `Password` | (empty) | ClickHouse password |
+
+Example with authentication:
+
+```
+Host=clickhouse.example.com;Port=8123;Database=analytics;Username=app_user;Password=secret
+```
+
+## First Project Walkthrough
+
+This walkthrough creates a simple analytics table, inserts data, and queries it.
+
+### 1. Define an entity
 
 ```csharp
-using EF.CH.Extensions;
-using Microsoft.EntityFrameworkCore;
-
-public class AppDbContext : DbContext
+public class PageView
 {
-    public DbSet<Event> Events => Set<Event>();
+    public Guid Id { get; set; }
+    public DateTime Timestamp { get; set; }
+    public string Url { get; set; } = string.Empty;
+    public string UserAgent { get; set; } = string.Empty;
+    public int ResponseTimeMs { get; set; }
+}
+```
 
-    protected override void OnConfiguring(DbContextOptionsBuilder options)
-    {
-        options.UseClickHouse("Host=localhost;Database=myapp");
-    }
+### 2. Create a DbContext
+
+```csharp
+using Microsoft.EntityFrameworkCore;
+using EF.CH.Extensions;
+
+public class AnalyticsDbContext : DbContext
+{
+    public DbSet<PageView> PageViews { get; set; }
+
+    public AnalyticsDbContext(DbContextOptions<AnalyticsDbContext> options)
+        : base(options) { }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
-        modelBuilder.Entity<Event>(entity =>
+        modelBuilder.Entity<PageView>(entity =>
         {
-            // Every ClickHouse table needs an engine with ORDER BY
-            entity.HasKey(e => e.Id);
-            entity.UseMergeTree(x => new { x.Timestamp, x.Id });
+            entity.HasNoKey();
 
-            // Optional: partition by month for better performance
-            entity.HasPartitionByMonth(x => x.Timestamp);
+            entity.UseMergeTree(x => new { x.Timestamp, x.Url })
+                .HasPartitionByMonth(x => x.Timestamp);
         });
     }
 }
 ```
 
-### 4. Use It
+> **Note:** ClickHouse tables always require an ENGINE. `UseMergeTree()` configures the MergeTree engine and its ORDER BY key. The ORDER BY key determines how data is physically sorted on disk -- choose columns that match your most common query filters.
+
+### 3. Register the context
+
+```csharp
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddDbContext<AnalyticsDbContext>(options =>
+    options.UseClickHouse("Host=localhost;Port=8123;Database=default"));
+```
+
+Or in a console application:
+
+```csharp
+var options = new DbContextOptionsBuilder<AnalyticsDbContext>()
+    .UseClickHouse("Host=localhost;Port=8123;Database=default")
+    .Options;
+
+using var context = new AnalyticsDbContext(options);
+```
+
+### 4. Create the table
+
+EF.CH supports migrations, but for a quick start you can use `EnsureCreated`:
+
+```csharp
+await context.Database.EnsureCreatedAsync();
+```
+
+This generates and executes:
+
+```sql
+CREATE TABLE "PageViews" (
+    "Id" UUID,
+    "Timestamp" DateTime64(3),
+    "Url" String,
+    "UserAgent" String,
+    "ResponseTimeMs" Int32
+)
+ENGINE = MergeTree()
+PARTITION BY toYYYYMM("Timestamp")
+ORDER BY ("Timestamp", "Url")
+```
+
+### 5. Insert data
+
+For small batches, use `AddRange` and `SaveChanges`:
+
+```csharp
+context.PageViews.AddRange(
+    new PageView
+    {
+        Id = Guid.NewGuid(),
+        Timestamp = DateTime.UtcNow,
+        Url = "/home",
+        UserAgent = "Mozilla/5.0",
+        ResponseTimeMs = 42
+    },
+    new PageView
+    {
+        Id = Guid.NewGuid(),
+        Timestamp = DateTime.UtcNow,
+        Url = "/api/data",
+        UserAgent = "curl/7.88",
+        ResponseTimeMs = 15
+    }
+);
+
+await context.SaveChangesAsync();
+```
+
+For large volumes, use bulk insert:
+
+```csharp
+var pageViews = Enumerable.Range(0, 100_000).Select(i => new PageView
+{
+    Id = Guid.NewGuid(),
+    Timestamp = DateTime.UtcNow.AddSeconds(-i),
+    Url = $"/page/{i % 100}",
+    UserAgent = "bot",
+    ResponseTimeMs = Random.Shared.Next(5, 500)
+});
+
+await context.BulkInsertAsync(pageViews);
+```
+
+### 6. Query data
+
+Standard LINQ queries translate to ClickHouse SQL:
+
+```csharp
+// Filter and project
+var slowPages = await context.PageViews
+    .Where(p => p.ResponseTimeMs > 200)
+    .OrderByDescending(p => p.ResponseTimeMs)
+    .Take(10)
+    .ToListAsync();
+
+// Aggregation
+var stats = await context.PageViews
+    .GroupBy(p => p.Url)
+    .Select(g => new
+    {
+        Url = g.Key,
+        AvgResponseTime = g.Average(p => p.ResponseTimeMs),
+        Count = g.Count()
+    })
+    .OrderByDescending(x => x.Count)
+    .ToListAsync();
+```
+
+The aggregation query generates:
+
+```sql
+SELECT "p"."Url", avgOrNull(CAST("p"."ResponseTimeMs" AS Float64)), count()
+FROM "PageViews" AS "p"
+GROUP BY "p"."Url"
+ORDER BY count() DESC
+```
+
+> **Note:** EF.CH translates `Average()` to `avgOrNull()` and `Sum()` to `sumOrNull()` to avoid exceptions on empty result sets. This is a ClickHouse-specific safety measure.
+
+## Complete Minimal Example
 
 ```csharp
 using Microsoft.EntityFrameworkCore;
+using EF.CH.Extensions;
 
-await using var context = new AppDbContext();
+// Entity
+public class Event
+{
+    public Guid Id { get; set; }
+    public DateTime Timestamp { get; set; }
+    public string Category { get; set; } = string.Empty;
+    public double Value { get; set; }
+}
 
-// Create the database and tables
+// DbContext
+public class AppDbContext : DbContext
+{
+    public DbSet<Event> Events { get; set; }
+
+    protected override void OnConfiguring(DbContextOptionsBuilder options)
+        => options.UseClickHouse("Host=localhost;Port=8123;Database=default");
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<Event>(entity =>
+        {
+            entity.HasNoKey();
+            entity.UseMergeTree(x => new { x.Timestamp, x.Category });
+        });
+    }
+}
+
+// Usage
+using var context = new AppDbContext();
 await context.Database.EnsureCreatedAsync();
 
-// Insert data
 context.Events.Add(new Event
 {
     Id = Guid.NewGuid(),
     Timestamp = DateTime.UtcNow,
-    EventType = "page_view",
-    UserId = "user-123",
-    Payload = "{\"page\": \"/home\"}"
+    Category = "click",
+    Value = 1.0
 });
 await context.SaveChangesAsync();
 
-// Query data
-var recentEvents = await context.Events
-    .Where(e => e.Timestamp > DateTime.UtcNow.AddHours(-1))
-    .OrderByDescending(e => e.Timestamp)
-    .Take(100)
+var events = await context.Events
+    .Where(e => e.Category == "click")
     .ToListAsync();
 
-foreach (var evt in recentEvents)
-{
-    Console.WriteLine($"{evt.Timestamp}: {evt.EventType} by {evt.UserId}");
-}
+Console.WriteLine($"Found {events.Count} events");
 ```
-
-## Connection String
-
-The connection string format follows ClickHouse.Driver conventions:
-
-```
-Host=localhost;Port=8123;Database=mydb;Username=default;Password=
-```
-
-Common parameters:
-
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `Host` | ClickHouse server hostname | `localhost` |
-| `Port` | HTTP port | `8123` |
-| `Database` | Database name | `default` |
-| `Username` | Authentication user | `default` |
-| `Password` | Authentication password | (empty) |
-| `UseServerTimezone` | Use server's timezone | `false` |
-| `Compression` | Enable compression | `true` |
-
-## Using EF Core Migrations
-
-EF.CH supports EF Core migrations for schema management:
-
-```bash
-# Add the EF Core tools if you haven't already
-dotnet tool install --global dotnet-ef
-
-# Create a migration
-dotnet ef migrations add InitialCreate
-
-# Apply the migration
-dotnet ef database update
-```
-
-Or apply migrations in code:
-
-```csharp
-await context.Database.MigrateAsync();
-```
-
-## Project Structure
-
-A typical project structure:
-
-```
-MyClickHouseApp/
-├── Program.cs
-├── AppDbContext.cs
-├── Entities/
-│   ├── Event.cs
-│   └── User.cs
-├── Migrations/
-│   └── (generated by EF Core)
-└── MyClickHouseApp.csproj
-```
-
-## Configuration Options
-
-Configure the provider in `OnConfiguring` or via dependency injection:
-
-```csharp
-// Option 1: In DbContext
-protected override void OnConfiguring(DbContextOptionsBuilder options)
-{
-    options.UseClickHouse("Host=localhost;Database=myapp", clickHouse =>
-    {
-        clickHouse.CommandTimeout(60);  // Query timeout in seconds
-        clickHouse.MaxBatchSize(10000); // Batch insert size
-    });
-}
-
-// Option 2: With DI
-services.AddDbContext<AppDbContext>(options =>
-    options.UseClickHouse(Configuration.GetConnectionString("ClickHouse")));
-```
-
-## Next Steps
-
-- Read [ClickHouse Concepts](clickhouse-concepts.md) to understand key differences from traditional databases
-- Learn about [Table Engines](engines/overview.md) to choose the right engine for your use case
-- Explore [Type Mappings](types/overview.md) for complex types like arrays and maps
-- Set up [Clustering](features/clustering.md) for multi-datacenter deployments with replication
-- Check out the [samples](../samples/) for complete working examples
 
 ## Troubleshooting
 
-### "Cannot connect to ClickHouse"
+### "Connection refused" on startup
 
-1. Verify ClickHouse is running: `curl http://localhost:8123/ping`
-2. Check the port (HTTP is 8123, native is 9000)
-3. Verify network access if using Docker or remote server
+ClickHouse is not running or not listening on the expected port. Verify the container is up:
 
-### "Table engine is not specified"
-
-Every table needs an engine. Add the engine configuration:
-
-```csharp
-entity.UseMergeTree(x => x.Id);  // At minimum, ORDER BY primary key
+```bash
+docker ps | grep clickhouse
 ```
 
-### "Cannot update entity"
+Check connectivity:
 
-ClickHouse doesn't support row-level UPDATE via `SaveChanges()`. Options:
-- Use `ExecuteUpdateAsync` for bulk mutations (generates `ALTER TABLE ... UPDATE`)
-- Use `ReplacingMergeTree` for last-write-wins semantics
-- Delete and re-insert the row
-- Design for append-only patterns
+```bash
+curl http://localhost:8123/ping
+```
 
-See [Update Operations](features/update-operations.md) and [Limitations](limitations.md) for more details.
+### "Table already exists" on EnsureCreated
+
+`EnsureCreatedAsync()` does not drop existing tables. If you change your model, drop the table manually first:
+
+```sql
+DROP TABLE IF EXISTS "PageViews"
+```
+
+Or use migrations for schema evolution.
+
+### Queries return empty results after insert
+
+ClickHouse inserts are asynchronous at the storage level. Data should be available immediately for queries, but if you are using `ReplacingMergeTree` or other deduplicating engines, rows may not be merged yet. Use `.Final()` to get the deduplicated view:
+
+```csharp
+var results = await context.Events.Final().ToListAsync();
+```
+
+### "No data to insert" error
+
+This occurs when calling `SaveChangesAsync()` with no tracked entities. Ensure you called `Add()` or `AddRange()` before saving.
+
+### Mutations (UPDATE/DELETE) seem to do nothing
+
+ClickHouse mutations via `ALTER TABLE UPDATE` and `ALTER TABLE DELETE` are asynchronous. They execute in the background and may take time to complete. Use `ExecuteUpdateAsync` / `ExecuteDeleteAsync` for lightweight operations, and allow time (or call `OPTIMIZE TABLE ... FINAL`) for the changes to materialize.
+
+### Tests fail with "Docker is not running"
+
+Testcontainers requires Docker. On macOS, ensure Docker Desktop is running. On Linux, ensure the Docker daemon is active:
+
+```bash
+systemctl status docker
+```
+
+## See Also
+
+- [ClickHouse for EF Developers](clickhouse-for-ef-developers.md) -- mental model differences from traditional RDBMS
+- [Limitations](limitations.md) -- unsupported EF Core features and workarounds
+- [Engines Overview](engines/overview.md) -- choosing the right table engine
+- [MergeTree Engine](engines/mergetree.md) -- detailed MergeTree configuration
