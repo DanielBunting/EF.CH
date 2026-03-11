@@ -1291,6 +1291,178 @@ public static class ClickHouseEntityTypeBuilderExtensions
 
     #endregion
 
+    #region Memory Engine
+
+    /// <summary>
+    /// Configures the entity to use the Memory engine.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The Memory engine stores data in RAM. Data is lost when the server restarts.
+    /// </para>
+    /// <para>
+    /// Good for temporary lookup tables, small reference data, and testing scenarios
+    /// where persistence is not required.
+    /// </para>
+    /// </remarks>
+    /// <param name="builder">The entity type builder.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    public static EntityTypeBuilder UseMemoryEngine(this EntityTypeBuilder builder)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, "Memory");
+        return builder;
+    }
+
+    /// <summary>
+    /// Configures the entity to use the Memory engine.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The Memory engine stores data in RAM. Data is lost when the server restarts.
+    /// </para>
+    /// <para>
+    /// Good for temporary lookup tables, small reference data, and testing scenarios
+    /// where persistence is not required.
+    /// </para>
+    /// </remarks>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    public static EntityTypeBuilder<TEntity> UseMemoryEngine<TEntity>(
+        this EntityTypeBuilder<TEntity> builder)
+        where TEntity : class
+    {
+        ((EntityTypeBuilder)builder).UseMemoryEngine();
+        return builder;
+    }
+
+    #endregion
+
+    #region Log Engine
+
+    /// <summary>
+    /// Configures the entity to use the Log engine.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The Log engine provides simple sequential storage for small tables (up to ~1 million rows).
+    /// It supports concurrent reads but only sequential writes.
+    /// </para>
+    /// </remarks>
+    /// <param name="builder">The entity type builder.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    public static EntityTypeBuilder UseLogEngine(this EntityTypeBuilder builder)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, "Log");
+        return builder;
+    }
+
+    /// <summary>
+    /// Configures the entity to use the Log engine.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The Log engine provides simple sequential storage for small tables (up to ~1 million rows).
+    /// It supports concurrent reads but only sequential writes.
+    /// </para>
+    /// </remarks>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    public static EntityTypeBuilder<TEntity> UseLogEngine<TEntity>(
+        this EntityTypeBuilder<TEntity> builder)
+        where TEntity : class
+    {
+        ((EntityTypeBuilder)builder).UseLogEngine();
+        return builder;
+    }
+
+    #endregion
+
+    #region TinyLog Engine
+
+    /// <summary>
+    /// Configures the entity to use the TinyLog engine.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The TinyLog engine is the simplest storage engine, storing each column in a separate file.
+    /// It does not support concurrent data access.
+    /// </para>
+    /// </remarks>
+    /// <param name="builder">The entity type builder.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    public static EntityTypeBuilder UseTinyLogEngine(this EntityTypeBuilder builder)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, "TinyLog");
+        return builder;
+    }
+
+    /// <summary>
+    /// Configures the entity to use the TinyLog engine.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The TinyLog engine is the simplest storage engine, storing each column in a separate file.
+    /// It does not support concurrent data access.
+    /// </para>
+    /// </remarks>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    public static EntityTypeBuilder<TEntity> UseTinyLogEngine<TEntity>(
+        this EntityTypeBuilder<TEntity> builder)
+        where TEntity : class
+    {
+        ((EntityTypeBuilder)builder).UseTinyLogEngine();
+        return builder;
+    }
+
+    #endregion
+
+    #region StripeLog Engine
+
+    /// <summary>
+    /// Configures the entity to use the StripeLog engine.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The StripeLog engine stores all columns in one file. Good for small tables with many columns.
+    /// </para>
+    /// </remarks>
+    /// <param name="builder">The entity type builder.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    public static EntityTypeBuilder UseStripeLogEngine(this EntityTypeBuilder builder)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, "StripeLog");
+        return builder;
+    }
+
+    /// <summary>
+    /// Configures the entity to use the StripeLog engine.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The StripeLog engine stores all columns in one file. Good for small tables with many columns.
+    /// </para>
+    /// </remarks>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    public static EntityTypeBuilder<TEntity> UseStripeLogEngine<TEntity>(
+        this EntityTypeBuilder<TEntity> builder)
+        where TEntity : class
+    {
+        ((EntityTypeBuilder)builder).UseStripeLogEngine();
+        return builder;
+    }
+
+    #endregion
+
     #region Distributed Engine
 
     /// <summary>
