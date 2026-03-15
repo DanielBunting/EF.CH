@@ -1,3 +1,4 @@
+using EF.CH;
 using EF.CH.Extensions;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
@@ -652,7 +653,7 @@ public class UtilityFunctionTests
         using var context = CreateContext();
 
         var query = context.Entities
-            .Select(e => new { e.Id, Days = EfClass.Functions.DateDiff("day", e.CreatedAt, DateTime.Now) });
+            .Select(e => new { e.Id, Days = EfClass.Functions.DateDiff(ClickHouseIntervalUnit.Day, e.CreatedAt, DateTime.Now) });
 
         var sql = query.ToQueryString();
 

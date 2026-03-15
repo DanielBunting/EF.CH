@@ -90,6 +90,21 @@ public class ClickHouseUtilityMethodTranslator : IMethodCallTranslator
         [(typeof(ClickHouseDateTruncDbFunctionsExtensions), nameof(ClickHouseDateTruncDbFunctionsExtensions.ToStartOfFiveMinutes))] = "toStartOfFiveMinutes",
         [(typeof(ClickHouseDateTruncDbFunctionsExtensions), nameof(ClickHouseDateTruncDbFunctionsExtensions.ToStartOfFifteenMinutes))] = "toStartOfFifteenMinutes",
         [(typeof(ClickHouseDateTruncDbFunctionsExtensions), nameof(ClickHouseDateTruncDbFunctionsExtensions.DateDiff))] = "dateDiff",
+        [(typeof(ClickHouseDateTruncDbFunctionsExtensions), nameof(ClickHouseDateTruncDbFunctionsExtensions.ToStartOfSecond))] = "toStartOfSecond",
+        [(typeof(ClickHouseDateTruncDbFunctionsExtensions), nameof(ClickHouseDateTruncDbFunctionsExtensions.ToStartOfTenMinutes))] = "toStartOfTenMinutes",
+        [(typeof(ClickHouseDateTruncDbFunctionsExtensions), nameof(ClickHouseDateTruncDbFunctionsExtensions.ToUnixTimestamp))] = "toUnixTimestamp",
+        [(typeof(ClickHouseDateTruncDbFunctionsExtensions), nameof(ClickHouseDateTruncDbFunctionsExtensions.FromUnixTimestamp))] = "fromUnixTimestamp",
+        [(typeof(ClickHouseDateTruncDbFunctionsExtensions), nameof(ClickHouseDateTruncDbFunctionsExtensions.FromUnixTimestamp64Milli))] = "fromUnixTimestamp64Milli",
+        [(typeof(ClickHouseDateTruncDbFunctionsExtensions), nameof(ClickHouseDateTruncDbFunctionsExtensions.ToRelativeYearNum))] = "toRelativeYearNum",
+        [(typeof(ClickHouseDateTruncDbFunctionsExtensions), nameof(ClickHouseDateTruncDbFunctionsExtensions.ToRelativeMonthNum))] = "toRelativeMonthNum",
+        [(typeof(ClickHouseDateTruncDbFunctionsExtensions), nameof(ClickHouseDateTruncDbFunctionsExtensions.ToRelativeWeekNum))] = "toRelativeWeekNum",
+        [(typeof(ClickHouseDateTruncDbFunctionsExtensions), nameof(ClickHouseDateTruncDbFunctionsExtensions.ToRelativeDayNum))] = "toRelativeDayNum",
+        [(typeof(ClickHouseDateTruncDbFunctionsExtensions), nameof(ClickHouseDateTruncDbFunctionsExtensions.ToRelativeHourNum))] = "toRelativeHourNum",
+        [(typeof(ClickHouseDateTruncDbFunctionsExtensions), nameof(ClickHouseDateTruncDbFunctionsExtensions.ToRelativeMinuteNum))] = "toRelativeMinuteNum",
+        [(typeof(ClickHouseDateTruncDbFunctionsExtensions), nameof(ClickHouseDateTruncDbFunctionsExtensions.ToRelativeSecondNum))] = "toRelativeSecondNum",
+        [(typeof(ClickHouseDateTruncDbFunctionsExtensions), nameof(ClickHouseDateTruncDbFunctionsExtensions.DateAdd))] = "date_add",
+        [(typeof(ClickHouseDateTruncDbFunctionsExtensions), nameof(ClickHouseDateTruncDbFunctionsExtensions.DateSub))] = "date_sub",
+        [(typeof(ClickHouseDateTruncDbFunctionsExtensions), nameof(ClickHouseDateTruncDbFunctionsExtensions.Age))] = "age",
 
         // IP address functions
         [(typeof(ClickHouseIpDbFunctionsExtensions), nameof(ClickHouseIpDbFunctionsExtensions.IPv4NumToString))] = "IPv4NumToString",
@@ -164,6 +179,12 @@ public class ClickHouseUtilityMethodTranslator : IMethodCallTranslator
                 typeof(string));
         }
 
+        // Convert ClickHouseIntervalUnit enum args to lowercase string constants for SQL
+        if (method.DeclaringType == typeof(ClickHouseDateTruncDbFunctionsExtensions))
+        {
+            functionArguments = ConvertIntervalUnitArgs(functionArguments);
+        }
+
         if (!FunctionMappings.TryGetValue((method.DeclaringType, method.Name), out var clickHouseFunction))
         {
             return null;
@@ -175,5 +196,18 @@ public class ClickHouseUtilityMethodTranslator : IMethodCallTranslator
             nullable: true,
             argumentsPropagateNullability: nullability,
             method.ReturnType);
+    }
+
+    private SqlExpression[] ConvertIntervalUnitArgs(SqlExpression[] args)
+    {
+        for (var i = 0; i < args.Length; i++)
+        {
+            if (args[i] is SqlConstantExpression { Value: ClickHouseIntervalUnit unit })
+            {
+                args[i] = _sqlExpressionFactory.Constant(unit.ToString().ToLowerInvariant());
+            }
+        }
+
+        return args;
     }
 }

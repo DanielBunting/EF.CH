@@ -179,17 +179,107 @@ Calculate the difference between two dates in a specified unit.
 
 | C# Method | ClickHouse SQL |
 |-----------|----------------|
-| `EF.Functions.DateDiff("day", start, end)` | `dateDiff('day', start, end)` |
+| `EF.Functions.DateDiff(ClickHouseIntervalUnit.Day, start, end)` | `dateDiff('day', start, end)` |
 
-Valid units: `'second'`, `'minute'`, `'hour'`, `'day'`, `'week'`, `'month'`, `'quarter'`, `'year'`.
+The unit is specified via the `ClickHouseIntervalUnit` enum.
 
 ```csharp
 var results = await context.Orders
     .Select(o => new
     {
         o.Id,
-        DaysToShip = EF.Functions.DateDiff("day", o.OrderDate, o.ShipDate),
-        HoursOpen = EF.Functions.DateDiff("hour", o.CreatedAt, o.ClosedAt)
+        DaysToShip = EF.Functions.DateDiff(ClickHouseIntervalUnit.Day, o.OrderDate, o.ShipDate),
+        HoursOpen = EF.Functions.DateDiff(ClickHouseIntervalUnit.Hour, o.CreatedAt, o.ClosedAt)
+    })
+    .ToListAsync();
+```
+
+---
+
+## DateAdd
+
+Add a specified number of units to a DateTime.
+
+| C# Method | ClickHouse SQL |
+|-----------|----------------|
+| `EF.Functions.DateAdd(ClickHouseIntervalUnit.Day, n, dt)` | `date_add('day', n, dt)` |
+
+The unit is specified via the `ClickHouseIntervalUnit` enum.
+
+```csharp
+var results = await context.Orders
+    .Select(o => new
+    {
+        o.Id,
+        DueDate = EF.Functions.DateAdd(ClickHouseIntervalUnit.Day, 30, o.OrderDate),
+        NextQuarter = EF.Functions.DateAdd(ClickHouseIntervalUnit.Quarter, 1, o.OrderDate)
+    })
+    .ToListAsync();
+```
+
+---
+
+## DateSub
+
+Subtract a specified number of units from a DateTime.
+
+| C# Method | ClickHouse SQL |
+|-----------|----------------|
+| `EF.Functions.DateSub(ClickHouseIntervalUnit.Day, n, dt)` | `date_sub('day', n, dt)` |
+
+The unit is specified via the `ClickHouseIntervalUnit` enum.
+
+```csharp
+var results = await context.Orders
+    .Select(o => new
+    {
+        o.Id,
+        PriorMonth = EF.Functions.DateSub(ClickHouseIntervalUnit.Month, 1, o.OrderDate)
+    })
+    .ToListAsync();
+```
+
+---
+
+## Age
+
+Returns the difference between two dates in the specified unit, accounting for calendar boundaries. Unlike `DateDiff`, `Age` respects month/year lengths.
+
+| C# Method | ClickHouse SQL |
+|-----------|----------------|
+| `EF.Functions.Age(ClickHouseIntervalUnit.Year, start, end)` | `age('year', start, end)` |
+
+The unit is specified via the `ClickHouseIntervalUnit` enum.
+
+```csharp
+var results = await context.Users
+    .Select(u => new
+    {
+        u.Id,
+        YearsActive = EF.Functions.Age(ClickHouseIntervalUnit.Year, u.CreatedAt, DateTime.UtcNow)
+    })
+    .ToListAsync();
+```
+
+---
+
+## ToStartOfInterval
+
+Rounds down a DateTime to the start of the specified interval.
+
+| C# Method | ClickHouse SQL |
+|-----------|----------------|
+| `EF.Functions.ToStartOfInterval(dt, 15, ClickHouseIntervalUnit.Minute)` | `toStartOfInterval(dt, INTERVAL 15 minute)` |
+
+The unit is specified via the `ClickHouseIntervalUnit` enum.
+
+```csharp
+var results = await context.Events
+    .GroupBy(e => EF.Functions.ToStartOfInterval(e.Timestamp, 15, ClickHouseIntervalUnit.Minute))
+    .Select(g => new
+    {
+        Bucket = g.Key,
+        Count = g.Count()
     })
     .ToListAsync();
 ```

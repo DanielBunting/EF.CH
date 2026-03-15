@@ -1,3 +1,4 @@
+using EF.CH;
 using EF.CH.Extensions;
 using Microsoft.EntityFrameworkCore;
 using EfClass = Microsoft.EntityFrameworkCore.EF;
@@ -111,7 +112,7 @@ var ageInMinutes = await context.PageViews
     .Select(p => new
     {
         p.UserName,
-        MinutesAgo = EfClass.Functions.DateDiff("minute", p.ViewedAt, DateTime.UtcNow)
+        MinutesAgo = EfClass.Functions.DateDiff(ClickHouseIntervalUnit.Minute, p.ViewedAt, DateTime.UtcNow)
     })
     .ToListAsync();
 

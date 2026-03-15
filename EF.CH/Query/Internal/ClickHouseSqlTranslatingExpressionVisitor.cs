@@ -502,6 +502,13 @@ public class ClickHouseSqlTranslatingExpressionVisitor : RelationalSqlTranslatin
             return TranslateRawSql(methodCallExpression);
         }
 
+        // Handle ToStartOfInterval — extract value/unit from expression tree to build INTERVAL literal
+        if (declaringType == typeof(ClickHouseDateTruncDbFunctionsExtensions)
+            && method.Name == nameof(ClickHouseDateTruncDbFunctionsExtensions.ToStartOfInterval))
+        {
+            return TranslateToStartOfInterval(methodCallExpression);
+        }
+
         // Check if this is a Window.Xxx() call with lambda-style API
         if (declaringType == typeof(Window))
         {
@@ -563,6 +570,56 @@ public class ClickHouseSqlTranslatingExpressionVisitor : RelationalSqlTranslatin
         var returnType = methodCallExpression.Method.ReturnType;
         var typeMapping = _typeMappingSource.FindMapping(returnType);
         return new ClickHouseRawSqlExpression(sql, returnType, typeMapping);
+    }
+
+    private Expression TranslateToStartOfInterval(MethodCallExpression methodCallExpression)
+    {
+        // Arguments: [0]=DbFunctions, [1]=DateTime dt, [2]=int value, [3]=ClickHouseIntervalUnit unit
+        var dtArg = methodCallExpression.Arguments[1];
+        var valueArg = methodCallExpression.Arguments[2];
+        var unitArg = methodCallExpression.Arguments[3];
+
+        // Extract the int value and unit enum from the expression tree
+        int? intervalValue = valueArg is ConstantExpression constVal ? (int?)constVal.Value : null;
+        ClickHouseIntervalUnit? unit = unitArg is ConstantExpression { Value: ClickHouseIntervalUnit u } ? u : null;
+
+        if (intervalValue is null || unit is null)
+        {
+            return QueryCompilationContext.NotTranslatedExpression;
+        }
+
+        // Translate the DateTime argument to a SQL expression
+        var sqlDt = Visit(dtArg);
+        if (sqlDt is not SqlExpression sqlDtExpr)
+            return QueryCompilationContext.NotTranslatedExpression;
+
+        var interval = unit.Value switch
+        {
+            ClickHouseIntervalUnit.Second => ClickHouseInterval.Seconds(intervalValue.Value),
+            ClickHouseIntervalUnit.Minute => ClickHouseInterval.Minutes(intervalValue.Value),
+            ClickHouseIntervalUnit.Hour => ClickHouseInterval.Hours(intervalValue.Value),
+            ClickHouseIntervalUnit.Day => ClickHouseInterval.Days(intervalValue.Value),
+            ClickHouseIntervalUnit.Week => ClickHouseInterval.Weeks(intervalValue.Value),
+            ClickHouseIntervalUnit.Month => ClickHouseInterval.Months(intervalValue.Value),
+            ClickHouseIntervalUnit.Quarter => ClickHouseInterval.Quarters(intervalValue.Value),
+            ClickHouseIntervalUnit.Year => ClickHouseInterval.Years(intervalValue.Value),
+            _ => (ClickHouseInterval?)null
+        };
+
+        if (!interval.HasValue)
+            return QueryCompilationContext.NotTranslatedExpression;
+
+        var intervalMapping = _typeMappingSource.FindMapping(typeof(DateTime));
+        return _sqlExpressionFactory.Function(
+            "toStartOfInterval",
+            new SqlExpression[]
+            {
+                sqlDtExpr,
+                new ClickHouseRawSqlExpression(interval.Value.ToSql(), typeof(DateTime), intervalMapping)
+            },
+            nullable: true,
+            argumentsPropagateNullability: new[] { true, false },
+            typeof(DateTime));
     }
 
     private Expression TranslateDictionaryMethod(MethodCallExpression methodCallExpression)

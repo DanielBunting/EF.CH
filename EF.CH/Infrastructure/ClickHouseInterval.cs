@@ -115,7 +115,8 @@ public readonly struct ClickHouseInterval : IEquatable<ClickHouseInterval>
 }
 
 /// <summary>
-/// ClickHouse interval units for TTL and time expressions.
+/// ClickHouse interval units for TTL expressions, time-based operations, and date functions
+/// such as <c>DateDiff</c>, <c>DateAdd</c>, <c>DateSub</c>, <c>Age</c>, and <c>ToStartOfInterval</c>.
 /// </summary>
 public enum ClickHouseIntervalUnit
 {

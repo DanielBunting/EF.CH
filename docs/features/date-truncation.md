@@ -50,7 +50,7 @@ All functions take a `DateTime` and return a `DateTime`.
 |-----------|---------------|-------------|-------------|
 | `DateDiff(unit, start, end)` | `dateDiff(unit, start, end)` | `long` | Difference in the given unit |
 
-Valid units: `'second'`, `'minute'`, `'hour'`, `'day'`, `'week'`, `'month'`, `'quarter'`, `'year'`.
+The unit is specified via the `ClickHouseIntervalUnit` enum.
 
 ## Usage Examples
 
@@ -96,7 +96,7 @@ var orderAges = await context.Orders
     .Select(o => new
     {
         o.Id,
-        DaysAgo = EF.Functions.DateDiff("day", o.OrderDate, DateTime.UtcNow)
+        DaysAgo = EF.Functions.DateDiff(ClickHouseIntervalUnit.Day, o.OrderDate, DateTime.UtcNow)
     })
     .Where(x => x.DaysAgo > 30)
     .ToListAsync();
