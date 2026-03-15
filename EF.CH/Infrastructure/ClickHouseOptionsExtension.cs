@@ -356,6 +356,7 @@ public static class ClickHouseServiceCollectionExtensions
 
             // Query services
             .TryAdd<IQuerySqlGeneratorFactory, ClickHouseQuerySqlGeneratorFactory>()
+            .TryAdd<IQueryTranslationPreprocessorFactory, ClickHouseQueryTranslationPreprocessorFactory>()
             .TryAdd<IQueryTranslationPostprocessorFactory, ClickHouseQueryTranslationPostprocessorFactory>()
             .TryAdd<IRelationalParameterBasedSqlProcessorFactory, ClickHouseParameterBasedSqlProcessorFactory>()
             .TryAdd<IMethodCallTranslatorProvider, ClickHouseMethodCallTranslatorProvider>()
