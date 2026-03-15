@@ -75,7 +75,7 @@ var summary = await db.Events
 |---|---|---|
 | **Engines** | 14 table engines: MergeTree, ReplacingMergeTree, SummingMergeTree, AggregatingMergeTree, CollapsingMergeTree, VersionedCollapsingMergeTree, Replicated variants, Distributed, Null | [docs/engines/](docs/engines/) |
 | **Type System** | Arrays, Maps, Tuples, Nested, JSON, IPv4/IPv6, Enums, DateTime64 with timezones, LowCardinality, 40+ type mappings | [docs/types/](docs/types/) |
-| **Query Power** | FINAL, SAMPLE, PREWHERE, LimitBy, CTEs, Window Functions, Set Operations, Interpolate, 22+ LINQ extensions | [docs/querying/](docs/querying/) |
+| **Query Power** | FINAL, SAMPLE, PREWHERE, LimitBy, CTEs, ARRAY JOIN, ASOF JOIN, Window Functions, Set Operations, Interpolate, 22+ LINQ extensions | [docs/querying/](docs/querying/) |
 | **Analytics** | 66+ aggregate functions, materialized views, projections, aggregate combinators (-If, -Array, -State, -Merge) | [docs/functions/](docs/functions/), [docs/advanced/](docs/advanced/) |
 | **Data Operations** | Bulk insert, INSERT...SELECT, export to CSV/JSON/Parquet, temp tables | [docs/data-operations/](docs/data-operations/) |
 | **Enterprise** | Multi-DC clustering, connection routing, replicated engines, EF Core migrations with ClickHouse DDL | [docs/clustering/](docs/clustering/), [docs/migrations/](docs/migrations/) |
@@ -157,6 +157,7 @@ dotnet build samples/QuickStartSample/
 | [QueryFeaturesSample](samples/QueryFeaturesSample/) | FINAL, SAMPLE, PREWHERE, LimitBy, CTEs |
 | [BulkOperationsSample](samples/BulkOperationsSample/) | High-throughput bulk insert and INSERT...SELECT |
 | [MaterializedViewSample](samples/MaterializedViewSample/) | Materialized views with source and target tables |
+| [JoinSample](samples/JoinSample/) | ARRAY JOIN, ASOF JOIN for analytics and time-series |
 | [DeleteUpdateSample](samples/DeleteUpdateSample/) | Lightweight deletes, ALTER TABLE UPDATE strategies |
 
 ### Advanced

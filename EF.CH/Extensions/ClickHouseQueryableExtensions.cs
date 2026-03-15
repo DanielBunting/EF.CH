@@ -542,4 +542,175 @@ public static class ClickHouseQueryableExtensions
     internal static readonly MethodInfo WithRawFilterMethodInfo =
         typeof(ClickHouseQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
             .First(m => m.Name == nameof(WithRawFilter));
+
+    /// <summary>
+    /// Applies ARRAY JOIN to unnest an array column into individual rows.
+    /// Rows with empty arrays are skipped.
+    /// </summary>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <typeparam name="TElement">The array element type.</typeparam>
+    /// <typeparam name="TResult">The result type.</typeparam>
+    /// <param name="source">The source queryable.</param>
+    /// <param name="arraySelector">Expression selecting the array column to unnest.</param>
+    /// <param name="resultSelector">Expression projecting each entity and unnested element into a result.</param>
+    /// <returns>A queryable with ARRAY JOIN applied, producing one row per array element.</returns>
+    public static IQueryable<TResult> ArrayJoin<TEntity, TElement, TResult>(
+        this IQueryable<TEntity> source,
+        Expression<Func<TEntity, IEnumerable<TElement>>> arraySelector,
+        Expression<Func<TEntity, TElement, TResult>> resultSelector)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(arraySelector);
+        ArgumentNullException.ThrowIfNull(resultSelector);
+
+        return source.Provider.CreateQuery<TResult>(
+            Expression.Call(
+                null,
+                ArrayJoinMethodInfo.MakeGenericMethod(typeof(TEntity), typeof(TElement), typeof(TResult)),
+                source.Expression,
+                Expression.Quote(arraySelector),
+                Expression.Quote(resultSelector)));
+    }
+
+    /// <summary>
+    /// Applies LEFT ARRAY JOIN to unnest an array column into individual rows.
+    /// Rows with empty arrays are preserved with default element values.
+    /// </summary>
+    public static IQueryable<TResult> LeftArrayJoin<TEntity, TElement, TResult>(
+        this IQueryable<TEntity> source,
+        Expression<Func<TEntity, IEnumerable<TElement>>> arraySelector,
+        Expression<Func<TEntity, TElement, TResult>> resultSelector)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(arraySelector);
+        ArgumentNullException.ThrowIfNull(resultSelector);
+
+        return source.Provider.CreateQuery<TResult>(
+            Expression.Call(
+                null,
+                LeftArrayJoinMethodInfo.MakeGenericMethod(typeof(TEntity), typeof(TElement), typeof(TResult)),
+                source.Expression,
+                Expression.Quote(arraySelector),
+                Expression.Quote(resultSelector)));
+    }
+
+    /// <summary>
+    /// Applies ARRAY JOIN to unnest two array columns simultaneously.
+    /// Arrays are joined positionally (element-wise), not as a cartesian product.
+    /// </summary>
+    public static IQueryable<TResult> ArrayJoin<TEntity, TElement1, TElement2, TResult>(
+        this IQueryable<TEntity> source,
+        Expression<Func<TEntity, IEnumerable<TElement1>>> arraySelector1,
+        Expression<Func<TEntity, IEnumerable<TElement2>>> arraySelector2,
+        Expression<Func<TEntity, TElement1, TElement2, TResult>> resultSelector)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(arraySelector1);
+        ArgumentNullException.ThrowIfNull(arraySelector2);
+        ArgumentNullException.ThrowIfNull(resultSelector);
+
+        return source.Provider.CreateQuery<TResult>(
+            Expression.Call(
+                null,
+                ArrayJoin2MethodInfo.MakeGenericMethod(
+                    typeof(TEntity), typeof(TElement1), typeof(TElement2), typeof(TResult)),
+                source.Expression,
+                Expression.Quote(arraySelector1),
+                Expression.Quote(arraySelector2),
+                Expression.Quote(resultSelector)));
+    }
+
+    internal static readonly MethodInfo ArrayJoinMethodInfo =
+        typeof(ClickHouseQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .First(m => m.Name == nameof(ArrayJoin) && m.GetGenericArguments().Length == 3);
+
+    internal static readonly MethodInfo LeftArrayJoinMethodInfo =
+        typeof(ClickHouseQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .First(m => m.Name == nameof(LeftArrayJoin));
+
+    internal static readonly MethodInfo ArrayJoin2MethodInfo =
+        typeof(ClickHouseQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .First(m => m.Name == nameof(ArrayJoin) && m.GetGenericArguments().Length == 4);
+
+    /// <summary>
+    /// Applies ASOF JOIN to find the closest matching row by an inequality condition.
+    /// </summary>
+    /// <typeparam name="TOuter">The outer (left) entity type.</typeparam>
+    /// <typeparam name="TInner">The inner (right) entity type.</typeparam>
+    /// <typeparam name="TKey">The equi-join key type.</typeparam>
+    /// <typeparam name="TResult">The result type.</typeparam>
+    /// <param name="outer">The outer queryable.</param>
+    /// <param name="inner">The inner queryable.</param>
+    /// <param name="outerKeySelector">Expression selecting the equi-join key from the outer entity.</param>
+    /// <param name="innerKeySelector">Expression selecting the equi-join key from the inner entity.</param>
+    /// <param name="asofCondition">The ASOF inequality condition (must use &gt;=, &gt;, &lt;=, or &lt;).</param>
+    /// <param name="resultSelector">Expression projecting each pair into a result.</param>
+    /// <returns>A queryable with ASOF JOIN applied.</returns>
+    public static IQueryable<TResult> AsofJoin<TOuter, TInner, TKey, TResult>(
+        this IQueryable<TOuter> outer,
+        IQueryable<TInner> inner,
+        Expression<Func<TOuter, TKey>> outerKeySelector,
+        Expression<Func<TInner, TKey>> innerKeySelector,
+        Expression<Func<TOuter, TInner, bool>> asofCondition,
+        Expression<Func<TOuter, TInner, TResult>> resultSelector)
+    {
+        ArgumentNullException.ThrowIfNull(outer);
+        ArgumentNullException.ThrowIfNull(inner);
+        ArgumentNullException.ThrowIfNull(outerKeySelector);
+        ArgumentNullException.ThrowIfNull(innerKeySelector);
+        ArgumentNullException.ThrowIfNull(asofCondition);
+        ArgumentNullException.ThrowIfNull(resultSelector);
+
+        return outer.Provider.CreateQuery<TResult>(
+            Expression.Call(
+                null,
+                AsofJoinMethodInfo.MakeGenericMethod(
+                    typeof(TOuter), typeof(TInner), typeof(TKey), typeof(TResult)),
+                outer.Expression,
+                inner.Expression,
+                Expression.Quote(outerKeySelector),
+                Expression.Quote(innerKeySelector),
+                Expression.Quote(asofCondition),
+                Expression.Quote(resultSelector)));
+    }
+
+    /// <summary>
+    /// Applies ASOF LEFT JOIN to find the closest matching row, preserving all left rows.
+    /// Unmatched rows have default values for the right side columns.
+    /// </summary>
+    public static IQueryable<TResult> AsofLeftJoin<TOuter, TInner, TKey, TResult>(
+        this IQueryable<TOuter> outer,
+        IQueryable<TInner> inner,
+        Expression<Func<TOuter, TKey>> outerKeySelector,
+        Expression<Func<TInner, TKey>> innerKeySelector,
+        Expression<Func<TOuter, TInner, bool>> asofCondition,
+        Expression<Func<TOuter, TInner, TResult>> resultSelector)
+    {
+        ArgumentNullException.ThrowIfNull(outer);
+        ArgumentNullException.ThrowIfNull(inner);
+        ArgumentNullException.ThrowIfNull(outerKeySelector);
+        ArgumentNullException.ThrowIfNull(innerKeySelector);
+        ArgumentNullException.ThrowIfNull(asofCondition);
+        ArgumentNullException.ThrowIfNull(resultSelector);
+
+        return outer.Provider.CreateQuery<TResult>(
+            Expression.Call(
+                null,
+                AsofLeftJoinMethodInfo.MakeGenericMethod(
+                    typeof(TOuter), typeof(TInner), typeof(TKey), typeof(TResult)),
+                outer.Expression,
+                inner.Expression,
+                Expression.Quote(outerKeySelector),
+                Expression.Quote(innerKeySelector),
+                Expression.Quote(asofCondition),
+                Expression.Quote(resultSelector)));
+    }
+
+    internal static readonly MethodInfo AsofJoinMethodInfo =
+        typeof(ClickHouseQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .First(m => m.Name == nameof(AsofJoin));
+
+    internal static readonly MethodInfo AsofLeftJoinMethodInfo =
+        typeof(ClickHouseQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .First(m => m.Name == nameof(AsofLeftJoin));
 }

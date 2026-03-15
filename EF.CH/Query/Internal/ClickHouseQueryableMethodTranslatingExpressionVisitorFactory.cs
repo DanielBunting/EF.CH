@@ -2,6 +2,7 @@ using System.Linq.Expressions;
 using System.Reflection;
 using EF.CH.Extensions;
 using EF.CH.Query.Internal.WithFill;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Query.SqlExpressions;
 
@@ -173,7 +174,10 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
             {
                 return TranslateWithRawFilter(methodCallExpression);
             }
-        }
+
+            // Note: ArrayJoin and AsofJoin are rewritten by ClickHouseQueryTranslationPreprocessor
+            // before they reach this visitor, so they don't need handling here.
+}
 
         return base.VisitMethodCall(methodCallExpression);
     }
@@ -874,6 +878,42 @@ public class ClickHouseQueryCompilationContextOptions
     /// Raw SQL condition to inject into the WHERE clause.
     /// </summary>
     public string? RawFilterSql { get; set; }
+
+    /// <summary>
+    /// ARRAY JOIN specifications for unnesting array columns.
+    /// </summary>
+    internal List<ArrayJoinSpec> ArrayJoinSpecs { get; } = new();
+
+    /// <summary>
+    /// Whether any ARRAY JOIN has been specified.
+    /// </summary>
+    public bool HasArrayJoin => ArrayJoinSpecs.Count > 0;
+
+    /// <summary>
+    /// ASOF JOIN metadata for closest-match joins.
+    /// </summary>
+    internal AsofJoinInfo? AsofJoin { get; set; }
+}
+
+/// <summary>
+/// Specification for a single ARRAY JOIN column.
+/// </summary>
+internal class ArrayJoinSpec
+{
+    public required string ColumnName { get; init; }
+    public required string Alias { get; init; }
+    public bool IsLeft { get; init; }
+}
+
+/// <summary>
+/// Metadata for an ASOF JOIN inequality condition.
+/// </summary>
+internal class AsofJoinInfo
+{
+    public required string LeftColumnName { get; init; }
+    public required string RightColumnName { get; init; }
+    public required string Operator { get; init; }
+    public bool IsLeft { get; init; }
 }
 
 /// <summary>

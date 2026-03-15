@@ -106,7 +106,12 @@ public class ClickHouseEvaluatableExpressionFilterPlugin : IEvaluatableExpressio
                     genericDef == ClickHouseQueryableExtensions.LimitByMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.LimitByWithOffsetMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.AsCteMethodInfo ||
-                    genericDef == ClickHouseQueryableExtensions.WithRawFilterMethodInfo)
+                    genericDef == ClickHouseQueryableExtensions.WithRawFilterMethodInfo ||
+                    genericDef == ClickHouseQueryableExtensions.ArrayJoinMethodInfo ||
+                    genericDef == ClickHouseQueryableExtensions.LeftArrayJoinMethodInfo ||
+                    genericDef == ClickHouseQueryableExtensions.ArrayJoin2MethodInfo ||
+                    genericDef == ClickHouseQueryableExtensions.AsofJoinMethodInfo ||
+                    genericDef == ClickHouseQueryableExtensions.AsofLeftJoinMethodInfo)
                 {
                     return false;
                 }
