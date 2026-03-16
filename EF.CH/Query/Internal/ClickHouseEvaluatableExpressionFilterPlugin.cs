@@ -83,6 +83,12 @@ public class ClickHouseEvaluatableExpressionFilterPlugin : IEvaluatableExpressio
                 return false;
             }
 
+            // Never evaluate date trunc extension methods - enum args must remain as constants
+            if (declaringType == typeof(ClickHouseDateTruncDbFunctionsExtensions))
+            {
+                return false;
+            }
+
             // Never evaluate ClickHouseFunctions methods - these are translation stubs
             if (declaringType == typeof(ClickHouseFunctions))
             {

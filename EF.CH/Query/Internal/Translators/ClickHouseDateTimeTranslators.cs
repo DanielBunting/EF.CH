@@ -39,10 +39,11 @@ public class ClickHouseDateTimeMemberTranslator : IMemberTranslator
     {
         var declaringType = member.DeclaringType;
 
-        // Handle DateTime and DateTimeOffset
+        // Handle DateTime, DateTimeOffset, DateOnly, and TimeSpan
         if (declaringType != typeof(DateTime) &&
             declaringType != typeof(DateTimeOffset) &&
-            declaringType != typeof(DateOnly))
+            declaringType != typeof(DateOnly) &&
+            declaringType != typeof(TimeSpan))
         {
             return null;
         }
@@ -50,6 +51,38 @@ public class ClickHouseDateTimeMemberTranslator : IMemberTranslator
         // Instance properties (require an instance)
         if (instance is not null)
         {
+            // TimeSpan member access — works when TimeSpan originates from DateTime subtraction
+            // (which produces dateDiff('second', ...) returning seconds as long)
+            if (declaringType == typeof(TimeSpan))
+            {
+                return member.Name switch
+                {
+                    nameof(TimeSpan.TotalSeconds) => _sqlExpressionFactory.Convert(instance, typeof(double)),
+                    nameof(TimeSpan.TotalMilliseconds) => _sqlExpressionFactory.Multiply(
+                        _sqlExpressionFactory.Convert(instance, typeof(double)),
+                        _sqlExpressionFactory.Constant(1000.0)),
+                    nameof(TimeSpan.TotalMinutes) => _sqlExpressionFactory.Divide(
+                        _sqlExpressionFactory.Convert(instance, typeof(double)),
+                        _sqlExpressionFactory.Constant(60.0)),
+                    nameof(TimeSpan.TotalHours) => _sqlExpressionFactory.Divide(
+                        _sqlExpressionFactory.Convert(instance, typeof(double)),
+                        _sqlExpressionFactory.Constant(3600.0)),
+                    nameof(TimeSpan.TotalDays) => _sqlExpressionFactory.Divide(
+                        _sqlExpressionFactory.Convert(instance, typeof(double)),
+                        _sqlExpressionFactory.Constant(86400.0)),
+                    nameof(TimeSpan.Days) => _sqlExpressionFactory.Divide(
+                        instance, _sqlExpressionFactory.Constant(86400L)),
+                    nameof(TimeSpan.Hours) => _sqlExpressionFactory.Modulo(
+                        _sqlExpressionFactory.Divide(instance, _sqlExpressionFactory.Constant(3600L)),
+                        _sqlExpressionFactory.Constant(24L)),
+                    nameof(TimeSpan.Minutes) => _sqlExpressionFactory.Modulo(
+                        _sqlExpressionFactory.Divide(instance, _sqlExpressionFactory.Constant(60L)),
+                        _sqlExpressionFactory.Constant(60L)),
+                    nameof(TimeSpan.Seconds) => _sqlExpressionFactory.Modulo(
+                        instance, _sqlExpressionFactory.Constant(60L)),
+                    _ => null
+                };
+            }
             // Standard date part extraction
             if (DateTimeMemberMappings.TryGetValue(member.Name, out var clickHouseFunction))
             {
