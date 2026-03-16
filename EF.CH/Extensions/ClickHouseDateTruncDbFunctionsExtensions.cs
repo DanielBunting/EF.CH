@@ -87,6 +87,14 @@ public static class ClickHouseDateTruncDbFunctionsExtensions
         => throw new InvalidOperationException("This method is for LINQ translation only.");
 
     /// <summary>
+    /// Translates to ClickHouse <c>dateDiff(unit, start, end)</c>.
+    /// Returns the difference between two dates in the specified unit.
+    /// Prefer the <see cref="ClickHouseIntervalUnit"/> overload for compile-time safety.
+    /// </summary>
+    public static long DateDiff(this DbFunctions _, string unit, DateTime start, DateTime end)
+        => throw new InvalidOperationException("This method is for LINQ translation only.");
+
+    /// <summary>
     /// Translates to ClickHouse <c>toStartOfSecond(dt)</c>.
     /// Rounds down to the start of the second (strips sub-second precision).
     /// </summary>

@@ -660,6 +660,19 @@ public class UtilityFunctionTests
         Assert.Contains("dateDiff(", sql);
     }
 
+    [Fact]
+    public void DateDiff_StringOverload_GeneratesCorrectSql()
+    {
+        using var context = CreateContext();
+
+        var query = context.Entities
+            .Select(e => new { e.Id, Days = EfClass.Functions.DateDiff("day", e.CreatedAt, DateTime.Now) });
+
+        var sql = query.ToQueryString();
+
+        Assert.Contains("dateDiff(", sql);
+    }
+
     #endregion
 
     #region IP Address Function Tests
