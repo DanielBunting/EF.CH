@@ -38,6 +38,13 @@ public class ClickHouseEvaluatableExpressionFilterPlugin : IEvaluatableExpressio
 
         // However, we CAN check if this is a MethodCallExpression to one of our methods.
         // In that case, we tell EF Core not to evaluate (parameterize) it.
+        // Never evaluate ClickHouseConstantExpression - these carry literal values
+        // that must appear as constants in generated SQL
+        if (expression is ClickHouseConstantExpression)
+        {
+            return false;
+        }
+
         if (expression is MethodCallExpression methodCall)
         {
             var method = methodCall.Method;

@@ -202,6 +202,30 @@ public class ClickHouseHistoryRepository : HistoryRepository
         history.Property(h => h.ProductVersion).HasColumnType("String");
     }
 
+    /// <inheritdoc />
+    public override LockReleaseBehavior LockReleaseBehavior => LockReleaseBehavior.Explicit;
+
+    /// <inheritdoc />
+    public override IMigrationsDatabaseLock AcquireDatabaseLock()
+    {
+        // ClickHouse does not support database-level locks
+        return new ClickHouseNoOpDatabaseLock(this);
+    }
+
+    /// <inheritdoc />
+    public override Task<IMigrationsDatabaseLock> AcquireDatabaseLockAsync(CancellationToken cancellationToken = default)
+    {
+        // ClickHouse does not support database-level locks
+        return Task.FromResult<IMigrationsDatabaseLock>(new ClickHouseNoOpDatabaseLock(this));
+    }
+
+    private sealed class ClickHouseNoOpDatabaseLock(IHistoryRepository historyRepository) : IMigrationsDatabaseLock
+    {
+        public IHistoryRepository HistoryRepository => historyRepository;
+        public void Dispose() { }
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
     /// <summary>
     /// Gets a SQL script that returns true if migrations table exists, false otherwise.
     /// </summary>

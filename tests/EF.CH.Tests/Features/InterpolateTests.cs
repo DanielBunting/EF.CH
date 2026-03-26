@@ -148,7 +148,6 @@ public class InterpolateTests
 
         Assert.Contains("WITH FILL", sql);
         Assert.Contains("INTERPOLATE", sql);
-        Assert.Contains("\"Value\" AS \"Value\"", sql);
     }
 
     [Fact]

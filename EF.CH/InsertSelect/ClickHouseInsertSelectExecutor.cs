@@ -213,6 +213,23 @@ public sealed class ClickHouseInsertSelectExecutor : IClickHouseInsertSelectExec
                 }
             }
 
+            // Handle EF Core 10 nested object parameter naming (e.g., "filter_MinAmount")
+            // Try matching by the last segment after underscore
+            var lastSegment = paramName.Contains('_')
+                ? paramName.Substring(paramName.LastIndexOf('_') + 1)
+                : null;
+            if (lastSegment != null)
+            {
+                foreach (var (key, val) in parameterValues)
+                {
+                    var keyBase = ExtractBaseName(key);
+                    if (keyBase.Equals(lastSegment, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return GenerateSqlLiteral(val, typeName);
+                    }
+                }
+            }
+
             // Parameter not found - throw helpful error
             throw new InvalidOperationException(
                 $"INSERT...SELECT: Could not resolve parameter '{paramName}' (type: {typeName}). " +

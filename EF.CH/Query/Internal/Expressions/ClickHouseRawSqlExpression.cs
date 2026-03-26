@@ -23,6 +23,9 @@ public sealed class ClickHouseRawSqlExpression : SqlExpression
         Sql = sql ?? throw new ArgumentNullException(nameof(sql));
     }
 
+    public override Expression Quote()
+        => throw new InvalidOperationException("ClickHouseRawSqlExpression is a custom expression that cannot be quoted.");
+
     protected override Expression VisitChildren(ExpressionVisitor visitor) => this;
 
     protected override void Print(ExpressionPrinter expressionPrinter)
