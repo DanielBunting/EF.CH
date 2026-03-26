@@ -293,9 +293,8 @@ public class NestedTypeTests
         var query = context.GameEvents.Where(e => e.Goals.Count > 0);
         var sql = query.ToQueryString();
 
-        // .Count translates to length() on the first field of the Nested type
-        // EF Core does NOT automatically optimize .Count > 0 to .Any()
-        Assert.Contains("length", sql);
+        // EF Core 9 optimizes .Count > 0 into .Any(), which translates to notEmpty()
+        Assert.Contains("notEmpty", sql);
         Assert.Contains("Goals.ID", sql); // Uses first field pattern
     }
 

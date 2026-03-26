@@ -15,12 +15,19 @@ internal sealed class InterpolateColumnSpec
     /// <summary>
     /// Interpolation mode (Prev, Default).
     /// </summary>
-    public InterpolateMode Mode { get; init; } = InterpolateMode.Default;
+    public InterpolateMode Mode { get; set; } = InterpolateMode.Default;
+
+    /// <summary>
+    /// Raw mode value that may be a DeferredParameter (for EF Core 9+ compatibility).
+    /// If set, takes precedence over Mode during resolution.
+    /// </summary>
+    public object? ModeValue { get; set; }
 
     /// <summary>
     /// Constant value for constant-fill mode.
+    /// May be a DeferredParameter (for EF Core 9+ compatibility).
     /// </summary>
-    public object? ConstantValue { get; init; }
+    public object? ConstantValue { get; set; }
 
     /// <summary>
     /// Whether this uses a constant value fill.

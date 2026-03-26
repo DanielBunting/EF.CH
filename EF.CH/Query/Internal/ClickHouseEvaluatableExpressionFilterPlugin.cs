@@ -75,14 +75,6 @@ public class ClickHouseEvaluatableExpressionFilterPlugin : IEvaluatableExpressio
                 return false;
             }
 
-            // Never evaluate EF.Constant() calls - these are used to prevent parameterization
-            // of literal values that must appear as constants in generated SQL (e.g., SAMPLE, LIMIT BY)
-            if (declaringType?.FullName == "Microsoft.EntityFrameworkCore.EF" &&
-                method.Name == "Constant")
-            {
-                return false;
-            }
-
             // Never evaluate date trunc extension methods - enum args must remain as constants
             if (declaringType == typeof(ClickHouseDateTruncDbFunctionsExtensions))
             {
@@ -101,14 +93,23 @@ public class ClickHouseEvaluatableExpressionFilterPlugin : IEvaluatableExpressio
                 return false;
             }
 
+            // Prevent evaluation of IQueryable extension methods and their arguments.
+            // In EF Core 9+, the funcletizer evaluates arguments independently,
+            // so we must also block EF.Constant() wrapping our constants.
+            if (declaringType?.FullName == "Microsoft.EntityFrameworkCore.EF" &&
+                method.Name == "Constant")
+            {
+                return false;
+            }
+
             if (method.IsGenericMethod)
             {
                 var genericDef = method.GetGenericMethodDefinition();
 
-                // Don't parameterize calls to Sample, WithSetting, WithSettings, or LimitBy
                 if (genericDef == ClickHouseQueryableExtensions.SampleMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.SampleWithOffsetMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.WithSettingsMethodInfo ||
+                    genericDef == ClickHouseQueryableExtensions.WithSettingMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.LimitByMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.LimitByWithOffsetMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.AsCteMethodInfo ||
@@ -122,7 +123,6 @@ public class ClickHouseEvaluatableExpressionFilterPlugin : IEvaluatableExpressio
                     return false;
                 }
 
-                // Don't parameterize calls to Interpolate extension methods
                 if (InterpolateExtensions.AllMethodInfos.Contains(genericDef))
                 {
                     return false;

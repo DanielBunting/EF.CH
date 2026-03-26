@@ -94,6 +94,9 @@ public sealed class ClickHouseWindowFunctionExpression : SqlExpression
             typeMapping ?? TypeMapping);
 
     /// <inheritdoc />
+    public override Expression Quote() => this;
+
+    /// <inheritdoc />
     protected override Expression VisitChildren(ExpressionVisitor visitor)
     {
         var changed = false;

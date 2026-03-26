@@ -129,12 +129,8 @@ public class ClickHouseNestedMethodTranslator : IMethodCallTranslator
             return null;
         }
 
-        // Get the column name from the expression
-        string? columnName = nestedExpression switch
-        {
-            ColumnExpression column => column.Name,
-            _ => null
-        };
+        // Get the column name from the expression, unwrapping intermediate expression types
+        var columnName = ExtractColumnName(nestedExpression);
 
         if (columnName is null)
         {
@@ -148,6 +144,20 @@ public class ClickHouseNestedMethodTranslator : IMethodCallTranslator
         // Create a SQL fragment for the sub-column with proper quoting
         // ClickHouse uses "Column.Field" syntax for nested field access
         return _sqlExpressionFactory.Fragment($"\"{subColumnName}\"");
+    }
+
+    /// <summary>
+    /// Recursively unwraps intermediate expression types to find the inner ColumnExpression name.
+    /// EF Core may wrap columns in SqlUnaryExpression or other wrappers depending on context.
+    /// </summary>
+    private static string? ExtractColumnName(SqlExpression expression)
+    {
+        return expression switch
+        {
+            ColumnExpression column => column.Name,
+            SqlUnaryExpression unary => ExtractColumnName(unary.Operand),
+            _ => null
+        };
     }
 }
 
@@ -203,12 +213,8 @@ public class ClickHouseNestedMemberTranslator : IMemberTranslator
     /// </summary>
     private SqlExpression? GetFirstFieldColumn(SqlExpression nestedExpression, ClickHouseNestedTypeMapping nestedMapping)
     {
-        // Get the column name from the expression
-        string? columnName = nestedExpression switch
-        {
-            ColumnExpression column => column.Name,
-            _ => null
-        };
+        // Get the column name from the expression, unwrapping intermediate expression types
+        var columnName = ExtractColumnName(nestedExpression);
 
         if (columnName is null)
         {
@@ -221,5 +227,18 @@ public class ClickHouseNestedMemberTranslator : IMemberTranslator
 
         // Create a SQL fragment for the sub-column with proper quoting
         return _sqlExpressionFactory.Fragment($"\"{subColumnName}\"");
+    }
+
+    /// <summary>
+    /// Recursively unwraps intermediate expression types to find the inner ColumnExpression name.
+    /// </summary>
+    private static string? ExtractColumnName(SqlExpression expression)
+    {
+        return expression switch
+        {
+            ColumnExpression column => column.Name,
+            SqlUnaryExpression unary => ExtractColumnName(unary.Operand),
+            _ => null
+        };
     }
 }

@@ -34,11 +34,12 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     private static SqlExpression? _currentPreWhereExpression;
 
     // Thread-local storage for LIMIT BY options
+    // Values may be int (direct) or DeferredParameter (resolved via ResolveDeferredParameters)
     [ThreadStatic]
-    private static int? _currentLimitByLimit;
+    private static object? _currentLimitByLimit;
 
     [ThreadStatic]
-    private static int? _currentLimitByOffset;
+    private static object? _currentLimitByOffset;
 
     [ThreadStatic]
     private static List<SqlExpression>? _currentLimitByExpressions;
@@ -50,6 +51,10 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     // Thread-local storage for raw SQL filter
     [ThreadStatic]
     private static string? _currentRawFilter;
+
+    // Thread-local storage for deferred raw SQL filter
+    [ThreadStatic]
+    private static DeferredParameter? _currentDeferredRawFilter;
 
     // Thread-local storage for CTE definitions
     [ThreadStatic]
@@ -63,6 +68,15 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     [ThreadStatic]
     private static AsofJoinInfo? _currentAsofJoin;
 
+    // Thread-local storage for resolved CTE names (used when deferred CTE names are resolved)
+    [ThreadStatic]
+    private static Dictionary<string, string>? _resolvedCteNames;
+
+    // Thread-local storage for parameter values, used for inline deferred resolution
+    // during SQL generation when ResolveDeferredParameters may not have caught everything
+    [ThreadStatic]
+    private static IReadOnlyDictionary<string, object?>? _currentParameterValues;
+
     public ClickHouseQuerySqlGenerator(
         QuerySqlGeneratorDependencies dependencies,
         IRelationalTypeMappingSource typeMappingSource)
@@ -72,14 +86,43 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
         _typeMappingSource = typeMappingSource;
     }
 
+    // Thread-local storage for deferred settings (from WithSettings with parameterized dictionary)
+    [ThreadStatic]
+    private static DeferredParameter? _currentDeferredSettings;
+
+    // Thread-local storage for deferred setting pairs (from WithSetting with parameterized name/value)
+    [ThreadStatic]
+    private static List<(object Name, object Value)>? _currentDeferredSettingPairs;
+
+    // Thread-local storage for sample options (may contain DeferredParameter)
+    [ThreadStatic]
+    private static object? _currentSampleFraction;
+
+    [ThreadStatic]
+    private static object? _currentSampleOffset;
+
     /// <summary>
     /// Sets query settings to be appended as SETTINGS clause.
     /// This is called during query translation and read during SQL generation.
     /// Settings are automatically cleared after being consumed by GenerateSettings().
     /// </summary>
-    internal static void SetQuerySettings(Dictionary<string, object> settings)
+    internal static void SetQuerySettings(
+        Dictionary<string, object> settings,
+        DeferredParameter? deferredSettings = null,
+        List<(object Name, object Value)>? deferredSettingPairs = null)
     {
         _currentQuerySettings = settings.Count > 0 ? new Dictionary<string, object>(settings) : null;
+        _currentDeferredSettings = deferredSettings;
+        _currentDeferredSettingPairs = deferredSettingPairs is { Count: > 0 } ? new List<(object, object)>(deferredSettingPairs) : null;
+    }
+
+    /// <summary>
+    /// Sets sample options for deferred resolution.
+    /// </summary>
+    internal static void SetSampleOptions(object? fraction, object? offset)
+    {
+        _currentSampleFraction = fraction;
+        _currentSampleOffset = offset;
     }
 
     /// <summary>
@@ -102,11 +145,191 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     /// Sets LIMIT BY options for SQL generation.
     /// LIMIT BY generates: LIMIT [offset,] limit BY column1[, column2, ...]
     /// </summary>
-    internal static void SetLimitBy(int limit, int? offset, List<SqlExpression> expressions)
+    internal static void SetLimitBy(object limit, object? offset, List<SqlExpression> expressions)
     {
         _currentLimitByLimit = limit;
         _currentLimitByOffset = offset;
         _currentLimitByExpressions = expressions;
+    }
+
+    /// <summary>
+    /// Resolves any deferred parameter values in the thread-local state.
+    /// Called by ClickHouseParameterBasedSqlProcessor when parameter values become available.
+    /// </summary>
+    internal static void ResolveDeferredParameters(IReadOnlyDictionary<string, object?>? parameterValues)
+    {
+        // Always store parameter values for inline resolution, even if empty
+        if (parameterValues != null)
+            _currentParameterValues = parameterValues;
+
+        if (parameterValues == null || parameterValues.Count == 0)
+            return;
+
+        // Resolve LIMIT BY deferred parameters
+        if (_currentLimitByLimit is DeferredParameter limitParam)
+            _currentLimitByLimit = DeferredParameter.ResolveValue<int>(limitParam, parameterValues);
+
+        if (_currentLimitByOffset is DeferredParameter offsetParam)
+            _currentLimitByOffset = DeferredParameter.ResolveValue<int>(offsetParam, parameterValues);
+
+        // Resolve SAMPLE deferred parameters
+        if (_currentSampleFraction is DeferredParameter fractionParam)
+            _currentSampleFraction = DeferredParameter.ResolveValue<double>(fractionParam, parameterValues);
+
+        if (_currentSampleOffset is DeferredParameter sampleOffsetParam)
+            _currentSampleOffset = DeferredParameter.ResolveValue<double>(sampleOffsetParam, parameterValues);
+
+        // Resolve deferred settings dictionary (from WithSettings)
+        if (_currentDeferredSettings is DeferredParameter deferredSettingsParam)
+        {
+            var dict = deferredSettingsParam.Resolve<IDictionary<string, object>>(parameterValues);
+            _currentQuerySettings ??= new Dictionary<string, object>();
+            foreach (var kvp in dict)
+            {
+                _currentQuerySettings[kvp.Key] = kvp.Value;
+            }
+            _currentDeferredSettings = null;
+        }
+
+        // Resolve deferred setting pairs (from WithSetting with parameterized name/value)
+        if (_currentDeferredSettingPairs is { Count: > 0 })
+        {
+            _currentQuerySettings ??= new Dictionary<string, object>();
+            foreach (var (nameVal, valueVal) in _currentDeferredSettingPairs)
+            {
+                var resolvedName = nameVal is DeferredParameter np
+                    ? np.Resolve<string>(parameterValues)
+                    : (string)nameVal;
+                var resolvedValue = valueVal is DeferredParameter vp
+                    ? vp.Resolve<object>(parameterValues)
+                    : valueVal;
+                _currentQuerySettings[resolvedName] = resolvedValue;
+            }
+            _currentDeferredSettingPairs = null;
+        }
+
+        // Resolve deferred values in existing settings dictionary
+        if (_currentQuerySettings != null)
+        {
+            var keysToResolve = new List<string>();
+            foreach (var kvp in _currentQuerySettings)
+            {
+                if (kvp.Value is DeferredParameter)
+                    keysToResolve.Add(kvp.Key);
+            }
+            foreach (var key in keysToResolve)
+            {
+                var dp = (DeferredParameter)_currentQuerySettings[key];
+                _currentQuerySettings[key] = dp.Resolve<object>(parameterValues);
+            }
+        }
+
+        // Resolve deferred raw filter
+        if (_currentDeferredRawFilter is DeferredParameter rawFilterParam)
+        {
+            _currentRawFilter = rawFilterParam.Resolve<string>(parameterValues);
+            _currentDeferredRawFilter = null;
+        }
+
+        // Resolve deferred CTE names
+        if (_currentCteDefinitions != null)
+        {
+            foreach (var cte in _currentCteDefinitions)
+            {
+                if (cte.NameValue is DeferredParameter cteNameParam)
+                {
+                    var resolved = cteNameParam.Resolve<string>(parameterValues);
+                    cte.ResolveName(resolved);
+                    // Store mapping so VisitCteReference can find the resolved name
+                    // even after _currentCteDefinitions is consumed
+                    _resolvedCteNames ??= new Dictionary<string, string>();
+                    _resolvedCteNames["__deferred_cte__"] = resolved;
+                }
+            }
+        }
+
+        // Resolve deferred WITH FILL values
+        if (_currentWithFillOptions != null)
+        {
+            foreach (var spec in _currentWithFillOptions.WithFillSpecs.Values)
+            {
+                if (spec.Step is DeferredParameter stepParam)
+                    spec.Step = stepParam.Resolve<object>(parameterValues);
+                if (spec.From is DeferredParameter fromParam)
+                    spec.From = fromParam.Resolve<object>(parameterValues);
+                if (spec.To is DeferredParameter toParam)
+                    spec.To = toParam.Resolve<object>(parameterValues);
+                if (spec.Staleness is DeferredParameter stalenessParam)
+                    spec.Staleness = stalenessParam.Resolve<object>(parameterValues);
+            }
+
+            foreach (var spec in _currentWithFillOptions.InterpolateSpecs)
+            {
+                if (spec.ModeValue is DeferredParameter modeParam)
+                {
+                    var resolved = modeParam.Resolve<object>(parameterValues);
+                    spec.ModeValue = resolved;
+                    if (resolved is InterpolateMode m)
+                        spec.Mode = m;
+                }
+                if (spec.ConstantValue is DeferredParameter constParam)
+                    spec.ConstantValue = constParam.Resolve<object>(parameterValues);
+            }
+
+            // Resolve deferred interpolate builder
+            if (_currentWithFillOptions.DeferredInterpolateBuilder is DeferredParameter builderParam)
+            {
+                var builderVal = builderParam.Resolve<object>(parameterValues);
+                _currentWithFillOptions.DeferredInterpolateBuilder = null;
+
+                if (builderVal != null)
+                {
+                    // Extract columns from the builder using reflection (same as TranslateInterpolate)
+                    var builderType = builderVal.GetType();
+                    var columnsProperty = builderType.GetProperty("Columns",
+                        System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+                    if (columnsProperty?.GetValue(builderVal) is System.Collections.IEnumerable columns)
+                    {
+                        foreach (var col in columns)
+                        {
+                            var colType = col.GetType();
+                            var columnProp = colType.GetProperty("Column");
+                            var modeProp = colType.GetProperty("Mode");
+                            var constantProp = colType.GetProperty("Constant");
+                            var isConstantProp = colType.GetProperty("IsConstant");
+
+                            var columnExpr = columnProp?.GetValue(col) as System.Linq.Expressions.LambdaExpression;
+                            var mode = modeProp?.GetValue(col);
+                            var constant = constantProp?.GetValue(col);
+                            var isConstant = (bool)(isConstantProp?.GetValue(col) ?? false);
+
+                            if (columnExpr != null)
+                            {
+                                var body = columnExpr.Body;
+                                if (body is System.Linq.Expressions.UnaryExpression unary
+                                    && unary.NodeType == System.Linq.Expressions.ExpressionType.Convert)
+                                    body = unary.Operand;
+
+                                var columnName = body is System.Linq.Expressions.MemberExpression member
+                                    ? member.Member.Name
+                                    : body.ToString();
+
+                                _currentWithFillOptions.InterpolateSpecs.Add(new InterpolateColumnSpec
+                                {
+                                    ColumnName = columnName,
+                                    Mode = isConstant
+                                        ? InterpolateMode.Default
+                                        : (InterpolateMode)(mode ?? InterpolateMode.Default),
+                                    IsConstant = isConstant,
+                                    ConstantValue = constant
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// <summary>
@@ -119,10 +342,12 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
 
     /// <summary>
     /// Sets a raw SQL filter to be AND-ed into the WHERE clause.
+    /// Value may be a string (direct) or DeferredParameter (resolved via ResolveDeferredParameters).
     /// </summary>
-    internal static void SetRawFilter(string rawFilter)
+    internal static void SetRawFilter(object rawFilter)
     {
-        _currentRawFilter = rawFilter;
+        _currentRawFilter = rawFilter is string s ? s : null;
+        _currentDeferredRawFilter = rawFilter is DeferredParameter dp ? dp : null;
     }
 
     /// <summary>
@@ -361,16 +586,26 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
         }
 
         // Add SAMPLE if requested
-        if (expression.SampleFraction.HasValue)
-        {
-            Sql.Append(" SAMPLE ");
-            Sql.Append(expression.SampleFraction.Value.ToString("G", CultureInfo.InvariantCulture));
+        // Use the resolved thread-local values (which may have been deferred parameters)
+        var fraction = _currentSampleFraction ?? expression.SampleFraction;
+        var offset = _currentSampleOffset ?? expression.SampleOffset;
 
-            if (expression.SampleOffset.HasValue)
+        if (fraction != null)
+        {
+            var fractionDouble = fraction is double d ? d : Convert.ToDouble(fraction);
+            Sql.Append(" SAMPLE ");
+            Sql.Append(fractionDouble.ToString("G", CultureInfo.InvariantCulture));
+
+            if (offset != null)
             {
+                var offsetDouble = offset is double od ? od : Convert.ToDouble(offset);
                 Sql.Append(" OFFSET ");
-                Sql.Append(expression.SampleOffset.Value.ToString("G", CultureInfo.InvariantCulture));
+                Sql.Append(offsetDouble.ToString("G", CultureInfo.InvariantCulture));
             }
+
+            // Clear after consumption to prevent leakage
+            _currentSampleFraction = null;
+            _currentSampleOffset = null;
         }
 
         return expression;
@@ -409,9 +644,30 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     /// </summary>
     private Expression VisitCteReference(ClickHouseCteReferenceExpression expression)
     {
-        Sql.Append(_sqlGenerationHelper.DelimitIdentifier(expression.CteName));
+        // For deferred CTE names, look up the resolved name
+        var cteName = expression.CteName;
+        if (cteName == "__deferred_cte__")
+        {
+            // First try the resolved names map (persists after CTE definitions are consumed)
+            if (_resolvedCteNames?.TryGetValue(cteName, out var resolvedName) == true)
+            {
+                cteName = resolvedName;
+            }
+            // Fall back to CTE definitions if still available
+            else if (_currentCteDefinitions != null)
+            {
+                var resolved = _currentCteDefinitions.FirstOrDefault(c => c.Name != "__deferred_cte__");
+                if (resolved != null)
+                    cteName = resolved.Name;
+            }
+        }
+
+        Sql.Append(_sqlGenerationHelper.DelimitIdentifier(cteName));
         Sql.Append(" AS ");
         Sql.Append(_sqlGenerationHelper.DelimitIdentifier(expression.Alias!));
+
+        // Clean up resolved names after use
+        _resolvedCteNames = null;
         return expression;
     }
 
@@ -699,6 +955,21 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     /// </summary>
     private void GenerateFillValue(object value)
     {
+        // Resolve any remaining DeferredParameter inline using stored parameter values
+        if (value is DeferredParameter dp)
+        {
+            if (_currentParameterValues != null)
+            {
+                value = dp.Resolve<object>(_currentParameterValues);
+                // Fall through to switch below with resolved value
+            }
+            else
+            {
+                Sql.Append(value.ToString() ?? "0");
+                return;
+            }
+        }
+
         switch (value)
         {
             case DateTime dt:
@@ -736,6 +1007,19 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     /// </summary>
     private void GenerateStepValue(object step)
     {
+        // Resolve any remaining DeferredParameter inline
+        if (step is DeferredParameter dp)
+        {
+            if (_currentParameterValues != null)
+                step = dp.Resolve<object>(_currentParameterValues);
+            else
+            {
+                    Sql.Append(step.ToString() ?? "0");
+                return;
+            }
+        }
+
+
         switch (step)
         {
             case TimeSpan ts:
@@ -798,7 +1082,10 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
             var quotedName = _sqlGenerationHelper.DelimitIdentifier(spec.ColumnName);
             Sql.Append(quotedName);
 
-            if (spec.Mode == InterpolateMode.Prev)
+            // Determine effective mode - ModeValue takes precedence (may have been deferred)
+            var effectiveMode = spec.ModeValue is InterpolateMode mv ? mv : spec.Mode;
+
+            if (effectiveMode == InterpolateMode.Prev)
             {
                 // Forward-fill: column AS column
                 Sql.Append(" AS ");
@@ -806,7 +1093,7 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
             }
             else if (spec.IsConstant && spec.ConstantValue != null)
             {
-                // Constant value
+                // Constant value (DeferredParameter should already be resolved)
                 Sql.Append(" AS ");
                 GenerateFillValue(spec.ConstantValue);
             }
@@ -863,13 +1150,14 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
         Sql.AppendLine();
         Sql.Append("LIMIT ");
 
-        if (offset.HasValue && offset.Value > 0)
+        if (offset is int offsetInt && offsetInt > 0)
         {
-            Sql.Append(offset.Value.ToString(CultureInfo.InvariantCulture));
+            Sql.Append(offsetInt.ToString(CultureInfo.InvariantCulture));
             Sql.Append(", ");
         }
 
-        Sql.Append(limit.Value.ToString(CultureInfo.InvariantCulture));
+        var limitInt = limit is int li ? li : Convert.ToInt32(limit);
+        Sql.Append(limitInt.ToString(CultureInfo.InvariantCulture));
         Sql.Append(" BY ");
 
         for (var i = 0; i < expressions.Count; i++)

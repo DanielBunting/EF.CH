@@ -167,6 +167,9 @@ public sealed class ClickHouseJsonPathExpression : SqlExpression
         => new(Column, PathSegments, ArrayIndices, Type, typeMapping ?? TypeMapping);
 
     /// <inheritdoc />
+    public override Expression Quote() => this;
+
+    /// <inheritdoc />
     protected override Expression VisitChildren(ExpressionVisitor visitor)
     {
         var newColumn = (SqlExpression)visitor.Visit(Column);

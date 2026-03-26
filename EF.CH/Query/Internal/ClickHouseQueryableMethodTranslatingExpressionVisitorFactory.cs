@@ -206,25 +206,19 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
         // Visit the source to get the translated query
         var source = Visit(methodCallExpression.Arguments[0]);
 
-        // Get the fraction value - it may be wrapped in EF.Constant() to prevent parameterization
-        var fractionArg = methodCallExpression.Arguments[1];
-        if (!TryGetConstantValue<double>(fractionArg, out var fraction))
-        {
-            throw new InvalidOperationException(
-                $"Sample fraction must be a constant value. Got expression type: {fractionArg.GetType().Name}, NodeType: {fractionArg.NodeType}");
-        }
+        // Get the fraction value - may be a constant or deferred parameter (EF Core 9+)
+        var fractionVal = GetConstantOrDeferredValue(methodCallExpression.Arguments[1])
+            ?? throw new InvalidOperationException(
+                $"Sample fraction must be a constant value. Got expression type: {methodCallExpression.Arguments[1].GetType().Name}, NodeType: {methodCallExpression.Arguments[1].NodeType}");
 
-        _options.SampleFraction = fraction;
+        _options.SampleFraction = fractionVal;
 
         if (hasOffset)
         {
-            var offsetArg = methodCallExpression.Arguments[2];
-            if (!TryGetConstantValue<double>(offsetArg, out var offsetValue))
-            {
-                throw new InvalidOperationException(
-                    $"Sample offset must be a constant value. Got expression type: {offsetArg.GetType().Name}");
-            }
-            _options.SampleOffset = offsetValue;
+            var offsetVal = GetConstantOrDeferredValue(methodCallExpression.Arguments[2])
+                ?? throw new InvalidOperationException(
+                    $"Sample offset must be a constant value. Got expression type: {methodCallExpression.Arguments[2].GetType().Name}");
+            _options.SampleOffset = offsetVal;
         }
 
         return source;
@@ -238,15 +232,22 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
     {
         var source = Visit(methodCallExpression.Arguments[0]);
 
-        var settingsArg = methodCallExpression.Arguments[1];
-        if (!TryGetConstantValue<IDictionary<string, object>>(settingsArg, out var settings))
+        var settingsVal = GetConstantOrDeferredValue(methodCallExpression.Arguments[1]);
+        if (settingsVal is IDictionary<string, object> settings)
+        {
+            foreach (var kvp in settings)
+            {
+                _options.QuerySettings[kvp.Key] = kvp.Value;
+            }
+        }
+        else if (settingsVal is DeferredParameter deferred)
+        {
+            // Store the deferred parameter - will be resolved when parameter values are available
+            _options.DeferredSettings = deferred;
+        }
+        else
         {
             throw new InvalidOperationException("WithSettings argument must be a constant dictionary.");
-        }
-
-        foreach (var kvp in settings)
-        {
-            _options.QuerySettings[kvp.Key] = kvp.Value;
         }
 
         return source;
@@ -260,22 +261,29 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
     {
         var source = Visit(methodCallExpression.Arguments[0]);
 
-        var nameArg = methodCallExpression.Arguments[1];
-        var valueArg = methodCallExpression.Arguments[2];
+        var nameVal = GetConstantOrDeferredValue(methodCallExpression.Arguments[1])
+            ?? throw new InvalidOperationException(
+                $"WithSetting name must be a constant string. Got expression type: {methodCallExpression.Arguments[1].GetType().Name}, NodeType: {methodCallExpression.Arguments[1].NodeType}");
 
-        if (!TryGetConstantValue<string>(nameArg, out var name))
+        var valueVal = GetConstantOrDeferredValue(methodCallExpression.Arguments[2])
+            ?? throw new InvalidOperationException(
+                $"WithSetting value must be a constant. Got expression type: {methodCallExpression.Arguments[2].GetType().Name}, NodeType: {methodCallExpression.Arguments[2].NodeType}");
+
+        if (nameVal is string name)
+        {
+            // Direct constant name - store value (which may itself be deferred)
+            _options.QuerySettings[name] = valueVal;
+        }
+        else if (nameVal is DeferredParameter)
+        {
+            // Both name and value are deferred - store as a pending setting pair
+            _options.DeferredSettingPairs.Add((nameVal, valueVal));
+        }
+        else
         {
             throw new InvalidOperationException(
-                $"WithSetting name must be a constant string. Got expression type: {nameArg.GetType().Name}, NodeType: {nameArg.NodeType}");
+                $"WithSetting name must be a constant string. Got: {nameVal.GetType().Name}");
         }
-
-        if (!TryGetConstantValue<object>(valueArg, out var value))
-        {
-            throw new InvalidOperationException(
-                $"WithSetting value must be a constant. Got expression type: {valueArg.GetType().Name}, NodeType: {valueArg.NodeType}");
-        }
-
-        _options.QuerySettings[name] = value;
 
         return source;
     }
@@ -293,11 +301,9 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
         var fillSelector = UnwrapLambda(fillArg);
         var fillColumnName = ExtractMemberName(fillSelector);
 
-        // Extract step (argument 2)
-        if (!TryGetConstantValue<object>(methodCallExpression.Arguments[2], out var step))
-        {
-            throw new InvalidOperationException("Interpolate step must be a constant value.");
-        }
+        // Extract step (argument 2) - may be constant or deferred parameter
+        var step = GetConstantOrDeferredValue(methodCallExpression.Arguments[2])
+            ?? throw new InvalidOperationException("Interpolate step must be a constant value.");
 
         object? from = null;
         object? to = null;
@@ -314,15 +320,17 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
         // Builder: 4 args with 2 generic args, last is Action<InterpolateBuilder<T>>
 
         var isFromTo = paramCount == 5 && genericArgCount == 2;
+        // For ColumnMode detection, check both ConstantExpression and ParameterExpression cases
         var isColumnMode = paramCount == 5 && genericArgCount == 3 &&
-            methodCallExpression.Arguments[4] is ConstantExpression ce && ce.Type == typeof(InterpolateMode);
+            (methodCallExpression.Arguments[4] is ConstantExpression ce && ce.Type == typeof(InterpolateMode)
+             || IsInterpolateModeArgument(methodCallExpression.Arguments[4]));
         var isColumnConstant = paramCount == 5 && genericArgCount == 3 && !isColumnMode;
         var isBuilder = paramCount == 4 && genericArgCount == 2;
 
         if (isFromTo)
         {
-            TryGetConstantValue<object>(methodCallExpression.Arguments[3], out from);
-            TryGetConstantValue<object>(methodCallExpression.Arguments[4], out to);
+            from = GetConstantOrDeferredValue(methodCallExpression.Arguments[3]);
+            to = GetConstantOrDeferredValue(methodCallExpression.Arguments[4]);
         }
 
         // Store the fill spec
@@ -341,15 +349,14 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
             var columnSelector = UnwrapLambda(columnArg);
             var columnName = ExtractMemberName(columnSelector);
 
-            if (!TryGetConstantValue<InterpolateMode>(methodCallExpression.Arguments[4], out var mode))
-            {
-                throw new InvalidOperationException("Interpolate mode must be a constant value.");
-            }
+            var modeVal = GetConstantOrDeferredValue(methodCallExpression.Arguments[4])
+                ?? throw new InvalidOperationException("Interpolate mode must be a constant value.");
 
             _options.InterpolateSpecs.Add(new InterpolateColumnSpec
             {
                 ColumnName = columnName,
-                Mode = mode
+                Mode = modeVal is InterpolateMode m ? m : InterpolateMode.Default,
+                ModeValue = modeVal
             });
         }
         else if (isColumnConstant)
@@ -358,7 +365,7 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
             var columnSelector = UnwrapLambda(columnArg);
             var columnName = ExtractMemberName(columnSelector);
 
-            TryGetConstantValue<object>(methodCallExpression.Arguments[4], out var constantValue);
+            var constantValue = GetConstantOrDeferredValue(methodCallExpression.Arguments[4]);
 
             _options.InterpolateSpecs.Add(new InterpolateColumnSpec
             {
@@ -369,18 +376,27 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
         }
         else if (isBuilder)
         {
-            // Extract the builder from the constant
-            if (!TryGetConstantValue<object>(methodCallExpression.Arguments[3], out var builderObj))
+            // Extract the builder - try GetConstantOrDeferredValue first.
+            // If EF Core 9+ auto-parameterized it, defer builder processing to ResolveDeferredParameters.
+            var builderVal = GetConstantOrDeferredValue(methodCallExpression.Arguments[3]);
+            if (builderVal is DeferredParameter deferredBuilder)
+            {
+                // Store for deferred resolution when parameter values become available
+                _options.DeferredInterpolateBuilder = deferredBuilder;
+                return source;
+            }
+
+            if (builderVal == null)
             {
                 throw new InvalidOperationException("Interpolate builder must be a constant value.");
             }
 
             // Use reflection to get the Columns property from InterpolateBuilder<T>
-            var builderType = builderObj.GetType();
+            var builderType = builderVal.GetType();
             var columnsProperty = builderType.GetProperty("Columns",
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
 
-            if (columnsProperty?.GetValue(builderObj) is System.Collections.IEnumerable columns)
+            if (columnsProperty?.GetValue(builderVal) is System.Collections.IEnumerable columns)
             {
                 foreach (var col in columns)
                 {
@@ -461,15 +477,15 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
     {
         var source = Visit(methodCallExpression.Arguments[0]);
 
-        var nameArg = methodCallExpression.Arguments[1];
-        if (!TryGetConstantValue<string>(nameArg, out var name))
-        {
-            throw new InvalidOperationException("AsCte name must be a constant string.");
-        }
+        var nameVal = GetConstantOrDeferredValue(methodCallExpression.Arguments[1])
+            ?? throw new InvalidOperationException("AsCte name must be a constant string.");
 
-        if (string.IsNullOrWhiteSpace(name))
+        if (nameVal is string name)
         {
-            throw new ArgumentException("CTE name cannot be empty.", nameof(name));
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                throw new ArgumentException("CTE name cannot be empty.", nameof(name));
+            }
         }
 
         if (_options.PendingCteName != null)
@@ -478,7 +494,7 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
                 $"Cannot define multiple CTEs in a single query. Already defined CTE '{_options.PendingCteName}'.");
         }
 
-        _options.PendingCteName = name;
+        _options.PendingCteName = nameVal;
 
         return source;
     }
@@ -491,18 +507,18 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
     {
         var source = Visit(methodCallExpression.Arguments[0]);
 
-        var sqlArg = methodCallExpression.Arguments[1];
-        if (!TryGetConstantValue<string>(sqlArg, out var rawSql))
+        var sqlVal = GetConstantOrDeferredValue(methodCallExpression.Arguments[1])
+            ?? throw new InvalidOperationException("WithRawFilter argument must be a constant string.");
+
+        if (sqlVal is string rawSql)
         {
-            throw new InvalidOperationException("WithRawFilter argument must be a constant string.");
+            if (string.IsNullOrWhiteSpace(rawSql))
+            {
+                throw new ArgumentException("WithRawFilter SQL condition cannot be empty.");
+            }
         }
 
-        if (string.IsNullOrWhiteSpace(rawSql))
-        {
-            throw new ArgumentException("WithRawFilter SQL condition cannot be empty.");
-        }
-
-        _options.RawFilterSql = rawSql;
+        _options.RawFilterSql = sqlVal;
 
         return source;
     }
@@ -546,20 +562,16 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
         // Extract offset if present
         if (hasOffset)
         {
-            if (!TryGetConstantValue<int>(methodCallExpression.Arguments[argIndex], out var offset))
-            {
-                throw new InvalidOperationException("LimitBy offset must be a constant value.");
-            }
-            _options.LimitByOffset = offset;
+            var offsetVal = GetConstantOrDeferredValue(methodCallExpression.Arguments[argIndex])
+                ?? throw new InvalidOperationException("LimitBy offset must be a constant value.");
+            _options.LimitByOffset = offsetVal;
             argIndex++;
         }
 
         // Extract limit
-        if (!TryGetConstantValue<int>(methodCallExpression.Arguments[argIndex], out var limit))
-        {
-            throw new InvalidOperationException("LimitBy limit must be a constant value.");
-        }
-        _options.LimitByLimit = limit;
+        var limitVal = GetConstantOrDeferredValue(methodCallExpression.Arguments[argIndex])
+            ?? throw new InvalidOperationException("LimitBy limit must be a constant value.");
+        _options.LimitByLimit = limitVal;
         argIndex++;
 
         // Extract key selector lambda
@@ -618,6 +630,26 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
     }
 
     /// <summary>
+    /// Checks if an argument expression represents an InterpolateMode value
+    /// (handles ParameterExpression from EF Core 9+ auto-parameterization).
+    /// </summary>
+    private static bool IsInterpolateModeArgument(Expression expression)
+    {
+        // Unwrap Convert if present
+        if (expression is UnaryExpression unary &&
+            (unary.NodeType == ExpressionType.Convert || unary.NodeType == ExpressionType.ConvertChecked))
+        {
+            expression = unary.Operand;
+        }
+
+        // ParameterExpression whose type is InterpolateMode (auto-parameterized by EF Core 9+)
+        if (expression is ParameterExpression paramExpr && paramExpr.Type == typeof(InterpolateMode))
+            return true;
+
+        return false;
+    }
+
+    /// <summary>
     /// Unwraps a lambda expression from Quote wrapping.
     /// </summary>
     private static LambdaExpression UnwrapLambda(Expression expression)
@@ -667,6 +699,13 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
             expression = unary.Operand;
         }
 
+        // EF Core 9+: The funcletizer auto-parameterizes constants into ParameterExpressions.
+        // Return false — callers should use TryGetConstantOrParameterValue instead.
+        if (expression is ParameterExpression)
+        {
+            return false;
+        }
+
         // Direct constant
         if (expression is ConstantExpression constant)
         {
@@ -697,6 +736,54 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
 
         // Try to compile and execute the expression
         return TryCompileAndExecute(expression, out value);
+    }
+
+    /// <summary>
+    /// Extracts a constant value OR a deferred parameter name from an expression.
+    /// In EF Core 9+, constants are auto-parameterized, so this returns the parameter name
+    /// as a string (deferred value) when the actual value isn't available at compile time.
+    /// The returned object is either T (direct value) or string (parameter name for deferred resolution).
+    /// </summary>
+    private static object? GetConstantOrDeferredValue(Expression expression)
+    {
+        // Unwrap Quote expressions
+        while (expression is UnaryExpression unary && unary.NodeType == ExpressionType.Quote)
+            expression = unary.Operand;
+
+        // Handle EF.Constant() wrapper
+        if (expression is MethodCallExpression mc
+            && mc.Method.DeclaringType?.FullName == "Microsoft.EntityFrameworkCore.EF"
+            && mc.Method.Name == "Constant"
+            && mc.Arguments.Count == 1)
+        {
+            return GetConstantOrDeferredValue(mc.Arguments[0]);
+        }
+
+        // Direct constant
+        if (expression is ConstantExpression constant)
+            return constant.Value;
+
+        // ParameterExpression — deferred value (EF Core 9+ auto-parameterization)
+        if (expression is ParameterExpression paramExpr)
+            return new DeferredParameter(paramExpr.Name!);
+
+        // Convert wrapping a constant
+        if (expression is UnaryExpression convertExpr &&
+            (convertExpr.NodeType == ExpressionType.Convert || convertExpr.NodeType == ExpressionType.ConvertChecked))
+            return GetConstantOrDeferredValue(convertExpr.Operand);
+
+        // Member access on closure
+        if (expression is MemberExpression memberExpr)
+        {
+            if (TryGetConstantValue<object>(expression, out var val))
+                return val;
+        }
+
+        // Try compile-and-execute
+        if (TryCompileAndExecute<object>(expression, out var result))
+            return result;
+
+        return null;
     }
 
     private static bool TryConvertValue<T>(object? obj, out T value)
@@ -795,18 +882,32 @@ public class ClickHouseQueryCompilationContextOptions
 
     /// <summary>
     /// The SAMPLE fraction (0.0 to 1.0), or null if no sampling.
+    /// Value is double (direct) or DeferredParameter (resolved via ResolveDeferredParameters).
     /// </summary>
-    public double? SampleFraction { get; set; }
+    public object? SampleFraction { get; set; }
 
     /// <summary>
     /// The SAMPLE offset for reproducible sampling.
+    /// Value is double (direct) or DeferredParameter (resolved via ResolveDeferredParameters).
     /// </summary>
-    public double? SampleOffset { get; set; }
+    public object? SampleOffset { get; set; }
 
     /// <summary>
     /// ClickHouse query settings to append as SETTINGS clause.
+    /// Values may be direct objects or DeferredParameter instances.
     /// </summary>
     public Dictionary<string, object> QuerySettings { get; } = new();
+
+    /// <summary>
+    /// Deferred settings dictionary (from WithSettings with a parameterized dictionary).
+    /// </summary>
+    internal DeferredParameter? DeferredSettings { get; set; }
+
+    /// <summary>
+    /// Deferred setting pairs (from WithSetting with parameterized name/value).
+    /// Each tuple contains (name, value) where either may be a DeferredParameter.
+    /// </summary>
+    internal List<(object Name, object Value)> DeferredSettingPairs { get; } = new();
 
     /// <summary>
     /// WITH FILL specifications for ORDER BY columns.
@@ -827,7 +928,13 @@ public class ClickHouseQueryCompilationContextOptions
     /// <summary>
     /// Whether any INTERPOLATE specifications have been added.
     /// </summary>
-    public bool HasInterpolate => InterpolateSpecs.Count > 0;
+    public bool HasInterpolate => InterpolateSpecs.Count > 0 || DeferredInterpolateBuilder != null;
+
+    /// <summary>
+    /// Deferred interpolate builder (from builder overload with parameterized lambda in EF Core 9+).
+    /// Resolved in ResolveDeferredParameters when parameter values are available.
+    /// </summary>
+    internal DeferredParameter? DeferredInterpolateBuilder { get; set; }
 
     /// <summary>
     /// The translated PREWHERE predicate expression.
@@ -836,13 +943,15 @@ public class ClickHouseQueryCompilationContextOptions
 
     /// <summary>
     /// The LIMIT BY limit (rows per group), or null if no LIMIT BY.
+    /// Value is int (direct) or string (deferred parameter name for EF Core 9+ resolution).
     /// </summary>
-    public int? LimitByLimit { get; set; }
+    public object? LimitByLimit { get; set; }
 
     /// <summary>
     /// The LIMIT BY offset (rows to skip per group), or null if no offset.
+    /// Value is int (direct) or string (deferred parameter name for EF Core 9+ resolution).
     /// </summary>
-    public int? LimitByOffset { get; set; }
+    public object? LimitByOffset { get; set; }
 
     /// <summary>
     /// The LIMIT BY column expressions for grouping.
@@ -852,7 +961,7 @@ public class ClickHouseQueryCompilationContextOptions
     /// <summary>
     /// Whether any LIMIT BY clause has been specified.
     /// </summary>
-    public bool HasLimitBy => LimitByLimit.HasValue && LimitByExpressions?.Count > 0;
+    public bool HasLimitBy => LimitByLimit != null && LimitByExpressions?.Count > 0;
 
     /// <summary>
     /// GROUP BY modifier (ROLLUP, CUBE, or TOTALS).
@@ -861,8 +970,9 @@ public class ClickHouseQueryCompilationContextOptions
 
     /// <summary>
     /// The pending CTE name (set during translation, consumed during postprocessing).
+    /// Value is string (direct) or DeferredParameter (resolved via ResolveDeferredParameters).
     /// </summary>
-    internal string? PendingCteName { get; set; }
+    internal object? PendingCteName { get; set; }
 
     /// <summary>
     /// CTE definitions extracted during postprocessing.
@@ -876,8 +986,9 @@ public class ClickHouseQueryCompilationContextOptions
 
     /// <summary>
     /// Raw SQL condition to inject into the WHERE clause.
+    /// Value is string (direct) or DeferredParameter (resolved via ResolveDeferredParameters).
     /// </summary>
-    public string? RawFilterSql { get; set; }
+    public object? RawFilterSql { get; set; }
 
     /// <summary>
     /// ARRAY JOIN specifications for unnesting array columns.
@@ -893,6 +1004,12 @@ public class ClickHouseQueryCompilationContextOptions
     /// ASOF JOIN metadata for closest-match joins.
     /// </summary>
     internal AsofJoinInfo? AsofJoin { get; set; }
+
+    /// <summary>
+    /// Pre-extracted constant values from method arguments, populated by the preprocessor
+    /// before EF Core 9's funcletizer auto-parameterizes them. Keyed by parameter name.
+    /// </summary>
+    internal Dictionary<string, object> PreExtractedConstants { get; } = new();
 }
 
 /// <summary>
@@ -935,4 +1052,47 @@ public static class QueryCompilationContextExtensions
     // Thread-safe store for concurrent query compilation
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<RelationalQueryCompilationContext, ClickHouseQueryCompilationContextOptions>
         OptionsStore = new();
+}
+
+/// <summary>
+/// Represents a deferred parameter value that will be resolved when parameter values
+/// are available (in the RelationalParameterBasedSqlProcessor). Used in EF Core 9+
+/// where the funcletizer auto-parameterizes constants before the method translator runs.
+/// </summary>
+internal sealed class DeferredParameter
+{
+    public string ParameterName { get; }
+
+    public DeferredParameter(string parameterName)
+    {
+        ParameterName = parameterName;
+    }
+
+    /// <summary>
+    /// Resolves this deferred parameter to its actual value from a parameter values dictionary.
+    /// </summary>
+    public T Resolve<T>(IReadOnlyDictionary<string, object?> parameterValues)
+    {
+        if (parameterValues.TryGetValue(ParameterName, out var value) && value is T typed)
+            return typed;
+
+        if (value != null)
+            return (T)Convert.ChangeType(value, typeof(T));
+
+        throw new InvalidOperationException(
+            $"Cannot resolve deferred parameter '{ParameterName}' to type {typeof(T).Name}.");
+    }
+
+    /// <summary>
+    /// Resolves an option value that may be either a direct value or a deferred parameter.
+    /// </summary>
+    public static T ResolveValue<T>(object? value, IReadOnlyDictionary<string, object?> parameterValues)
+    {
+        return value switch
+        {
+            T direct => direct,
+            DeferredParameter deferred => deferred.Resolve<T>(parameterValues),
+            _ => throw new InvalidOperationException($"Cannot resolve value of type {value?.GetType().Name} to {typeof(T).Name}.")
+        };
+    }
 }

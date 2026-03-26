@@ -432,6 +432,9 @@ public class SqlGenerationTests
     {
         var options = new DbContextOptionsBuilder<TestDbContext>()
             .UseClickHouse("Host=localhost;Database=test")
+            // Disable service provider caching to ensure each test gets a fresh
+            // query compilation cache. EF Core 9 caches more aggressively.
+            .EnableServiceProviderCaching(false)
             .Options;
 
         return new TestDbContext(options);

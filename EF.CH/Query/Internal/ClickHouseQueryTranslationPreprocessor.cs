@@ -28,6 +28,7 @@ public class ClickHouseQueryTranslationPreprocessor : RelationalQueryTranslation
     {
         // Rewrite custom methods BEFORE the navigation expander runs
         query = new ClickHouseMethodRewritingVisitor(_queryCompilationContext).Visit(query);
+
         return base.Process(query);
     }
 }
@@ -315,3 +316,4 @@ internal class ClickHouseMethodRewritingVisitor : ExpressionVisitor
             => node == _target ? _replacement : base.VisitParameter(node);
     }
 }
+

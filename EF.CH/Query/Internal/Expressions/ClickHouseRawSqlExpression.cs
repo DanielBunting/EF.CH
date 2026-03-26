@@ -25,6 +25,9 @@ public sealed class ClickHouseRawSqlExpression : SqlExpression
 
     protected override Expression VisitChildren(ExpressionVisitor visitor) => this;
 
+    /// <inheritdoc />
+    public override Expression Quote() => this;
+
     protected override void Print(ExpressionPrinter expressionPrinter)
     {
         expressionPrinter.Append(Sql);

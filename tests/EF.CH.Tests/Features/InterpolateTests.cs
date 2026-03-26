@@ -307,6 +307,10 @@ public class InterpolateTests
     {
         var options = new DbContextOptionsBuilder<InterpolateTestDbContext>()
             .UseClickHouse("Host=localhost;Database=test")
+            // Disable service provider caching to ensure each test gets a fresh
+            // query compilation cache. EF Core 9 caches compiled queries more aggressively,
+            // and our thread-local state for WITH FILL is set during compilation only.
+            .EnableServiceProviderCaching(false)
             .Options;
 
         return new InterpolateTestDbContext(options);

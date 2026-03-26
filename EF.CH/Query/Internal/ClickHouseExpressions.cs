@@ -99,19 +99,21 @@ public class ClickHouseTableModifierExpression : TableExpressionBase
 
     /// <summary>
     /// Gets the sample fraction (0.0 to 1.0), or null if no sampling.
+    /// Value is double (direct) or DeferredParameter (resolved at SQL generation time).
     /// </summary>
-    public double? SampleFraction { get; }
+    public object? SampleFraction { get; }
 
     /// <summary>
     /// Gets the sample offset for reproducible sampling.
+    /// Value is double (direct) or DeferredParameter (resolved at SQL generation time).
     /// </summary>
-    public double? SampleOffset { get; }
+    public object? SampleOffset { get; }
 
     public ClickHouseTableModifierExpression(
         TableExpressionBase table,
         bool useFinal,
-        double? sampleFraction = null,
-        double? sampleOffset = null)
+        object? sampleFraction = null,
+        object? sampleOffset = null)
         : base(table.Alias)
     {
         Table = table ?? throw new ArgumentNullException(nameof(table));
@@ -123,8 +125,8 @@ public class ClickHouseTableModifierExpression : TableExpressionBase
     private ClickHouseTableModifierExpression(
         TableExpressionBase table,
         bool useFinal,
-        double? sampleFraction,
-        double? sampleOffset,
+        object? sampleFraction,
+        object? sampleOffset,
         string? alias,
         IEnumerable<IAnnotation>? annotations)
         : base(alias, annotations)
@@ -143,19 +145,30 @@ public class ClickHouseTableModifierExpression : TableExpressionBase
             : this;
     }
 
-    protected override TableExpressionBase CreateWithAnnotations(IEnumerable<IAnnotation> annotations)
-        => new ClickHouseTableModifierExpression(Table, UseFinal, SampleFraction, SampleOffset, Alias, annotations);
+    public override TableExpressionBase Clone(string? alias, ExpressionVisitor cloningExpressionVisitor)
+    {
+        var newTable = (TableExpressionBase)cloningExpressionVisitor.Visit(Table);
+        return new ClickHouseTableModifierExpression(newTable, UseFinal, SampleFraction, SampleOffset, alias, Annotations?.Values);
+    }
+
+    protected override TableExpressionBase WithAnnotations(IReadOnlyDictionary<string, IAnnotation> annotations)
+        => new ClickHouseTableModifierExpression(Table, UseFinal, SampleFraction, SampleOffset, Alias, annotations.Values);
+
+    public override TableExpressionBase WithAlias(string newAlias)
+        => new ClickHouseTableModifierExpression(Table, UseFinal, SampleFraction, SampleOffset, newAlias, Annotations?.Values);
+
+    public override Expression Quote() => this;
 
     protected override void Print(ExpressionPrinter expressionPrinter)
     {
         expressionPrinter.Visit(Table);
         if (UseFinal)
             expressionPrinter.Append(" FINAL");
-        if (SampleFraction.HasValue)
+        if (SampleFraction != null)
         {
-            expressionPrinter.Append($" SAMPLE {SampleFraction.Value}");
-            if (SampleOffset.HasValue)
-                expressionPrinter.Append($" OFFSET {SampleOffset.Value}");
+            expressionPrinter.Append($" SAMPLE {SampleFraction}");
+            if (SampleOffset != null)
+                expressionPrinter.Append($" OFFSET {SampleOffset}");
         }
     }
 
@@ -163,8 +176,8 @@ public class ClickHouseTableModifierExpression : TableExpressionBase
         => obj is ClickHouseTableModifierExpression other
            && Table.Equals(other.Table)
            && UseFinal == other.UseFinal
-           && SampleFraction == other.SampleFraction
-           && SampleOffset == other.SampleOffset;
+           && Equals(SampleFraction, other.SampleFraction)
+           && Equals(SampleOffset, other.SampleOffset);
 
     public override int GetHashCode()
         => HashCode.Combine(Table, UseFinal, SampleFraction, SampleOffset);
@@ -220,8 +233,16 @@ public class ClickHouseExternalTableFunctionExpression : TableExpressionBase
     protected override Expression VisitChildren(ExpressionVisitor visitor)
         => this; // No children to visit - this is a leaf node
 
-    protected override TableExpressionBase CreateWithAnnotations(IEnumerable<IAnnotation> annotations)
-        => new ClickHouseExternalTableFunctionExpression(FunctionName, FunctionCall, EntityClrType, Alias, annotations);
+    public override TableExpressionBase Clone(string? alias, ExpressionVisitor cloningExpressionVisitor)
+        => new ClickHouseExternalTableFunctionExpression(FunctionName, FunctionCall, EntityClrType, alias, Annotations?.Values);
+
+    protected override TableExpressionBase WithAnnotations(IReadOnlyDictionary<string, IAnnotation> annotations)
+        => new ClickHouseExternalTableFunctionExpression(FunctionName, FunctionCall, EntityClrType, Alias, annotations.Values);
+
+    public override TableExpressionBase WithAlias(string newAlias)
+        => new ClickHouseExternalTableFunctionExpression(FunctionName, FunctionCall, EntityClrType, newAlias, Annotations?.Values);
+
+    public override Expression Quote() => this;
 
     protected override void Print(ExpressionPrinter expressionPrinter)
     {
@@ -291,8 +312,16 @@ public class ClickHouseDictionaryTableExpression : TableExpressionBase
     protected override Expression VisitChildren(ExpressionVisitor visitor)
         => this; // No children to visit - this is a leaf node
 
-    protected override TableExpressionBase CreateWithAnnotations(IEnumerable<IAnnotation> annotations)
-        => new ClickHouseDictionaryTableExpression(DictionaryName, EntityClrType, Alias, annotations);
+    public override TableExpressionBase Clone(string? alias, ExpressionVisitor cloningExpressionVisitor)
+        => new ClickHouseDictionaryTableExpression(DictionaryName, EntityClrType, alias, Annotations?.Values);
+
+    protected override TableExpressionBase WithAnnotations(IReadOnlyDictionary<string, IAnnotation> annotations)
+        => new ClickHouseDictionaryTableExpression(DictionaryName, EntityClrType, Alias, annotations.Values);
+
+    public override TableExpressionBase WithAlias(string newAlias)
+        => new ClickHouseDictionaryTableExpression(DictionaryName, EntityClrType, newAlias, Annotations?.Values);
+
+    public override Expression Quote() => this;
 
     protected override void Print(ExpressionPrinter expressionPrinter)
     {
@@ -343,8 +372,16 @@ public class ClickHouseCteReferenceExpression : TableExpressionBase
     protected override Expression VisitChildren(ExpressionVisitor visitor)
         => this; // Leaf node
 
-    protected override TableExpressionBase CreateWithAnnotations(IEnumerable<IAnnotation> annotations)
-        => new ClickHouseCteReferenceExpression(CteName, Alias, annotations);
+    public override TableExpressionBase Clone(string? alias, ExpressionVisitor cloningExpressionVisitor)
+        => new ClickHouseCteReferenceExpression(CteName, alias, Annotations?.Values);
+
+    protected override TableExpressionBase WithAnnotations(IReadOnlyDictionary<string, IAnnotation> annotations)
+        => new ClickHouseCteReferenceExpression(CteName, Alias, annotations.Values);
+
+    public override TableExpressionBase WithAlias(string newAlias)
+        => new ClickHouseCteReferenceExpression(CteName, newAlias, Annotations?.Values);
+
+    public override Expression Quote() => this;
 
     protected override void Print(ExpressionPrinter expressionPrinter)
     {
@@ -370,7 +407,12 @@ public class ClickHouseCteReferenceExpression : TableExpressionBase
 /// </summary>
 internal class CteDefinition
 {
-    public string Name { get; }
+    public string Name { get; private set; }
+
+    /// <summary>
+    /// The raw CTE name value, which may be a string or DeferredParameter.
+    /// </summary>
+    public object NameValue { get; }
 
     /// <summary>
     /// The CTE body as a SelectExpression, or null if using a direct table reference.
@@ -386,12 +428,36 @@ internal class CteDefinition
     public CteDefinition(string name, SelectExpression body)
     {
         Name = name;
+        NameValue = name;
         Body = body;
     }
 
     public CteDefinition(string name, TableExpressionBase sourceTable)
     {
         Name = name;
+        NameValue = name;
         SourceTable = sourceTable;
+    }
+
+    public CteDefinition(object nameValue, SelectExpression body)
+    {
+        NameValue = nameValue;
+        Name = nameValue is string s ? s : "__deferred_cte__";
+        Body = body;
+    }
+
+    public CteDefinition(object nameValue, TableExpressionBase sourceTable)
+    {
+        NameValue = nameValue;
+        Name = nameValue is string s ? s : "__deferred_cte__";
+        SourceTable = sourceTable;
+    }
+
+    /// <summary>
+    /// Resolves the CTE name from a deferred parameter value.
+    /// </summary>
+    public void ResolveName(string resolvedName)
+    {
+        Name = resolvedName;
     }
 }

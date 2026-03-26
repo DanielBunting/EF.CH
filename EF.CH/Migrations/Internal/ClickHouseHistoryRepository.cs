@@ -203,6 +203,43 @@ public class ClickHouseHistoryRepository : HistoryRepository
     }
 
     /// <summary>
+    /// ClickHouse does not support database locking. Returns Explicit since
+    /// the no-op lock doesn't need transaction or connection lifetime management.
+    /// </summary>
+    public override LockReleaseBehavior LockReleaseBehavior => LockReleaseBehavior.Explicit;
+
+    /// <summary>
+    /// ClickHouse does not support database locking. Returns a no-op lock.
+    /// </summary>
+    public override IMigrationsDatabaseLock AcquireDatabaseLock()
+        => new ClickHouseNoOpDatabaseLock(this);
+
+    /// <summary>
+    /// ClickHouse does not support database locking. Returns a no-op lock.
+    /// </summary>
+    public override Task<IMigrationsDatabaseLock> AcquireDatabaseLockAsync(CancellationToken cancellationToken = default)
+        => Task.FromResult<IMigrationsDatabaseLock>(new ClickHouseNoOpDatabaseLock(this));
+
+    private sealed class ClickHouseNoOpDatabaseLock : IMigrationsDatabaseLock
+    {
+        public ClickHouseNoOpDatabaseLock(IHistoryRepository historyRepository)
+        {
+            HistoryRepository = historyRepository;
+        }
+
+        public IHistoryRepository HistoryRepository { get; }
+
+        public IMigrationsDatabaseLock ReacquireIfNeeded(bool force, bool? previousWasSuccessful)
+            => this;
+
+        public Task<IMigrationsDatabaseLock> ReacquireIfNeededAsync(bool force, bool? previousWasSuccessful, CancellationToken cancellationToken = default)
+            => Task.FromResult<IMigrationsDatabaseLock>(this);
+
+        public void Dispose() { }
+        public ValueTask DisposeAsync() => default;
+    }
+
+    /// <summary>
     /// Gets a SQL script that returns true if migrations table exists, false otherwise.
     /// </summary>
     public override string GetBeginIfExistsScript(string migrationId)

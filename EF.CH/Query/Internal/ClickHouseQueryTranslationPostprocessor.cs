@@ -51,16 +51,16 @@ public class ClickHouseQueryTranslationPostprocessor : RelationalQueryTranslatio
             _externalConfigResolver).Visit(query);
 
         // Apply FINAL/SAMPLE modifiers to table expressions (only applies to native ClickHouse tables)
-        if (options.UseFinal || options.SampleFraction.HasValue)
+        if (options.UseFinal || options.SampleFraction != null)
         {
             query = new ClickHouseTableModifierApplyingVisitor(options).Visit(query);
         }
 
         // Pass SETTINGS via thread-local to SQL generator
         // (SETTINGS is query-level, not table-level, so thread-local is appropriate)
-        if (options.QuerySettings.Count > 0)
+        if (options.QuerySettings.Count > 0 || options.DeferredSettings != null || options.DeferredSettingPairs.Count > 0)
         {
-            ClickHouseQuerySqlGenerator.SetQuerySettings(options.QuerySettings);
+            ClickHouseQuerySqlGenerator.SetQuerySettings(options.QuerySettings, options.DeferredSettings, options.DeferredSettingPairs);
         }
 
         // Pass WITH FILL / INTERPOLATE specs via thread-local to SQL generator
@@ -79,7 +79,7 @@ public class ClickHouseQueryTranslationPostprocessor : RelationalQueryTranslatio
         if (options.HasLimitBy)
         {
             ClickHouseQuerySqlGenerator.SetLimitBy(
-                options.LimitByLimit!.Value,
+                options.LimitByLimit!,
                 options.LimitByOffset,
                 options.LimitByExpressions!);
         }
@@ -96,7 +96,14 @@ public class ClickHouseQueryTranslationPostprocessor : RelationalQueryTranslatio
             ClickHouseQuerySqlGenerator.SetRawFilter(options.RawFilterSql);
         }
 
+        // Pass sample options for deferred resolution
+        if (options.SampleFraction != null)
+        {
+            ClickHouseQuerySqlGenerator.SetSampleOptions(options.SampleFraction, options.SampleOffset);
+        }
+
         // Extract CTE if AsCte() was called
+        // PendingCteName may be a string (direct) or DeferredParameter (resolved later)
         if (options.PendingCteName != null)
         {
             query = new ClickHouseCteExtractionVisitor(options).Visit(query);
@@ -422,8 +429,12 @@ internal class ClickHouseCteExtractionVisitor : ExpressionVisitor
 
     private Expression ExtractCteFromSelect(SelectExpression selectExpression)
     {
-        var cteName = _options.PendingCteName!;
+        var cteNameValue = _options.PendingCteName!;
         _options.PendingCteName = null;
+
+        // CTE name may be a string or a DeferredParameter
+        // For deferred params, use a placeholder that will be resolved during SQL generation
+        var cteName = cteNameValue is string s ? s : "__deferred_cte__";
 
         // Look for the first table source that can be extracted as a CTE
         if (selectExpression.Tables.Count == 0)
@@ -436,7 +447,7 @@ internal class ClickHouseCteExtractionVisitor : ExpressionVisitor
         if (firstTable is SelectExpression subquery)
         {
             // Subquery in FROM — extract as CTE body
-            _options.CteDefinitions.Add(new CteDefinition(cteName, subquery));
+            _options.CteDefinitions.Add(new CteDefinition(cteNameValue, subquery));
 
             // Replace with CTE reference using the same alias
             var cteRef = new ClickHouseCteReferenceExpression(cteName, subquery.Alias);
@@ -446,7 +457,7 @@ internal class ClickHouseCteExtractionVisitor : ExpressionVisitor
         if (firstTable is TableExpression tableExpr)
         {
             // Direct table — store table reference for SQL generator to render SELECT * FROM "table"
-            _options.CteDefinitions.Add(new CteDefinition(cteName, (TableExpressionBase)tableExpr));
+            _options.CteDefinitions.Add(new CteDefinition(cteNameValue, (TableExpressionBase)tableExpr));
 
             var cteRef = new ClickHouseCteReferenceExpression(cteName, tableExpr.Alias);
             return ReplaceTables(selectExpression, 0, cteRef);
@@ -456,7 +467,7 @@ internal class ClickHouseCteExtractionVisitor : ExpressionVisitor
         {
             // Table with FINAL/SAMPLE modifiers — store for SQL generator
             var alias = modifierExpr.Table is TableExpression te ? te.Alias : modifierExpr.Alias;
-            _options.CteDefinitions.Add(new CteDefinition(cteName, (TableExpressionBase)modifierExpr));
+            _options.CteDefinitions.Add(new CteDefinition(cteNameValue, (TableExpressionBase)modifierExpr));
 
             var cteRef = new ClickHouseCteReferenceExpression(cteName, alias);
             return ReplaceTables(selectExpression, 0, cteRef);
