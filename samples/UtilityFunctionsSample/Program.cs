@@ -1,3 +1,4 @@
+using EF.CH;
 using EF.CH.Extensions;
 using Microsoft.EntityFrameworkCore;
 using EfClass = Microsoft.EntityFrameworkCore.EF;
@@ -105,13 +106,13 @@ foreach (var row in hourlyBuckets)
     Console.WriteLine($"  {row.Hour:yyyy-MM-dd HH:mm} — {row.UserName}");
 }
 
-// DateDiff
+// DateDiff (enum overload — preferred)
 Console.WriteLine();
 var ageInMinutes = await context.PageViews
     .Select(p => new
     {
         p.UserName,
-        MinutesAgo = EfClass.Functions.DateDiff("minute", p.ViewedAt, DateTime.UtcNow)
+        MinutesAgo = EfClass.Functions.DateDiff(ClickHouseIntervalUnit.Minute, p.ViewedAt, DateTime.UtcNow)
     })
     .ToListAsync();
 
@@ -119,6 +120,21 @@ Console.WriteLine("How long ago each page was viewed:");
 foreach (var row in ageInMinutes)
 {
     Console.WriteLine($"  {row.UserName}: {row.MinutesAgo} minutes ago");
+}
+
+// DateDiff (string overload — backward-compatible)
+var ageInHours = await context.PageViews
+    .Select(p => new
+    {
+        p.UserName,
+        HoursAgo = EfClass.Functions.DateDiff("hour", p.ViewedAt, DateTime.UtcNow)
+    })
+    .ToListAsync();
+
+Console.WriteLine("How long ago (hours) each page was viewed:");
+foreach (var row in ageInHours)
+{
+    Console.WriteLine($"  {row.UserName}: {row.HoursAgo} hours ago");
 }
 
 // ============================================================

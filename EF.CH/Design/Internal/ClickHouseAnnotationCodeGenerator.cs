@@ -50,6 +50,31 @@ public class ClickHouseAnnotationCodeGenerator : AnnotationCodeGenerator
             nameof(ClickHouseEntityTypeBuilderExtensions.UseVersionedCollapsingMergeTree),
             [typeof(EntityTypeBuilder), typeof(string), typeof(string), typeof(string[])])!;
 
+    private static readonly MethodInfo UseNullEngineMethodInfo
+        = typeof(ClickHouseEntityTypeBuilderExtensions).GetRuntimeMethod(
+            nameof(ClickHouseEntityTypeBuilderExtensions.UseNullEngine),
+            [typeof(EntityTypeBuilder)])!;
+
+    private static readonly MethodInfo UseMemoryEngineMethodInfo
+        = typeof(ClickHouseEntityTypeBuilderExtensions).GetRuntimeMethod(
+            nameof(ClickHouseEntityTypeBuilderExtensions.UseMemoryEngine),
+            [typeof(EntityTypeBuilder)])!;
+
+    private static readonly MethodInfo UseLogEngineMethodInfo
+        = typeof(ClickHouseEntityTypeBuilderExtensions).GetRuntimeMethod(
+            nameof(ClickHouseEntityTypeBuilderExtensions.UseLogEngine),
+            [typeof(EntityTypeBuilder)])!;
+
+    private static readonly MethodInfo UseTinyLogEngineMethodInfo
+        = typeof(ClickHouseEntityTypeBuilderExtensions).GetRuntimeMethod(
+            nameof(ClickHouseEntityTypeBuilderExtensions.UseTinyLogEngine),
+            [typeof(EntityTypeBuilder)])!;
+
+    private static readonly MethodInfo UseStripeLogEngineMethodInfo
+        = typeof(ClickHouseEntityTypeBuilderExtensions).GetRuntimeMethod(
+            nameof(ClickHouseEntityTypeBuilderExtensions.UseStripeLogEngine),
+            [typeof(EntityTypeBuilder)])!;
+
     private static readonly MethodInfo HasPartitionByMethodInfo
         = typeof(ClickHouseEntityTypeBuilderExtensions).GetRuntimeMethod(
             nameof(ClickHouseEntityTypeBuilderExtensions.HasPartitionBy),
@@ -121,7 +146,13 @@ public class ClickHouseAnnotationCodeGenerator : AnnotationCodeGenerator
         "SummingMergeTree",
         "AggregatingMergeTree",
         "CollapsingMergeTree",
-        "VersionedCollapsingMergeTree"
+        "VersionedCollapsingMergeTree",
+        "Null",
+        "Distributed",
+        "Memory",
+        "Log",
+        "TinyLog",
+        "StripeLog"
     ];
 
     public ClickHouseAnnotationCodeGenerator(AnnotationCodeGeneratorDependencies dependencies)
@@ -229,6 +260,24 @@ public class ClickHouseAnnotationCodeGenerator : AnnotationCodeGenerator
 
                 annotations.Remove(ClickHouseAnnotationNames.Engine);
                 annotations.Remove(ClickHouseAnnotationNames.OrderBy);
+            }
+            else
+            {
+                MethodInfo? engineMethod = engine switch
+                {
+                    "Null" => UseNullEngineMethodInfo,
+                    "Memory" => UseMemoryEngineMethodInfo,
+                    "Log" => UseLogEngineMethodInfo,
+                    "TinyLog" => UseTinyLogEngineMethodInfo,
+                    "StripeLog" => UseStripeLogEngineMethodInfo,
+                    _ => null
+                };
+
+                if (engineMethod is not null)
+                {
+                    calls.Add(new MethodCallCodeFragment(engineMethod));
+                    annotations.Remove(ClickHouseAnnotationNames.Engine);
+                }
             }
         }
 

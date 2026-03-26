@@ -83,6 +83,12 @@ public class ClickHouseEvaluatableExpressionFilterPlugin : IEvaluatableExpressio
                 return false;
             }
 
+            // Never evaluate date trunc extension methods - enum args must remain as constants
+            if (declaringType == typeof(ClickHouseDateTruncDbFunctionsExtensions))
+            {
+                return false;
+            }
+
             // Never evaluate ClickHouseFunctions methods - these are translation stubs
             if (declaringType == typeof(ClickHouseFunctions))
             {
@@ -106,7 +112,12 @@ public class ClickHouseEvaluatableExpressionFilterPlugin : IEvaluatableExpressio
                     genericDef == ClickHouseQueryableExtensions.LimitByMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.LimitByWithOffsetMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.AsCteMethodInfo ||
-                    genericDef == ClickHouseQueryableExtensions.WithRawFilterMethodInfo)
+                    genericDef == ClickHouseQueryableExtensions.WithRawFilterMethodInfo ||
+                    genericDef == ClickHouseQueryableExtensions.ArrayJoinMethodInfo ||
+                    genericDef == ClickHouseQueryableExtensions.LeftArrayJoinMethodInfo ||
+                    genericDef == ClickHouseQueryableExtensions.ArrayJoin2MethodInfo ||
+                    genericDef == ClickHouseQueryableExtensions.AsofJoinMethodInfo ||
+                    genericDef == ClickHouseQueryableExtensions.AsofLeftJoinMethodInfo)
                 {
                     return false;
                 }

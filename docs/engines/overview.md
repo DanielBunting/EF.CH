@@ -13,6 +13,10 @@ Do you need to store data?
 │
 └── Yes
     │
+    ├── Small/temporary data (< 1M rows)?
+    │   ├── Need RAM-only speed?  ──────── Memory engine
+    │   └── Need disk persistence?  ─────── Log / TinyLog / StripeLog
+    │
     ├── Single node or multi-node?
     │   └── Multi-node  ─────────────────── Distributed engine
     │       (query fan-out)                  (+ local table with a MergeTree variant)
@@ -55,6 +59,10 @@ Do you need to store data?
 | **ReplicatedAggregatingMergeTree** | Replicated pre-aggregation | AggregatingMergeTree + replication | `UseReplicatedAggregatingMergeTree(x => x.Timestamp)` |
 | **ReplicatedCollapsingMergeTree** | Replicated ordered collapsing | CollapsingMergeTree + replication | `UseReplicatedCollapsingMergeTree(x => x.Sign, x => new { x.UserId })` |
 | **ReplicatedVersionedCollapsingMergeTree** | Replicated unordered collapsing | VersionedCollapsingMergeTree + replication | `UseReplicatedVersionedCollapsingMergeTree(x => x.Sign, x => x.Version, x => new { x.UserId })` |
+| **Memory** | Temporary/lookup tables | RAM-only, lost on restart | `UseMemoryEngine()` |
+| **Log** | Small tables (< 1M rows) | Concurrent reads, sequential writes | `UseLogEngine()` |
+| **TinyLog** | Simplest small tables | Each column in separate file, no concurrency | `UseTinyLogEngine()` |
+| **StripeLog** | Small wide tables | All columns in one file | `UseStripeLogEngine()` |
 | **Null** | Materialized view source | Data discarded after insert | `UseNullEngine()` |
 | **Distributed** | Cross-shard queries | Fan-out queries to cluster nodes | `UseDistributed("cluster", "local_table")` |
 
@@ -171,6 +179,38 @@ The six replicated engines are:
 | ReplicatedCollapsingMergeTree | CollapsingMergeTree |
 | ReplicatedVersionedCollapsingMergeTree | VersionedCollapsingMergeTree |
 
+## Memory Engine
+
+The Memory engine stores all data in RAM. Data is not persisted to disk and is lost when the ClickHouse server restarts. It provides fast read and write access with no background processing.
+
+**When to use:** Temporary lookup tables, small reference data that can be regenerated, and testing scenarios where persistence is not needed.
+
+```csharp
+entity.UseMemoryEngine();
+```
+
+See [Memory Engine](memory-engine.md) for details.
+
+## Log Family (3 Engines)
+
+The Log family provides simple sequential storage for small tables (up to ~1 million rows). Unlike MergeTree engines, there are no background merges, sorting, or indexing. All three engines share the same EF.CH pattern: no ORDER BY, no PARTITION BY, no parentheses.
+
+| Engine | Storage | Concurrent Reads | Best For |
+|--------|---------|-------------------|----------|
+| **Log** | Column per file + marks | Yes | General small tables |
+| **TinyLog** | Column per file, no marks | No | Minimal overhead |
+| **StripeLog** | Single file for all columns | Yes | Many-column tables |
+
+```csharp
+entity.UseLogEngine();       // Log
+entity.UseTinyLogEngine();   // TinyLog
+entity.UseStripeLogEngine(); // StripeLog
+```
+
+**When to use:** Small tables that are written once and read many times, where the overhead of MergeTree is unnecessary.
+
+See [Log Family](log-engine.md) for a detailed comparison.
+
 ## Specialized Engines (2 Engines)
 
 ### Null Engine
@@ -215,17 +255,17 @@ See [Distributed Engine](distributed.md) for cluster topology and sharding.
 
 ## Engine Comparison by Capability
 
-| Capability | MergeTree | Replacing | Summing | Aggregating | Collapsing | VersionedCollapsing | Null | Distributed |
-|------------|-----------|-----------|---------|-------------|------------|---------------------|------|-------------|
-| Stores data | Yes | Yes | Yes | Yes | Yes | Yes | No | No (proxy) |
-| Deduplication | No | Yes | No | No | No | No | N/A | N/A |
-| Auto-aggregation | No | No | Sums numerics | Merges states | No | No | N/A | N/A |
-| State cancellation | No | No | No | No | Yes (ordered) | Yes (any order) | N/A | N/A |
-| PARTITION BY | Yes | Yes | Yes | Yes | Yes | Yes | No | No |
-| TTL | Yes | Yes | Yes | Yes | Yes | Yes | No | No |
-| Skip indices | Yes | Yes | Yes | Yes | Yes | Yes | No | No |
-| Projections | Yes | Yes | Yes | Yes | Yes | Yes | No | No |
-| Replication | Via Replicated* | Via Replicated* | Via Replicated* | Via Replicated* | Via Replicated* | Via Replicated* | No | Built-in |
+| Capability | MergeTree | Replacing | Summing | Aggregating | Collapsing | VersionedCollapsing | Memory | Log | TinyLog | StripeLog | Null | Distributed |
+|------------|-----------|-----------|---------|-------------|------------|---------------------|--------|-----|---------|-----------|------|-------------|
+| Stores data | Yes | Yes | Yes | Yes | Yes | Yes | Yes (RAM) | Yes | Yes | Yes | No | No (proxy) |
+| Deduplication | No | Yes | No | No | No | No | No | No | No | No | N/A | N/A |
+| Auto-aggregation | No | No | Sums numerics | Merges states | No | No | No | No | No | No | N/A | N/A |
+| State cancellation | No | No | No | No | Yes (ordered) | Yes (any order) | No | No | No | No | N/A | N/A |
+| PARTITION BY | Yes | Yes | Yes | Yes | Yes | Yes | No | No | No | No | No | No |
+| TTL | Yes | Yes | Yes | Yes | Yes | Yes | No | No | No | No | No | No |
+| Skip indices | Yes | Yes | Yes | Yes | Yes | Yes | No | No | No | No | No | No |
+| Projections | Yes | Yes | Yes | Yes | Yes | Yes | No | No | No | No | No | No |
+| Replication | Via Replicated* | Via Replicated* | Via Replicated* | Via Replicated* | Via Replicated* | Via Replicated* | No | No | No | No | No | Built-in |
 
 ## Common Configuration Shared by All MergeTree Engines
 
@@ -254,5 +294,7 @@ See [MergeTree](mergetree.md) for detailed documentation of ORDER BY, PARTITION 
 - [AggregatingMergeTree](aggregating-mergetree.md) -- intermediate aggregate state storage
 - [CollapsingMergeTree](collapsing-mergetree.md) -- state tracking via sign column
 - [VersionedCollapsingMergeTree](versioned-collapsing.md) -- out-of-order collapsing
+- [Memory Engine](memory-engine.md) -- RAM-only storage for temporary data
+- [Log Family](log-engine.md) -- simple disk storage for small tables
 - [Null Engine](null-engine.md) -- write-only, data discarded
 - [Distributed Engine](distributed.md) -- cross-cluster query fan-out

@@ -55,6 +55,14 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     [ThreadStatic]
     private static List<CteDefinition>? _currentCteDefinitions;
 
+    // Thread-local storage for ARRAY JOIN specifications
+    [ThreadStatic]
+    private static List<ArrayJoinSpec>? _currentArrayJoinSpecs;
+
+    // Thread-local storage for ASOF JOIN metadata
+    [ThreadStatic]
+    private static AsofJoinInfo? _currentAsofJoin;
+
     public ClickHouseQuerySqlGenerator(
         QuerySqlGeneratorDependencies dependencies,
         IRelationalTypeMappingSource typeMappingSource)
@@ -123,6 +131,22 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     internal static void SetCteDefinitions(List<CteDefinition> definitions)
     {
         _currentCteDefinitions = definitions.Count > 0 ? definitions : null;
+    }
+
+    /// <summary>
+    /// Sets ARRAY JOIN specifications for SQL generation.
+    /// </summary>
+    internal static void SetArrayJoinSpecs(List<ArrayJoinSpec> specs)
+    {
+        _currentArrayJoinSpecs = specs.Count > 0 ? new List<ArrayJoinSpec>(specs) : null;
+    }
+
+    /// <summary>
+    /// Sets ASOF JOIN metadata for SQL generation.
+    /// </summary>
+    internal static void SetAsofJoin(AsofJoinInfo info)
+    {
+        _currentAsofJoin = info;
     }
 
     /// <summary>
@@ -276,6 +300,12 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     /// </summary>
     protected override Expression VisitExtension(Expression extensionExpression)
     {
+        // Check for ASOF JOIN override on InnerJoinExpression
+        if (extensionExpression is InnerJoinExpression innerJoin && _currentAsofJoin != null)
+        {
+            return VisitAsofJoin(innerJoin);
+        }
+
         return extensionExpression switch
         {
             ClickHouseWindowFunctionExpression windowExpression => VisitWindowFunction(windowExpression),
@@ -982,10 +1012,11 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
 
         // Check if we have a GROUP BY modifier - we need to handle this specially
         var hasGroupByModifier = _currentGroupByModifierValue != 0;
+        var hasArrayJoin = _currentArrayJoinSpecs is { Count: > 0 };
 
-        if (preWhereExpr == null && rawFilter == null && !hasGroupByModifier)
+        if (preWhereExpr == null && rawFilter == null && !hasGroupByModifier && !hasArrayJoin)
         {
-            // No PREWHERE, no raw filter, and no GROUP BY modifier - use base implementation
+            // No PREWHERE, no raw filter, no GROUP BY modifier, no ARRAY JOIN - use base implementation
             return base.VisitSelect(selectExpression);
         }
 
@@ -1037,6 +1068,9 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
                 Visit(selectExpression.Tables[i]);
             }
         }
+
+        // Generate ARRAY JOIN (between FROM and PREWHERE)
+        GenerateArrayJoin();
 
         // Generate PREWHERE (before WHERE)
         if (preWhereExpr != null)
@@ -1152,6 +1186,9 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
             }
         }
 
+        // Generate ARRAY JOIN (between FROM and WHERE)
+        GenerateArrayJoin();
+
         // Generate WHERE
         if (selectExpression.Predicate != null)
         {
@@ -1196,6 +1233,103 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
         }
 
         return selectExpression;
+    }
+    /// <summary>
+    /// Generates ARRAY JOIN clause between FROM and PREWHERE/WHERE.
+    /// </summary>
+    private void GenerateArrayJoin()
+    {
+        var specs = Interlocked.Exchange(ref _currentArrayJoinSpecs, null);
+        if (specs is not { Count: > 0 }) return;
+
+        foreach (var group in specs.GroupBy(s => s.IsLeft))
+        {
+            Sql.AppendLine();
+            Sql.Append(group.Key ? "LEFT ARRAY JOIN " : "ARRAY JOIN ");
+
+            var first = true;
+            foreach (var spec in group)
+            {
+                if (!first) Sql.Append(", ");
+                first = false;
+                Sql.Append(_sqlGenerationHelper.DelimitIdentifier(spec.ColumnName));
+                if (spec.Alias != spec.ColumnName)
+                {
+                    Sql.Append(" AS ");
+                    Sql.Append(_sqlGenerationHelper.DelimitIdentifier(spec.Alias));
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Generates ASOF JOIN SQL in place of a standard INNER JOIN.
+    /// </summary>
+    private Expression VisitAsofJoin(InnerJoinExpression innerJoinExpression)
+    {
+        var asofJoin = Interlocked.Exchange(ref _currentAsofJoin, null);
+
+        Sql.AppendLine();
+        Sql.Append(asofJoin!.IsLeft ? "ASOF LEFT JOIN " : "ASOF JOIN ");
+        Visit(innerJoinExpression.Table);
+        Sql.Append(" ON ");
+        Visit(innerJoinExpression.JoinPredicate);
+
+        // Append ASOF inequality condition (must be last in ON clause)
+        Sql.Append(" AND ");
+
+        var (leftAlias, rightAlias) = ExtractJoinAliases(
+            innerJoinExpression.JoinPredicate, innerJoinExpression.Table);
+
+        if (leftAlias != null)
+        {
+            Sql.Append(_sqlGenerationHelper.DelimitIdentifier(leftAlias));
+            Sql.Append(".");
+        }
+        Sql.Append(_sqlGenerationHelper.DelimitIdentifier(asofJoin.LeftColumnName));
+        Sql.Append(" ");
+        Sql.Append(asofJoin.Operator);
+        Sql.Append(" ");
+        if (rightAlias != null)
+        {
+            Sql.Append(_sqlGenerationHelper.DelimitIdentifier(rightAlias));
+            Sql.Append(".");
+        }
+        Sql.Append(_sqlGenerationHelper.DelimitIdentifier(asofJoin.RightColumnName));
+
+        return innerJoinExpression;
+    }
+
+    /// <summary>
+    /// Extracts table aliases from a join predicate by finding ColumnExpression nodes.
+    /// Returns (leftAlias, rightAlias) where rightAlias matches the joined table.
+    /// </summary>
+    private static (string? leftAlias, string? rightAlias) ExtractJoinAliases(
+        SqlExpression predicate, TableExpressionBase rightTable)
+    {
+        var rightAlias = rightTable.Alias;
+        var aliases = new HashSet<string>();
+        CollectAliases(predicate, aliases);
+        if (rightAlias != null) aliases.Remove(rightAlias);
+        var leftAlias = aliases.FirstOrDefault();
+        return (leftAlias, rightAlias);
+    }
+
+    /// <summary>
+    /// Recursively collects table aliases from ColumnExpression nodes in a SQL expression tree.
+    /// </summary>
+    private static void CollectAliases(SqlExpression expr, HashSet<string> aliases)
+    {
+        switch (expr)
+        {
+            case SqlBinaryExpression binary:
+                CollectAliases(binary.Left, aliases);
+                CollectAliases(binary.Right, aliases);
+                break;
+            case ColumnExpression col when col.TableAlias != null:
+                aliases.Add(col.TableAlias);
+                break;
+        }
     }
 }
 
