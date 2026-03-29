@@ -1,5 +1,6 @@
 using System.Linq.Expressions;
 using System.Reflection;
+using EF.CH.Query.Internal;
 
 namespace EF.CH.Extensions;
 
@@ -36,15 +37,13 @@ namespace EF.CH.Extensions;
 public static class InterpolateExtensions
 {
     /// <summary>
-    /// Wraps a constant value in an EF.Constant() call to prevent EF Core from parameterizing it.
-    /// The ClickHouseEvaluatableExpressionFilterPlugin will prevent evaluation of EF.Constant() calls,
-    /// and the translator will unwrap them to get the actual value.
+    /// Wraps a constant value in a ClickHouseConstantExpression to prevent EF Core 10's
+    /// ExpressionTreeFuncletizer from parameterizing it. Extension expressions with
+    /// NodeType.Extension are opaque to the funcletizer and survive as-is.
     /// </summary>
     private static Expression WrapInEfConstant<T>(T value)
     {
-        return Expression.Call(
-            typeof(Microsoft.EntityFrameworkCore.EF).GetMethod(nameof(Microsoft.EntityFrameworkCore.EF.Constant))!.MakeGenericMethod(typeof(T)),
-            Expression.Constant(value, typeof(T)));
+        return new ClickHouseConstantExpression(value, typeof(T));
     }
 
     #region TimeSpan step overloads

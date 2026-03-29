@@ -18,8 +18,8 @@ public sealed class ClickHouseQueryProfiler : IClickHouseQueryProfiler
     private readonly IRelationalTypeMappingSource _typeMappingSource;
     private readonly IRelationalConnection _relationalConnection;
 
-    // Regex to match ClickHouse parameter placeholders: {name:Type} or {name:Type(N)} or {name:Type(N,M)}
-    private static readonly Regex ParameterPlaceholderRegex = new(@"\{(\w+):([^}]+)\}", RegexOptions.Compiled);
+    // Regex to match ClickHouse parameter placeholders: {name:Type} or {name:Type(N)} or {name:Type(N,M)} or {name}
+    private static readonly Regex ParameterPlaceholderRegex = new(@"\{(\w+)(?::([^}]+))?\}", RegexOptions.Compiled);
 
     public ClickHouseQueryProfiler(
         ICurrentDbContext currentDbContext,
@@ -218,6 +218,13 @@ public sealed class ClickHouseQueryProfiler : IClickHouseQueryProfiler
             }
         }
 
+        // Method 3: Parse parameter declarations from ToQueryString() comments
+        // EF Core 10 embeds declarations like "-- @p='value'" at the top
+        if (parameterValues.Count == 0 || ParameterPlaceholderRegex.IsMatch(sql))
+        {
+            ParseParameterDeclarations(sql, parameterValues);
+        }
+
         return (sql, parameterValues);
     }
 
@@ -226,6 +233,9 @@ public sealed class ClickHouseQueryProfiler : IClickHouseQueryProfiler
     /// </summary>
     private string ReplaceParametersWithLiterals(string sql, Dictionary<string, object?> parameterValues)
     {
+        // Strip parameter declaration comments (-- p='value' or -- @p='value' lines) added by ToQueryString()
+        sql = Regex.Replace(sql, @"^--\s*@?\w+='[^']*'.*$\r?\n?", "", RegexOptions.Multiline).TrimStart();
+
         // If no parameters, return the SQL as-is
         if (!ParameterPlaceholderRegex.IsMatch(sql))
         {
@@ -315,6 +325,37 @@ public sealed class ClickHouseQueryProfiler : IClickHouseQueryProfiler
             float f => f.ToString(System.Globalization.CultureInfo.InvariantCulture),
             _ => value.ToString() ?? "NULL"
         };
+    }
+
+    // Regex to match EF Core parameter declarations in ToQueryString() comments: -- p='value' or -- @p='value'
+    private static readonly Regex ParamDeclarationRegex = new(@"^--\s*@?(\w+)='([^']*)'", RegexOptions.Multiline | RegexOptions.Compiled);
+
+    /// <summary>
+    /// Parses parameter declarations from ToQueryString() comment headers.
+    /// EF Core 10 embeds parameter values as: -- @p='value' (DbType = ...)
+    /// </summary>
+    private static void ParseParameterDeclarations(string sql, Dictionary<string, object?> parameterValues)
+    {
+        foreach (Match match in ParamDeclarationRegex.Matches(sql))
+        {
+            var name = match.Groups[1].Value;
+            var rawValue = match.Groups[2].Value;
+
+            // Try to parse as numeric types to avoid string quoting in SQL
+            object value;
+            if (int.TryParse(rawValue, out var intVal))
+                value = intVal;
+            else if (long.TryParse(rawValue, out var longVal))
+                value = longVal;
+            else if (decimal.TryParse(rawValue, System.Globalization.CultureInfo.InvariantCulture, out var decVal))
+                value = decVal;
+            else if (double.TryParse(rawValue, System.Globalization.CultureInfo.InvariantCulture, out var dblVal))
+                value = dblVal;
+            else
+                value = rawValue;
+
+            parameterValues.TryAdd(name, value);
+        }
     }
 
     private static string BuildExplainSql(string sql, ExplainOptions options)

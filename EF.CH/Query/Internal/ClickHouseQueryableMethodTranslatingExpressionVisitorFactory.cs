@@ -667,6 +667,12 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
             expression = unary.Operand;
         }
 
+        // ClickHouse constant wrapper (used to prevent EF Core 10 parameterization)
+        if (expression is ClickHouseConstantExpression chConstant)
+        {
+            return TryConvertValue(chConstant.Value, out value);
+        }
+
         // Direct constant
         if (expression is ConstantExpression constant)
         {

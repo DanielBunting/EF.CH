@@ -94,6 +94,10 @@ public sealed class ClickHouseWindowFunctionExpression : SqlExpression
             typeMapping ?? TypeMapping);
 
     /// <inheritdoc />
+    public override Expression Quote()
+        => throw new InvalidOperationException("ClickHouseWindowFunctionExpression is a custom expression that cannot be quoted.");
+
+    /// <inheritdoc />
     protected override Expression VisitChildren(ExpressionVisitor visitor)
     {
         var changed = false;

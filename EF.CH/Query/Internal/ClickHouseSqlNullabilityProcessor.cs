@@ -28,8 +28,8 @@ public class ClickHouseSqlNullabilityProcessor : SqlNullabilityProcessor
 
     public ClickHouseSqlNullabilityProcessor(
         RelationalParameterBasedSqlProcessorDependencies dependencies,
-        bool useRelationalNulls)
-        : base(dependencies, useRelationalNulls)
+        RelationalParameterBasedSqlProcessorParameters parameters)
+        : base(dependencies, parameters)
     {
         _sqlExpressionFactory = dependencies.SqlExpressionFactory;
         _typeMappingSource = dependencies.TypeMappingSource;
@@ -73,35 +73,6 @@ public class ClickHouseSqlNullabilityProcessor : SqlNullabilityProcessor
     public static void ClearDefaultForNullMappings()
     {
         DefaultForNullMappings.Value = null;
-    }
-
-    /// <summary>
-    /// Visits table expressions, handling ClickHouse-specific table expressions.
-    /// </summary>
-    protected override TableExpressionBase Visit(TableExpressionBase tableExpressionBase)
-    {
-        switch (tableExpressionBase)
-        {
-            case ClickHouseTableModifierExpression modifierExpression:
-                // Visit the wrapped table expression
-                var visitedTable = Visit(modifierExpression.Table);
-                return visitedTable != modifierExpression.Table
-                    ? new ClickHouseTableModifierExpression(
-                        visitedTable,
-                        modifierExpression.UseFinal,
-                        modifierExpression.SampleFraction,
-                        modifierExpression.SampleOffset)
-                    : modifierExpression;
-
-            case ClickHouseExternalTableFunctionExpression:
-            case ClickHouseDictionaryTableExpression:
-            case ClickHouseCteReferenceExpression:
-                // These are leaf nodes, no children to visit
-                return tableExpressionBase;
-
-            default:
-                return base.Visit(tableExpressionBase);
-        }
     }
 
     /// <summary>

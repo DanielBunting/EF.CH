@@ -10,19 +10,18 @@ public class ClickHouseParameterBasedSqlProcessor : RelationalParameterBasedSqlP
 {
     public ClickHouseParameterBasedSqlProcessor(
         RelationalParameterBasedSqlProcessorDependencies dependencies,
-        bool useRelationalNulls)
-        : base(dependencies, useRelationalNulls)
+        RelationalParameterBasedSqlProcessorParameters parameters)
+        : base(dependencies, parameters)
     {
     }
 
     /// <inheritdoc />
     protected override Expression ProcessSqlNullability(
         Expression queryExpression,
-        IReadOnlyDictionary<string, object?> parametersValues,
-        out bool canCache)
+        ParametersCacheDecorator parametersCacheDecorator)
     {
-        return new ClickHouseSqlNullabilityProcessor(Dependencies, UseRelationalNulls)
-            .Process(queryExpression, parametersValues, out canCache);
+        return new ClickHouseSqlNullabilityProcessor(Dependencies, Parameters)
+            .Process(queryExpression, parametersCacheDecorator);
     }
 }
 
@@ -39,6 +38,6 @@ public class ClickHouseParameterBasedSqlProcessorFactory : IRelationalParameterB
         _dependencies = dependencies;
     }
 
-    public virtual RelationalParameterBasedSqlProcessor Create(bool useRelationalNulls)
-        => new ClickHouseParameterBasedSqlProcessor(_dependencies, useRelationalNulls);
+    public virtual RelationalParameterBasedSqlProcessor Create(RelationalParameterBasedSqlProcessorParameters parameters)
+        => new ClickHouseParameterBasedSqlProcessor(_dependencies, parameters);
 }
