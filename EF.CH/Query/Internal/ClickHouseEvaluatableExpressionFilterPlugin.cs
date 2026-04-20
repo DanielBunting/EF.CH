@@ -108,6 +108,13 @@ public class ClickHouseEvaluatableExpressionFilterPlugin : IEvaluatableExpressio
                 return false;
             }
 
+            // Never evaluate Keeper-backed scalar stubs (e.g. GenerateSerialID) -
+            // they must be translated to SQL, not run client-side
+            if (declaringType == typeof(ClickHouseKeeperDbFunctionsExtensions))
+            {
+                return false;
+            }
+
             if (method.IsGenericMethod)
             {
                 var genericDef = method.GetGenericMethodDefinition();
