@@ -1463,6 +1463,95 @@ public static class ClickHouseEntityTypeBuilderExtensions
 
     #endregion
 
+    #region KeeperMap Engine
+
+    /// <summary>
+    /// Configures the entity to use the KeeperMap engine, a linearly-consistent key-value store
+    /// backed by ClickHouse Keeper / ZooKeeper.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// KeeperMap requires exactly one PRIMARY KEY column and does not support ORDER BY,
+    /// PARTITION BY, TTL, or SAMPLE BY clauses.
+    /// </para>
+    /// <para>
+    /// The <paramref name="rootPath"/> is a path in Keeper/ZooKeeper under which the table's
+    /// keys are stored; all replicas sharing the same root path form a single logical table.
+    /// </para>
+    /// </remarks>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="rootPath">The Keeper/ZooKeeper root path for this table.</param>
+    /// <param name="primaryKeyColumn">The single PRIMARY KEY column name.</param>
+    /// <param name="keysLimit">Optional per-shard maximum key count.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    public static EntityTypeBuilder UseKeeperMapEngine(
+        this EntityTypeBuilder builder,
+        string rootPath,
+        string primaryKeyColumn,
+        ulong? keysLimit = null)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(rootPath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(primaryKeyColumn);
+
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, "KeeperMap");
+        builder.HasAnnotation(ClickHouseAnnotationNames.KeeperMapRootPath, rootPath);
+        builder.HasAnnotation(ClickHouseAnnotationNames.PrimaryKey, new[] { primaryKeyColumn });
+        if (keysLimit.HasValue)
+            builder.HasAnnotation(ClickHouseAnnotationNames.KeeperMapKeysLimit, keysLimit.Value);
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Configures the entity to use the KeeperMap engine.
+    /// </summary>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="rootPath">The Keeper/ZooKeeper root path for this table.</param>
+    /// <param name="primaryKeyColumn">The single PRIMARY KEY column name.</param>
+    /// <param name="keysLimit">Optional per-shard maximum key count.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    public static EntityTypeBuilder<TEntity> UseKeeperMapEngine<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        string rootPath,
+        string primaryKeyColumn,
+        ulong? keysLimit = null)
+        where TEntity : class
+    {
+        ((EntityTypeBuilder)builder).UseKeeperMapEngine(rootPath, primaryKeyColumn, keysLimit);
+        return builder;
+    }
+
+    /// <summary>
+    /// Configures the entity to use the KeeperMap engine, selecting the PRIMARY KEY column via expression.
+    /// </summary>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <typeparam name="TKey">The PRIMARY KEY column type.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="rootPath">The Keeper/ZooKeeper root path for this table.</param>
+    /// <param name="primaryKey">Expression selecting the single PRIMARY KEY column.</param>
+    /// <param name="keysLimit">Optional per-shard maximum key count.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    /// <example>
+    /// <code>
+    /// entity.UseKeeperMapEngine("/clickhouse/kv/users", x => x.Id);
+    /// </code>
+    /// </example>
+    public static EntityTypeBuilder<TEntity> UseKeeperMapEngine<TEntity, TKey>(
+        this EntityTypeBuilder<TEntity> builder,
+        string rootPath,
+        Expression<Func<TEntity, TKey>> primaryKey,
+        ulong? keysLimit = null)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(primaryKey);
+        var column = ExpressionExtensions.GetPropertyName(primaryKey);
+        return builder.UseKeeperMapEngine(rootPath, column, keysLimit);
+    }
+
+    #endregion
+
     #region Distributed Engine
 
     /// <summary>
