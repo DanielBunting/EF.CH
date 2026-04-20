@@ -159,6 +159,7 @@ dotnet build samples/QuickStartSample/
 | [MaterializedViewSample](samples/MaterializedViewSample/) | Materialized views with source and target tables |
 | [JoinSample](samples/JoinSample/) | ARRAY JOIN, ASOF JOIN for analytics and time-series |
 | [DeleteUpdateSample](samples/DeleteUpdateSample/) | Lightweight deletes, ALTER TABLE UPDATE strategies |
+| [IdentifierDefaultsSample](samples/IdentifierDefaultsSample/) | Server-generated IDs: `generateSerialID`, UUIDv4/v7, ULID, Snowflake |
 
 ### Advanced
 

@@ -28,6 +28,7 @@ public class ClickHouseUtilityMethodTranslator : IMethodCallTranslator
         typeof(ClickHouseTypeCheckDbFunctionsExtensions),
         typeof(ClickHouseStringSplitDbFunctionsExtensions),
         typeof(ClickHouseUuidDbFunctionsExtensions),
+        typeof(ClickHouseKeeperDbFunctionsExtensions),
     ];
 
     /// <summary>
@@ -131,6 +132,9 @@ public class ClickHouseUtilityMethodTranslator : IMethodCallTranslator
 
         // UUID functions
         [(typeof(ClickHouseUuidDbFunctionsExtensions), nameof(ClickHouseUuidDbFunctionsExtensions.NewGuidV7))] = "generateUUIDv7",
+
+        // Keeper-backed scalar functions
+        [(typeof(ClickHouseKeeperDbFunctionsExtensions), nameof(ClickHouseKeeperDbFunctionsExtensions.GenerateSerialID))] = "generateSerialID",
     };
 
     // Md5 and Sha256 need special nested handling: hex(MD5(x)), hex(SHA256(x))

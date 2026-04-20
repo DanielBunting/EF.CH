@@ -916,6 +916,23 @@ public class UtilityFunctionTests
 
     #endregion
 
+    #region Keeper Function Tests
+
+    [Fact]
+    public void GenerateSerialID_GeneratesCorrectSql()
+    {
+        using var context = CreateContext();
+
+        var query = context.Entities
+            .Select(e => new { e.Id, Serial = EfClass.Functions.GenerateSerialID("order_counter") });
+
+        var sql = query.ToQueryString();
+
+        Assert.Contains("generateSerialID(", sql);
+    }
+
+    #endregion
+
     #region Test Infrastructure
 
     private static UtilityTestContext CreateContext()

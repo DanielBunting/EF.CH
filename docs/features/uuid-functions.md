@@ -1,13 +1,17 @@
-# UUID Functions
+# Identifier Functions
 
-EF.CH supports server-side UUID generation in ClickHouse. In addition to the standard `Guid.NewGuid()` (which maps to `generateUUIDv4()`), EF.CH provides `EF.Functions.NewGuidV7()` for time-sortable UUID v7 generation.
+EF.CH supports server-side identifier generation in ClickHouse — UUIDs (v4, v7), ULIDs, Snowflake IDs, and Keeper-backed serial counters. These come in two flavours:
 
-## Available Functions
+- **LINQ scalars** — call from inside a query `Select`/`Where` (e.g. `EF.Functions.NewGuidV7()`)
+- **Column `DEFAULT` helpers** — wire a generator as the column default so the server populates it on INSERT
+
+## Available LINQ Functions
 
 | C# Method | ClickHouse SQL | Description |
 |-----------|---------------|-------------|
 | `Guid.NewGuid()` | `generateUUIDv4()` | Random UUID v4 (built-in EF Core) |
 | `EF.Functions.NewGuidV7()` | `generateUUIDv7()` | Time-sortable UUID v7 |
+| `EF.Functions.GenerateSerialID("counter")` | `generateSerialID('counter')` | Keeper-backed monotonic UInt64 |
 
 ## Why UUID v7?
 
@@ -42,17 +46,31 @@ FROM "Events"
 
 ### Default Column Values
 
-For auto-generated IDs, use `HasDefaultExpression` instead:
+For auto-generated IDs, wire the generator as the column `DEFAULT`. EF.CH provides strongly-typed fluent helpers that also set `ValueGeneratedOnAdd`, so EF omits the column from INSERTs and the server populates it:
+
+| Helper | ClickHouse expression | CLR type |
+|---|---|---|
+| `HasSerialIDDefault("counter")` | `generateSerialID('counter')` | `ulong` (UInt64) |
+| `HasUuidV4Default()` | `generateUUIDv4()` | `Guid` |
+| `HasUuidV7Default()` | `generateUUIDv7()` | `Guid` |
+| `HasUlidDefault()` | `generateULID()` | `string` |
+| `HasSnowflakeIDDefault()` | `generateSnowflakeID()` | `long` (Int64) |
 
 ```csharp
 modelBuilder.Entity<Event>(entity =>
 {
-    entity.Property(e => e.Id)
-        .HasDefaultExpression("generateUUIDv7()");
+    entity.Property(e => e.Id).HasUuidV7Default();
+    entity.Property(e => e.SerialNumber).HasSerialIDDefault("events_counter");
 });
 ```
 
-This generates the UUID server-side during INSERT, which is typically more appropriate than generating it in SELECT queries.
+For a generator not in the table above, fall back to the raw form:
+
+```csharp
+entity.Property(e => e.Id).HasDefaultExpression("generateUUIDv7()");
+```
+
+A runnable end-to-end example lives in [samples/IdentifierDefaultsSample](../../samples/IdentifierDefaultsSample).
 
 ### Comparing v4 and v7
 
@@ -73,9 +91,10 @@ var comparison = await context.Events
 
 ## Notes
 
-- `NewGuidV7()` generates a new UUID on every row — it's non-deterministic.
+- `NewGuidV7()` and `GenerateSerialID(...)` generate a new value per row — they are non-deterministic.
 - UUID v7 requires ClickHouse 23.8+.
-- For primary keys, prefer `HasDefaultExpression("generateUUIDv7()")` over generating in queries.
+- `generateSerialID` requires ClickHouse Keeper to be configured on the server.
+- For primary keys, prefer the `Has*Default()` helpers over calling the generator in queries.
 - The existing `Guid.NewGuid()` → `generateUUIDv4()` translation continues to work as before.
 
 ## Learn More

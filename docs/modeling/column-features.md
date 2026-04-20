@@ -176,6 +176,28 @@ TraceId UUID DEFAULT generateUUIDv4()
 
 Unlike MATERIALIZED, DEFAULT columns can receive explicit values during INSERT.
 
+#### Server-generated identifiers
+
+For common identifier-generator defaults, EF.CH provides strongly-typed sugar that wraps `HasDefaultExpression` and also sets `ValueGeneratedOnAdd` (so EF omits the column from INSERTs):
+
+| Helper | ClickHouse expression | CLR type |
+|---|---|---|
+| `HasSerialIDDefault("counter_name")` | `generateSerialID('counter_name')` | `ulong` (UInt64) — Keeper-backed, gap-free monotonic |
+| `HasUuidV4Default()` | `generateUUIDv4()` | `Guid` — random |
+| `HasUuidV7Default()` | `generateUUIDv7()` | `Guid` — time-sortable |
+| `HasUlidDefault()` | `generateULID()` | `string` — 26-char sortable |
+| `HasSnowflakeIDDefault()` | `generateSnowflakeID()` | `long` (Int64) |
+
+```csharp
+modelBuilder.Entity<Order>(entity =>
+{
+    entity.Property(x => x.Id).HasSerialIDDefault("orders_counter");
+    entity.Property(x => x.TraceId).HasUuidV7Default();
+});
+```
+
+`generateSerialID` requires ClickHouse Keeper to be configured. See the [IdentifierDefaultsSample](../../samples/IdentifierDefaultsSample) for a runnable example.
+
 ---
 
 ## LowCardinality
