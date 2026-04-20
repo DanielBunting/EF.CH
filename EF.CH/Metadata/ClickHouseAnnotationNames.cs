@@ -436,6 +436,13 @@ public static class ClickHouseAnnotationNames
     /// </summary>
     public const string DefaultExpression = Prefix + "DefaultExpression";
 
+    /// <summary>
+    /// EPHEMERAL column marker. Presence of the annotation (regardless of value)
+    /// marks the column as EPHEMERAL. The annotation value is the optional
+    /// default expression (null or empty string means "no default").
+    /// </summary>
+    public const string EphemeralExpression = Prefix + "EphemeralExpression";
+
     #endregion
 
     #region JSON Type

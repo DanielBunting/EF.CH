@@ -1,6 +1,7 @@
 using EF.CH.Metadata;
 using EF.CH.Storage.Internal;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
 namespace EF.CH.Extensions;
@@ -740,6 +741,73 @@ public static class ClickHousePropertyBuilderExtensions
 
         propertyBuilder.HasAnnotation(ClickHouseAnnotationNames.DefaultExpression, expression);
         return propertyBuilder;
+    }
+
+    /// <summary>
+    /// Configures the property as a ClickHouse EPHEMERAL column.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// EPHEMERAL columns are not stored on disk. They exist only during INSERT
+    /// and their values feed into DEFAULT / MATERIALIZED expressions on other
+    /// columns. ClickHouse rejects explicit SELECTs of ephemeral columns;
+    /// EF.CH rewrites such projections to <c>NULL</c> so queries don't error,
+    /// but an ephemeral property will always read back as its CLR default.
+    /// </para>
+    /// <para>
+    /// The property is configured with <c>BeforeSaveBehavior = Save</c>,
+    /// <c>AfterSaveBehavior = Ignore</c>, and <c>ValueGenerated = Never</c> —
+    /// included in INSERTs, excluded from UPDATEs, client-supplied.
+    /// </para>
+    /// <para>
+    /// Mutually exclusive with <c>HasMaterializedExpression</c>,
+    /// <c>HasAliasExpression</c>, <c>HasDefaultExpression</c>, and <c>HasCodec</c>.
+    /// </para>
+    /// </remarks>
+    /// <typeparam name="TProperty">The property type.</typeparam>
+    /// <param name="propertyBuilder">The property builder.</param>
+    /// <param name="defaultExpression">Optional ClickHouse SQL default expression (e.g. <c>"now()"</c>). Null means no default.</param>
+    /// <returns>The property builder for chaining.</returns>
+    /// <example>
+    /// <code>
+    /// modelBuilder.Entity&lt;Record&gt;(entity =>
+    /// {
+    ///     entity.Property(e => e.UnhashedKey).HasEphemeralExpression();
+    ///     entity.Property(e => e.HashedKey).HasMaterializedExpression("sipHash64(UnhashedKey)");
+    /// });
+    /// </code>
+    /// </example>
+    public static PropertyBuilder<TProperty> HasEphemeralExpression<TProperty>(
+        this PropertyBuilder<TProperty> propertyBuilder,
+        string? defaultExpression = null)
+    {
+        ArgumentNullException.ThrowIfNull(propertyBuilder);
+
+        ApplyEphemeralConfiguration(propertyBuilder, defaultExpression);
+        return propertyBuilder;
+    }
+
+    /// <summary>
+    /// Configures the property as a ClickHouse EPHEMERAL column (non-generic).
+    /// </summary>
+    public static PropertyBuilder HasEphemeralExpression(
+        this PropertyBuilder propertyBuilder,
+        string? defaultExpression = null)
+    {
+        ArgumentNullException.ThrowIfNull(propertyBuilder);
+
+        ApplyEphemeralConfiguration(propertyBuilder, defaultExpression);
+        return propertyBuilder;
+    }
+
+    private static void ApplyEphemeralConfiguration(PropertyBuilder propertyBuilder, string? defaultExpression)
+    {
+        var normalized = string.IsNullOrWhiteSpace(defaultExpression) ? null : defaultExpression;
+
+        propertyBuilder.HasAnnotation(ClickHouseAnnotationNames.EphemeralExpression, normalized);
+        propertyBuilder.Metadata.SetBeforeSaveBehavior(PropertySaveBehavior.Save);
+        propertyBuilder.Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Ignore);
+        propertyBuilder.ValueGeneratedNever();
     }
 
     #endregion

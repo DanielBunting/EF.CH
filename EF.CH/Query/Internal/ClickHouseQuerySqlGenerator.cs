@@ -63,6 +63,15 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     [ThreadStatic]
     private static AsofJoinInfo? _currentAsofJoin;
 
+    // Thread-local storage for ephemeral column names. Columns in this set are
+    // rewritten to NULL during VisitColumn so ClickHouse doesn't reject the
+    // SELECT — ephemeral columns cannot be read back. Keyed on column name only
+    // (not table+column): ColumnExpression only exposes TableAlias, and the
+    // false-positive risk of two tables sharing an ephemeral column name is
+    // negligible (both would be unreadable anyway).
+    [ThreadStatic]
+    private static HashSet<string>? _currentEphemeralColumns;
+
     public ClickHouseQuerySqlGenerator(
         QuerySqlGeneratorDependencies dependencies,
         IRelationalTypeMappingSource typeMappingSource)
@@ -974,11 +983,41 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     }
 
     /// <summary>
+    /// Sets the set of column names marked EPHEMERAL. References to these
+    /// columns are emitted as <c>NULL</c> instead of a column reference,
+    /// because ClickHouse rejects explicit SELECTs of ephemeral columns.
+    /// </summary>
+    internal static void SetEphemeralColumns(HashSet<string>? columns)
+    {
+        _currentEphemeralColumns = (columns is not null && columns.Count > 0) ? columns : null;
+    }
+
+    /// <summary>
     /// Generates column reference.
     /// In DELETE/UPDATE context, omits table alias since ClickHouse mutations don't support aliases.
+    /// Ephemeral columns are rewritten to a typed default (via <c>defaultValueOfTypeName</c>)
+    /// since ClickHouse rejects SELECTs of ephemeral columns and a bare <c>NULL</c>
+    /// would break the data reader for non-nullable CLR properties.
     /// </summary>
     protected override Expression VisitColumn(ColumnExpression columnExpression)
     {
+        if (_currentEphemeralColumns is not null
+            && _currentEphemeralColumns.Contains(columnExpression.Name))
+        {
+            var storeType = columnExpression.TypeMapping?.StoreType;
+            if (!string.IsNullOrEmpty(storeType))
+            {
+                Sql.Append("defaultValueOfTypeName('");
+                Sql.Append(storeType.Replace("'", "''"));
+                Sql.Append("')");
+            }
+            else
+            {
+                Sql.Append("NULL");
+            }
+            return columnExpression;
+        }
+
         if (_inDeleteContext || _inUpdateContext)
         {
             // In DELETE/UPDATE context, use unqualified column name

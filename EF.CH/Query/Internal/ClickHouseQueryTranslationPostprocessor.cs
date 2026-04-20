@@ -35,6 +35,11 @@ public class ClickHouseQueryTranslationPostprocessor : RelationalQueryTranslatio
         // Set up default-for-null mappings for null comparison rewriting in SQL nullability processor
         ClickHouseSqlNullabilityProcessor.SetDefaultForNullMappings(_queryCompilationContext.Model);
 
+        // Pass EPHEMERAL column markers to the SQL generator so it can rewrite
+        // column references to NULL (ClickHouse rejects SELECTs of ephemeral columns).
+        ClickHouseQuerySqlGenerator.SetEphemeralColumns(
+            CollectEphemeralColumns(_queryCompilationContext.Model));
+
         // Let base class do standard processing first
         query = base.Process(query);
 
@@ -121,6 +126,30 @@ public class ClickHouseQueryTranslationPostprocessor : RelationalQueryTranslatio
         }
 
         return query;
+    }
+
+    /// <summary>
+    /// Walks the model and collects column names for every property that
+    /// carries the EPHEMERAL annotation. The resulting set is passed to the
+    /// SQL generator which rewrites matching column references to <c>NULL</c>.
+    /// </summary>
+    private static HashSet<string>? CollectEphemeralColumns(IModel model)
+    {
+        HashSet<string>? result = null;
+
+        foreach (var entityType in model.GetEntityTypes())
+        {
+            foreach (var property in entityType.GetProperties())
+            {
+                if (property.FindAnnotation(ClickHouseAnnotationNames.EphemeralExpression) is null)
+                    continue;
+
+                result ??= new HashSet<string>(StringComparer.Ordinal);
+                result.Add(property.GetColumnName() ?? property.Name);
+            }
+        }
+
+        return result;
     }
 }
 
