@@ -1,6 +1,6 @@
 # Engine Overview
 
-Every ClickHouse table requires a storage engine. The engine determines how data is stored, merged, replicated, and queried. EF.CH supports 14 engine types across three families.
+Every ClickHouse table requires a storage engine. The engine determines how data is stored, merged, replicated, and queried. EF.CH supports 15 engine types across three families.
 
 ## Decision Flowchart
 
@@ -20,6 +20,9 @@ Do you need to store data?
     ├── Single node or multi-node?
     │   └── Multi-node  ─────────────────── Distributed engine
     │       (query fan-out)                  (+ local table with a MergeTree variant)
+    │
+    ├── Key-value lookup with atomic upsert?  ── KeeperMap engine
+    │   (one row per key, backed by Keeper)
     │
     └── What is your write pattern?
         │
@@ -65,6 +68,7 @@ Do you need to store data?
 | **StripeLog** | Small wide tables | All columns in one file | `UseStripeLogEngine()` |
 | **Null** | Materialized view source | Data discarded after insert | `UseNullEngine()` |
 | **Distributed** | Cross-shard queries | Fan-out queries to cluster nodes | `UseDistributed("cluster", "local_table")` |
+| **KeeperMap** | Atomic key-value store | One row per key, backed by Keeper | `UseKeeperMapEngine("/kmpath", x => x.Key)` |
 
 ## MergeTree Family (6 Engines)
 
@@ -211,7 +215,7 @@ entity.UseStripeLogEngine(); // StripeLog
 
 See [Log Family](log-engine.md) for a detailed comparison.
 
-## Specialized Engines (2 Engines)
+## Specialized Engines (3 Engines)
 
 ### Null Engine
 
@@ -253,19 +257,34 @@ The sharding key determines how data is distributed across shards during inserts
 
 See [Distributed Engine](distributed.md) for cluster topology and sharding.
 
+### KeeperMap Engine
+
+The KeeperMap engine stores rows in ClickHouse Keeper (or ZooKeeper) keyed by a single PRIMARY KEY column. Each key maps to exactly one row — inserting a row whose key already exists atomically replaces the previous value. It does not accept `ORDER BY`, `PARTITION BY`, `TTL`, or `SAMPLE BY`.
+
+**When to use:** Small, consistent key-value data shared across nodes — feature flags, configuration, rate-limit counters, distributed locks — where you want atomic upsert semantics without `ReplacingMergeTree`'s background-merge latency.
+
+```csharp
+entity.HasKey(e => e.Key);
+entity.UseKeeperMapEngine("/keeper_map_tables/kv", x => x.Key);
+```
+
+Requires `<keeper_map_path_prefix>` to be configured in `config.xml` and a reachable Keeper (embedded or external).
+
+See [KeeperMap Engine](keeper-map.md) for server-side setup and upsert semantics.
+
 ## Engine Comparison by Capability
 
-| Capability | MergeTree | Replacing | Summing | Aggregating | Collapsing | VersionedCollapsing | Memory | Log | TinyLog | StripeLog | Null | Distributed |
-|------------|-----------|-----------|---------|-------------|------------|---------------------|--------|-----|---------|-----------|------|-------------|
-| Stores data | Yes | Yes | Yes | Yes | Yes | Yes | Yes (RAM) | Yes | Yes | Yes | No | No (proxy) |
-| Deduplication | No | Yes | No | No | No | No | No | No | No | No | N/A | N/A |
-| Auto-aggregation | No | No | Sums numerics | Merges states | No | No | No | No | No | No | N/A | N/A |
-| State cancellation | No | No | No | No | Yes (ordered) | Yes (any order) | No | No | No | No | N/A | N/A |
-| PARTITION BY | Yes | Yes | Yes | Yes | Yes | Yes | No | No | No | No | No | No |
-| TTL | Yes | Yes | Yes | Yes | Yes | Yes | No | No | No | No | No | No |
-| Skip indices | Yes | Yes | Yes | Yes | Yes | Yes | No | No | No | No | No | No |
-| Projections | Yes | Yes | Yes | Yes | Yes | Yes | No | No | No | No | No | No |
-| Replication | Via Replicated* | Via Replicated* | Via Replicated* | Via Replicated* | Via Replicated* | Via Replicated* | No | No | No | No | No | Built-in |
+| Capability | MergeTree | Replacing | Summing | Aggregating | Collapsing | VersionedCollapsing | Memory | Log | TinyLog | StripeLog | Null | Distributed | KeeperMap |
+|------------|-----------|-----------|---------|-------------|------------|---------------------|--------|-----|---------|-----------|------|-------------|-----------|
+| Stores data | Yes | Yes | Yes | Yes | Yes | Yes | Yes (RAM) | Yes | Yes | Yes | No | No (proxy) | Yes (in Keeper) |
+| Deduplication | No | Yes | No | No | No | No | No | No | No | No | N/A | N/A | Yes (atomic upsert) |
+| Auto-aggregation | No | No | Sums numerics | Merges states | No | No | No | No | No | No | N/A | N/A | No |
+| State cancellation | No | No | No | No | Yes (ordered) | Yes (any order) | No | No | No | No | N/A | N/A | No |
+| PARTITION BY | Yes | Yes | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No |
+| TTL | Yes | Yes | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No |
+| Skip indices | Yes | Yes | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No |
+| Projections | Yes | Yes | Yes | Yes | Yes | Yes | No | No | No | No | No | No | No |
+| Replication | Via Replicated* | Via Replicated* | Via Replicated* | Via Replicated* | Via Replicated* | Via Replicated* | No | No | No | No | No | Built-in | Via shared Keeper |
 
 ## Common Configuration Shared by All MergeTree Engines
 
@@ -298,3 +317,4 @@ See [MergeTree](mergetree.md) for detailed documentation of ORDER BY, PARTITION 
 - [Log Family](log-engine.md) -- simple disk storage for small tables
 - [Null Engine](null-engine.md) -- write-only, data discarded
 - [Distributed Engine](distributed.md) -- cross-cluster query fan-out
+- [KeeperMap Engine](keeper-map.md) -- atomic key-value storage backed by ClickHouse Keeper

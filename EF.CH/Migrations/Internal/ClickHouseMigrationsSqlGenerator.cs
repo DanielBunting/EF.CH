@@ -1056,6 +1056,13 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         var distributedPolicy = GetAnnotation<string>(operation, ClickHouseAnnotationNames.DistributedPolicyName)
                              ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.DistributedPolicyName);
 
+        // KeeperMap engine parameters
+        var keeperMapRootPath = GetAnnotation<string>(operation, ClickHouseAnnotationNames.KeeperMapRootPath)
+                             ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.KeeperMapRootPath);
+        var keeperMapKeysLimit = GetAnnotation<ulong?>(operation, ClickHouseAnnotationNames.KeeperMapKeysLimit)
+                              ?? GetEntityAnnotation<ulong?>(entityType, ClickHouseAnnotationNames.KeeperMapKeysLimit);
+        var isKeeperMap = string.Equals(engine, "KeeperMap", StringComparison.OrdinalIgnoreCase);
+
         builder.AppendLine();
         builder.Append("ENGINE = ");
 
@@ -1140,6 +1147,14 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
                 builder.Append(")");
                 break;
 
+            // KeeperMap engine
+            case "KeeperMap":
+                builder.Append($"KeeperMap('{keeperMapRootPath?.Replace("'", "''")}'");
+                if (keeperMapKeysLimit.HasValue)
+                    builder.Append($", {keeperMapKeysLimit.Value}");
+                builder.Append(")");
+                break;
+
             default:
                 builder.Append(engine);
                 if (engine.EndsWith("MergeTree", StringComparison.OrdinalIgnoreCase))
@@ -1150,21 +1165,21 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         }
 
         // PARTITION BY
-        if (!string.IsNullOrEmpty(partitionBy))
+        if (!isKeeperMap && !string.IsNullOrEmpty(partitionBy))
         {
             builder.AppendLine();
             builder.Append($"PARTITION BY {partitionBy}");
         }
 
         // ORDER BY (required for MergeTree family)
-        if (orderBy is { Length: > 0 })
+        if (!isKeeperMap && orderBy is { Length: > 0 })
         {
             builder.AppendLine();
             builder.Append("ORDER BY (");
             builder.Append(string.Join(", ", orderBy.Select(c => Dependencies.SqlGenerationHelper.DelimitIdentifier(c))));
             builder.Append(")");
         }
-        else if (engine.EndsWith("MergeTree", StringComparison.OrdinalIgnoreCase))
+        else if (!isKeeperMap && engine.EndsWith("MergeTree", StringComparison.OrdinalIgnoreCase))
         {
             // Default ORDER BY using primary key columns
             var pkColumns = operation.PrimaryKey?.Columns;
@@ -1193,14 +1208,14 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         }
 
         // SAMPLE BY
-        if (!string.IsNullOrEmpty(sampleBy))
+        if (!isKeeperMap && !string.IsNullOrEmpty(sampleBy))
         {
             builder.AppendLine();
             builder.Append($"SAMPLE BY {sampleBy}");
         }
 
         // TTL
-        if (!string.IsNullOrEmpty(ttl))
+        if (!isKeeperMap && !string.IsNullOrEmpty(ttl))
         {
             builder.AppendLine();
             builder.Append($"TTL {ttl}");

@@ -73,7 +73,7 @@ var summary = await db.Events
 
 | Category | Highlights | Docs |
 |---|---|---|
-| **Engines** | 14 table engines: MergeTree, ReplacingMergeTree, SummingMergeTree, AggregatingMergeTree, CollapsingMergeTree, VersionedCollapsingMergeTree, Replicated variants, Distributed, Null | [docs/engines/](docs/engines/) |
+| **Engines** | 15 table engines: MergeTree, ReplacingMergeTree, SummingMergeTree, AggregatingMergeTree, CollapsingMergeTree, VersionedCollapsingMergeTree, Replicated variants, Distributed, Null, KeeperMap | [docs/engines/](docs/engines/) |
 | **Type System** | Arrays, Maps, Tuples, Nested, JSON, IPv4/IPv6, Enums, DateTime64 with timezones, LowCardinality, 40+ type mappings | [docs/types/](docs/types/) |
 | **Query Power** | FINAL, SAMPLE, PREWHERE, LimitBy, CTEs, ARRAY JOIN, ASOF JOIN, Window Functions, Set Operations, Interpolate, 22+ LINQ extensions | [docs/querying/](docs/querying/) |
 | **Analytics** | 66+ aggregate functions, materialized views, projections, aggregate combinators (-If, -Array, -State, -Merge) | [docs/functions/](docs/functions/), [docs/advanced/](docs/advanced/) |

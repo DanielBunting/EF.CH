@@ -512,6 +512,20 @@ public static class ClickHouseAnnotationNames
 
     #endregion
 
+    #region KeeperMap Engine
+
+    /// <summary>
+    /// The root path in ClickHouse Keeper / ZooKeeper for the KeeperMap engine.
+    /// </summary>
+    public const string KeeperMapRootPath = Prefix + "KeeperMapRootPath";
+
+    /// <summary>
+    /// The optional per-shard key count limit for the KeeperMap engine.
+    /// </summary>
+    public const string KeeperMapKeysLimit = Prefix + "KeeperMapKeysLimit";
+
+    #endregion
+
     #region Parameterized Views
 
     /// <summary>
