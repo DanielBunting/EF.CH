@@ -92,92 +92,44 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
         return base.VisitExtension(extensionExpression);
     }
 
+    // ArrayJoin and AsofJoin are rewritten by ClickHouseQueryTranslationPreprocessor
+    // before they reach this visitor and so don't appear here.
+    private static readonly Dictionary<MethodInfo, Func<ClickHouseQueryableMethodTranslatingExpressionVisitor, MethodCallExpression, Expression>> GenericMethodHandlers = new()
+    {
+        [ClickHouseQueryableExtensions.FinalMethodInfo] = (v, e) => v.TranslateFinal(e),
+        [ClickHouseQueryableExtensions.SampleMethodInfo] = (v, e) => v.TranslateSample(e, hasOffset: false),
+        [ClickHouseQueryableExtensions.SampleWithOffsetMethodInfo] = (v, e) => v.TranslateSample(e, hasOffset: true),
+        [ClickHouseQueryableExtensions.WithSettingsMethodInfo] = (v, e) => v.TranslateWithSettings(e),
+        [ClickHouseQueryableExtensions.WithSettingMethodInfo] = (v, e) => v.TranslateWithSetting(e),
+        [ClickHouseQueryableExtensions.PreWhereMethodInfo] = (v, e) => v.TranslatePreWhere(e),
+        [ClickHouseQueryableExtensions.LimitByMethodInfo] = (v, e) => v.TranslateLimitBy(e, hasOffset: false),
+        [ClickHouseQueryableExtensions.LimitByWithOffsetMethodInfo] = (v, e) => v.TranslateLimitBy(e, hasOffset: true),
+        [ClickHouseQueryableExtensions.WithRollupMethodInfo] = (v, e) => v.TranslateGroupByModifier(e, GroupByModifier.Rollup),
+        [ClickHouseQueryableExtensions.WithCubeMethodInfo] = (v, e) => v.TranslateGroupByModifier(e, GroupByModifier.Cube),
+        [ClickHouseQueryableExtensions.WithTotalsMethodInfo] = (v, e) => v.TranslateGroupByModifier(e, GroupByModifier.Totals),
+        [ClickHouseQueryableExtensions.AsCteMethodInfo] = (v, e) => v.TranslateAsCte(e),
+        [ClickHouseQueryableExtensions.WithRawFilterMethodInfo] = (v, e) => v.TranslateWithRawFilter(e),
+    };
+
     /// <summary>
     /// Handles ClickHouse-specific extension methods like Final() and Sample().
     /// </summary>
     protected override Expression VisitMethodCall(MethodCallExpression methodCallExpression)
     {
-        var method = methodCallExpression.Method;
-
-        // Handle Final() extension method
-        if (method.IsGenericMethod &&
-            method.GetGenericMethodDefinition() == ClickHouseQueryableExtensions.FinalMethodInfo)
+        if (methodCallExpression.Method.IsGenericMethod)
         {
-            return TranslateFinal(methodCallExpression);
-        }
+            var genericDef = methodCallExpression.Method.GetGenericMethodDefinition();
 
-        // Handle Sample() extension methods
-        if (method.IsGenericMethod)
-        {
-            var genericDef = method.GetGenericMethodDefinition();
-            if (genericDef == ClickHouseQueryableExtensions.SampleMethodInfo)
+            if (GenericMethodHandlers.TryGetValue(genericDef, out var handler))
             {
-                return TranslateSample(methodCallExpression, hasOffset: false);
-            }
-            if (genericDef == ClickHouseQueryableExtensions.SampleWithOffsetMethodInfo)
-            {
-                return TranslateSample(methodCallExpression, hasOffset: true);
-            }
-            if (genericDef == ClickHouseQueryableExtensions.WithSettingsMethodInfo)
-            {
-                return TranslateWithSettings(methodCallExpression);
-            }
-            if (genericDef == ClickHouseQueryableExtensions.WithSettingMethodInfo)
-            {
-                return TranslateWithSetting(methodCallExpression);
+                return handler(this, methodCallExpression);
             }
 
-            // Handle unified Interpolate extension methods
             if (InterpolateExtensions.AllMethodInfos.Contains(genericDef))
             {
                 return TranslateInterpolate(methodCallExpression);
             }
-
-            // Handle PreWhere extension method
-            if (genericDef == ClickHouseQueryableExtensions.PreWhereMethodInfo)
-            {
-                return TranslatePreWhere(methodCallExpression);
-            }
-
-            // Handle LimitBy extension methods
-            if (genericDef == ClickHouseQueryableExtensions.LimitByMethodInfo)
-            {
-                return TranslateLimitBy(methodCallExpression, hasOffset: false);
-            }
-            if (genericDef == ClickHouseQueryableExtensions.LimitByWithOffsetMethodInfo)
-            {
-                return TranslateLimitBy(methodCallExpression, hasOffset: true);
-            }
-
-            // Handle GROUP BY modifiers
-            if (genericDef == ClickHouseQueryableExtensions.WithRollupMethodInfo)
-            {
-                return TranslateGroupByModifier(methodCallExpression, GroupByModifier.Rollup);
-            }
-            if (genericDef == ClickHouseQueryableExtensions.WithCubeMethodInfo)
-            {
-                return TranslateGroupByModifier(methodCallExpression, GroupByModifier.Cube);
-            }
-            if (genericDef == ClickHouseQueryableExtensions.WithTotalsMethodInfo)
-            {
-                return TranslateGroupByModifier(methodCallExpression, GroupByModifier.Totals);
-            }
-
-            // Handle AsCte extension method
-            if (genericDef == ClickHouseQueryableExtensions.AsCteMethodInfo)
-            {
-                return TranslateAsCte(methodCallExpression);
-            }
-
-            // Handle WithRawFilter extension method
-            if (genericDef == ClickHouseQueryableExtensions.WithRawFilterMethodInfo)
-            {
-                return TranslateWithRawFilter(methodCallExpression);
-            }
-
-            // Note: ArrayJoin and AsofJoin are rewritten by ClickHouseQueryTranslationPreprocessor
-            // before they reach this visitor, so they don't need handling here.
-}
+        }
 
         return base.VisitMethodCall(methodCallExpression);
     }

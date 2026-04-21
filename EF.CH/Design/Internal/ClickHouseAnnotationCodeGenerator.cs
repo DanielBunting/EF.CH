@@ -1,6 +1,7 @@
 using System.Reflection;
 using EF.CH.Extensions;
 using EF.CH.Metadata;
+using EF.CH.Metadata.Internal;
 using Microsoft.EntityFrameworkCore.Design;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
@@ -141,18 +142,18 @@ public class ClickHouseAnnotationCodeGenerator : AnnotationCodeGenerator
     /// </summary>
     private static readonly HashSet<string> SupportedEngines =
     [
-        "MergeTree",
-        "ReplacingMergeTree",
-        "SummingMergeTree",
-        "AggregatingMergeTree",
-        "CollapsingMergeTree",
-        "VersionedCollapsingMergeTree",
-        "Null",
-        "Distributed",
-        "Memory",
-        "Log",
-        "TinyLog",
-        "StripeLog"
+        ClickHouseEngineNames.MergeTree,
+        ClickHouseEngineNames.ReplacingMergeTree,
+        ClickHouseEngineNames.SummingMergeTree,
+        ClickHouseEngineNames.AggregatingMergeTree,
+        ClickHouseEngineNames.CollapsingMergeTree,
+        ClickHouseEngineNames.VersionedCollapsingMergeTree,
+        ClickHouseEngineNames.Null,
+        ClickHouseEngineNames.Distributed,
+        ClickHouseEngineNames.Memory,
+        ClickHouseEngineNames.Log,
+        ClickHouseEngineNames.TinyLog,
+        ClickHouseEngineNames.StripeLog
     ];
 
     public ClickHouseAnnotationCodeGenerator(AnnotationCodeGeneratorDependencies dependencies)
@@ -207,11 +208,11 @@ public class ClickHouseAnnotationCodeGenerator : AnnotationCodeGenerator
 
                 switch (engine)
                 {
-                    case "MergeTree":
+                    case ClickHouseEngineNames.MergeTree:
                         calls.Add(new MethodCallCodeFragment(UseMergeTreeMethodInfo, orderBy.Cast<object>().ToArray()));
                         break;
 
-                    case "ReplacingMergeTree":
+                    case ClickHouseEngineNames.ReplacingMergeTree:
                         if (versionColumn is not null)
                         {
                             calls.Add(new MethodCallCodeFragment(UseReplacingMergeTreeWithVersionMethodInfo, versionColumn, orderBy));
@@ -223,15 +224,15 @@ public class ClickHouseAnnotationCodeGenerator : AnnotationCodeGenerator
                         }
                         break;
 
-                    case "SummingMergeTree":
+                    case ClickHouseEngineNames.SummingMergeTree:
                         calls.Add(new MethodCallCodeFragment(UseSummingMergeTreeMethodInfo, orderBy.Cast<object>().ToArray()));
                         break;
 
-                    case "AggregatingMergeTree":
+                    case ClickHouseEngineNames.AggregatingMergeTree:
                         calls.Add(new MethodCallCodeFragment(UseAggregatingMergeTreeMethodInfo, orderBy.Cast<object>().ToArray()));
                         break;
 
-                    case "CollapsingMergeTree":
+                    case ClickHouseEngineNames.CollapsingMergeTree:
                         if (signColumn is null)
                         {
                             throw new InvalidOperationException(
@@ -241,7 +242,7 @@ public class ClickHouseAnnotationCodeGenerator : AnnotationCodeGenerator
                         annotations.Remove(ClickHouseAnnotationNames.SignColumn);
                         break;
 
-                    case "VersionedCollapsingMergeTree":
+                    case ClickHouseEngineNames.VersionedCollapsingMergeTree:
                         if (signColumn is null)
                         {
                             throw new InvalidOperationException(
@@ -265,11 +266,11 @@ public class ClickHouseAnnotationCodeGenerator : AnnotationCodeGenerator
             {
                 MethodInfo? engineMethod = engine switch
                 {
-                    "Null" => UseNullEngineMethodInfo,
-                    "Memory" => UseMemoryEngineMethodInfo,
-                    "Log" => UseLogEngineMethodInfo,
-                    "TinyLog" => UseTinyLogEngineMethodInfo,
-                    "StripeLog" => UseStripeLogEngineMethodInfo,
+                    ClickHouseEngineNames.Null => UseNullEngineMethodInfo,
+                    ClickHouseEngineNames.Memory => UseMemoryEngineMethodInfo,
+                    ClickHouseEngineNames.Log => UseLogEngineMethodInfo,
+                    ClickHouseEngineNames.TinyLog => UseTinyLogEngineMethodInfo,
+                    ClickHouseEngineNames.StripeLog => UseStripeLogEngineMethodInfo,
                     _ => null
                 };
 

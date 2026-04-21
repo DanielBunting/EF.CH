@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using EF.CH.Metadata.Internal;
 
 namespace EF.CH.Scaffolding.Internal;
 
@@ -64,25 +65,25 @@ public partial class ClickHouseEngineParser
 
         switch (engine)
         {
-            case "ReplacingMergeTree" when parameters.Length >= 1 && !string.IsNullOrEmpty(parameters[0]):
+            case ClickHouseEngineNames.ReplacingMergeTree when parameters.Length >= 1 && !string.IsNullOrEmpty(parameters[0]):
                 metadata.VersionColumn = parameters[0];
                 break;
 
-            case "CollapsingMergeTree" when parameters.Length >= 1:
+            case ClickHouseEngineNames.CollapsingMergeTree when parameters.Length >= 1:
                 metadata.SignColumn = parameters[0];
                 break;
 
-            case "VersionedCollapsingMergeTree" when parameters.Length >= 2:
+            case ClickHouseEngineNames.VersionedCollapsingMergeTree when parameters.Length >= 2:
                 metadata.SignColumn = parameters[0];
                 metadata.VersionColumn = parameters[1];
                 break;
 
-            case "SummingMergeTree" when parameters.Length >= 1 && !string.IsNullOrEmpty(parameters[0]):
+            case ClickHouseEngineNames.SummingMergeTree when parameters.Length >= 1 && !string.IsNullOrEmpty(parameters[0]):
                 // SummingMergeTree can have optional columns to sum
                 metadata.SumColumns = parameters;
                 break;
 
-            case "GraphiteMergeTree" when parameters.Length >= 1:
+            case ClickHouseEngineNames.GraphiteMergeTree when parameters.Length >= 1:
                 metadata.GraphiteConfigSection = parameters[0];
                 break;
         }
@@ -174,7 +175,7 @@ public class EngineMetadata
     /// <summary>
     /// The engine name (e.g., "MergeTree", "ReplacingMergeTree").
     /// </summary>
-    public string EngineName { get; set; } = "MergeTree";
+    public string EngineName { get; set; } = ClickHouseEngineNames.MergeTree;
 
     /// <summary>
     /// ORDER BY columns.

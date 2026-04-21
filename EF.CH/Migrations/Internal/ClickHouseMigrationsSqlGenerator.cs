@@ -3,6 +3,7 @@ using EF.CH.Configuration;
 using EF.CH.Dictionaries;
 using EF.CH.Infrastructure;
 using EF.CH.Metadata;
+using EF.CH.Metadata.Internal;
 using EF.CH.Migrations.Operations;
 using EF.CH.Projections;
 using EF.CH.Query.Internal;
@@ -879,7 +880,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
     {
         var engine = GetAnnotation<string>(operation, ClickHouseAnnotationNames.Engine)
                   ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.Engine)
-                  ?? "MergeTree";
+                  ?? ClickHouseEngineNames.MergeTree;
         var orderBy = GetAnnotation<string[]>(operation, ClickHouseAnnotationNames.OrderBy)
                    ?? GetEntityAnnotation<string[]>(entityType, ClickHouseAnnotationNames.OrderBy);
         var partitionBy = GetAnnotation<string>(operation, ClickHouseAnnotationNames.PartitionBy)
@@ -914,22 +915,22 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         // Generate engine with parameters
         switch (engine)
         {
-            case "ReplacingMergeTree" when !string.IsNullOrEmpty(versionColumn) && !string.IsNullOrEmpty(isDeletedColumn):
+            case ClickHouseEngineNames.ReplacingMergeTree when !string.IsNullOrEmpty(versionColumn) && !string.IsNullOrEmpty(isDeletedColumn):
                 // ReplacingMergeTree(version, is_deleted) - ClickHouse 23.2+
                 builder.Append($"ReplacingMergeTree({Dependencies.SqlGenerationHelper.DelimitIdentifier(versionColumn)}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(isDeletedColumn)})");
                 break;
-            case "ReplacingMergeTree" when !string.IsNullOrEmpty(versionColumn):
+            case ClickHouseEngineNames.ReplacingMergeTree when !string.IsNullOrEmpty(versionColumn):
                 builder.Append($"ReplacingMergeTree({Dependencies.SqlGenerationHelper.DelimitIdentifier(versionColumn)})");
                 break;
-            case "CollapsingMergeTree" when !string.IsNullOrEmpty(signColumn):
+            case ClickHouseEngineNames.CollapsingMergeTree when !string.IsNullOrEmpty(signColumn):
                 builder.Append($"CollapsingMergeTree({Dependencies.SqlGenerationHelper.DelimitIdentifier(signColumn)})");
                 break;
-            case "VersionedCollapsingMergeTree" when !string.IsNullOrEmpty(signColumn) && !string.IsNullOrEmpty(versionColumn):
+            case ClickHouseEngineNames.VersionedCollapsingMergeTree when !string.IsNullOrEmpty(signColumn) && !string.IsNullOrEmpty(versionColumn):
                 builder.Append($"VersionedCollapsingMergeTree({Dependencies.SqlGenerationHelper.DelimitIdentifier(signColumn)}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(versionColumn)})");
                 break;
 
             // Distributed engine
-            case "Distributed":
+            case ClickHouseEngineNames.Distributed:
                 builder.Append("Distributed(");
                 builder.Append($"'{distributedCluster?.Replace("'", "''")}'");
                 builder.Append(", ");
@@ -954,7 +955,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
 
             default:
                 builder.Append(engine);
-                if (engine.EndsWith("MergeTree", StringComparison.OrdinalIgnoreCase))
+                if (engine.EndsWith(ClickHouseEngineNames.MergeTreeSuffix, StringComparison.OrdinalIgnoreCase))
                 {
                     builder.Append("()");
                 }
@@ -976,7 +977,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
             builder.Append(string.Join(", ", orderBy.Select(c => Dependencies.SqlGenerationHelper.DelimitIdentifier(c))));
             builder.Append(")");
         }
-        else if (engine.EndsWith("MergeTree", StringComparison.OrdinalIgnoreCase))
+        else if (engine.EndsWith(ClickHouseEngineNames.MergeTreeSuffix, StringComparison.OrdinalIgnoreCase))
         {
             // Default ORDER BY tuple() for views without explicit ordering
             builder.AppendLine();
@@ -1024,7 +1025,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         // Get engine from annotations or default to MergeTree
         var engine = GetAnnotation<string>(operation, ClickHouseAnnotationNames.Engine)
                   ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.Engine)
-                  ?? "MergeTree";
+                  ?? ClickHouseEngineNames.MergeTree;
         var orderBy = GetAnnotation<string[]>(operation, ClickHouseAnnotationNames.OrderBy)
                    ?? GetEntityAnnotation<string[]>(entityType, ClickHouseAnnotationNames.OrderBy);
         var partitionBy = GetAnnotation<string>(operation, ClickHouseAnnotationNames.PartitionBy)
@@ -1061,7 +1062,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
                              ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.KeeperMapRootPath);
         var keeperMapKeysLimit = GetAnnotation<ulong?>(operation, ClickHouseAnnotationNames.KeeperMapKeysLimit)
                               ?? GetEntityAnnotation<ulong?>(entityType, ClickHouseAnnotationNames.KeeperMapKeysLimit);
-        var isKeeperMap = string.Equals(engine, "KeeperMap", StringComparison.OrdinalIgnoreCase);
+        var isKeeperMap = string.Equals(engine, ClickHouseEngineNames.KeeperMap, StringComparison.OrdinalIgnoreCase);
 
         builder.AppendLine();
         builder.Append("ENGINE = ");
@@ -1083,48 +1084,48 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         switch (engine)
         {
             // Replicated engines
-            case "ReplicatedReplacingMergeTree" when !string.IsNullOrEmpty(versionColumn) && !string.IsNullOrEmpty(isDeletedColumn):
+            case ClickHouseEngineNames.ReplicatedReplacingMergeTree when !string.IsNullOrEmpty(versionColumn) && !string.IsNullOrEmpty(isDeletedColumn):
                 builder.Append($"ReplicatedReplacingMergeTree({replicationPath}, {replicaName}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(versionColumn)}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(isDeletedColumn)})");
                 break;
-            case "ReplicatedReplacingMergeTree" when !string.IsNullOrEmpty(versionColumn):
+            case ClickHouseEngineNames.ReplicatedReplacingMergeTree when !string.IsNullOrEmpty(versionColumn):
                 builder.Append($"ReplicatedReplacingMergeTree({replicationPath}, {replicaName}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(versionColumn)})");
                 break;
-            case "ReplicatedReplacingMergeTree":
+            case ClickHouseEngineNames.ReplicatedReplacingMergeTree:
                 builder.Append($"ReplicatedReplacingMergeTree({replicationPath}, {replicaName})");
                 break;
-            case "ReplicatedCollapsingMergeTree" when !string.IsNullOrEmpty(signColumn):
+            case ClickHouseEngineNames.ReplicatedCollapsingMergeTree when !string.IsNullOrEmpty(signColumn):
                 builder.Append($"ReplicatedCollapsingMergeTree({replicationPath}, {replicaName}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(signColumn)})");
                 break;
-            case "ReplicatedVersionedCollapsingMergeTree" when !string.IsNullOrEmpty(signColumn) && !string.IsNullOrEmpty(versionColumn):
+            case ClickHouseEngineNames.ReplicatedVersionedCollapsingMergeTree when !string.IsNullOrEmpty(signColumn) && !string.IsNullOrEmpty(versionColumn):
                 builder.Append($"ReplicatedVersionedCollapsingMergeTree({replicationPath}, {replicaName}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(signColumn)}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(versionColumn)})");
                 break;
-            case "ReplicatedMergeTree":
+            case ClickHouseEngineNames.ReplicatedMergeTree:
                 builder.Append($"ReplicatedMergeTree({replicationPath}, {replicaName})");
                 break;
-            case "ReplicatedSummingMergeTree":
+            case ClickHouseEngineNames.ReplicatedSummingMergeTree:
                 builder.Append($"ReplicatedSummingMergeTree({replicationPath}, {replicaName})");
                 break;
-            case "ReplicatedAggregatingMergeTree":
+            case ClickHouseEngineNames.ReplicatedAggregatingMergeTree:
                 builder.Append($"ReplicatedAggregatingMergeTree({replicationPath}, {replicaName})");
                 break;
 
             // Non-replicated engines
-            case "ReplacingMergeTree" when !string.IsNullOrEmpty(versionColumn) && !string.IsNullOrEmpty(isDeletedColumn):
+            case ClickHouseEngineNames.ReplacingMergeTree when !string.IsNullOrEmpty(versionColumn) && !string.IsNullOrEmpty(isDeletedColumn):
                 // ReplacingMergeTree(version, is_deleted) - ClickHouse 23.2+
                 builder.Append($"ReplacingMergeTree({Dependencies.SqlGenerationHelper.DelimitIdentifier(versionColumn)}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(isDeletedColumn)})");
                 break;
-            case "ReplacingMergeTree" when !string.IsNullOrEmpty(versionColumn):
+            case ClickHouseEngineNames.ReplacingMergeTree when !string.IsNullOrEmpty(versionColumn):
                 builder.Append($"ReplacingMergeTree({Dependencies.SqlGenerationHelper.DelimitIdentifier(versionColumn)})");
                 break;
-            case "CollapsingMergeTree" when !string.IsNullOrEmpty(signColumn):
+            case ClickHouseEngineNames.CollapsingMergeTree when !string.IsNullOrEmpty(signColumn):
                 builder.Append($"CollapsingMergeTree({Dependencies.SqlGenerationHelper.DelimitIdentifier(signColumn)})");
                 break;
-            case "VersionedCollapsingMergeTree" when !string.IsNullOrEmpty(signColumn) && !string.IsNullOrEmpty(versionColumn):
+            case ClickHouseEngineNames.VersionedCollapsingMergeTree when !string.IsNullOrEmpty(signColumn) && !string.IsNullOrEmpty(versionColumn):
                 builder.Append($"VersionedCollapsingMergeTree({Dependencies.SqlGenerationHelper.DelimitIdentifier(signColumn)}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(versionColumn)})");
                 break;
 
             // Distributed engine
-            case "Distributed":
+            case ClickHouseEngineNames.Distributed:
                 builder.Append("Distributed(");
                 builder.Append($"'{distributedCluster?.Replace("'", "''")}'");
                 builder.Append(", ");
@@ -1148,7 +1149,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
                 break;
 
             // KeeperMap engine
-            case "KeeperMap":
+            case ClickHouseEngineNames.KeeperMap:
                 builder.Append($"KeeperMap('{keeperMapRootPath?.Replace("'", "''")}'");
                 if (keeperMapKeysLimit.HasValue)
                     builder.Append($", {keeperMapKeysLimit.Value}");
@@ -1157,7 +1158,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
 
             default:
                 builder.Append(engine);
-                if (engine.EndsWith("MergeTree", StringComparison.OrdinalIgnoreCase))
+                if (engine.EndsWith(ClickHouseEngineNames.MergeTreeSuffix, StringComparison.OrdinalIgnoreCase))
                 {
                     builder.Append("()");
                 }
@@ -1179,7 +1180,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
             builder.Append(string.Join(", ", orderBy.Select(c => Dependencies.SqlGenerationHelper.DelimitIdentifier(c))));
             builder.Append(")");
         }
-        else if (!isKeeperMap && engine.EndsWith("MergeTree", StringComparison.OrdinalIgnoreCase))
+        else if (!isKeeperMap && engine.EndsWith(ClickHouseEngineNames.MergeTreeSuffix, StringComparison.OrdinalIgnoreCase))
         {
             // Default ORDER BY using primary key columns
             var pkColumns = operation.PrimaryKey?.Columns;
