@@ -87,6 +87,7 @@ public class ClickHouseRoutingConnection : DbConnection
     }
 
     /// <inheritdoc />
+    [System.Diagnostics.CodeAnalysis.AllowNull]
     public override string ConnectionString
     {
         get => GetConnectionString();

@@ -1,6 +1,7 @@
 using System.Linq.Expressions;
 using EF.CH.Dictionaries;
 using EF.CH.Metadata;
+using EF.CH.Metadata.Internal;
 using EF.CH.Query.Internal;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
@@ -215,7 +216,7 @@ public static class ClickHouseEntityTypeBuilderExtensions
             throw new ArgumentException("At least one ORDER BY column is required for MergeTree.", nameof(orderByColumns));
         }
 
-        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, "MergeTree");
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, ClickHouseEngineNames.MergeTree);
         builder.HasAnnotation(ClickHouseAnnotationNames.OrderBy, orderByColumns);
 
         return builder;
@@ -278,7 +279,7 @@ public static class ClickHouseEntityTypeBuilderExtensions
             throw new ArgumentException("At least one ORDER BY column is required for ReplacingMergeTree.", nameof(orderByColumns));
         }
 
-        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, "ReplacingMergeTree");
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, ClickHouseEngineNames.ReplacingMergeTree);
         builder.HasAnnotation(ClickHouseAnnotationNames.OrderBy, orderByColumns);
 
         return builder;
@@ -449,7 +450,7 @@ public static class ClickHouseEntityTypeBuilderExtensions
             throw new ArgumentException("At least one ORDER BY column is required for SummingMergeTree.", nameof(orderByColumns));
         }
 
-        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, "SummingMergeTree");
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, ClickHouseEngineNames.SummingMergeTree);
         builder.HasAnnotation(ClickHouseAnnotationNames.OrderBy, orderByColumns);
 
         return builder;
@@ -488,7 +489,7 @@ public static class ClickHouseEntityTypeBuilderExtensions
             throw new ArgumentException("At least one ORDER BY column is required for AggregatingMergeTree.", nameof(orderByColumns));
         }
 
-        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, "AggregatingMergeTree");
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, ClickHouseEngineNames.AggregatingMergeTree);
         builder.HasAnnotation(ClickHouseAnnotationNames.OrderBy, orderByColumns);
 
         return builder;
@@ -585,7 +586,7 @@ public static class ClickHouseEntityTypeBuilderExtensions
             throw new ArgumentException("At least one ORDER BY column is required for CollapsingMergeTree.", nameof(orderByExpression));
         }
 
-        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, "CollapsingMergeTree");
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, ClickHouseEngineNames.CollapsingMergeTree);
         builder.HasAnnotation(ClickHouseAnnotationNames.SignColumn, signColumn);
         builder.HasAnnotation(ClickHouseAnnotationNames.OrderBy, orderByColumns);
 
@@ -613,7 +614,7 @@ public static class ClickHouseEntityTypeBuilderExtensions
             throw new ArgumentException("At least one ORDER BY column is required for CollapsingMergeTree.", nameof(orderByColumns));
         }
 
-        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, "CollapsingMergeTree");
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, ClickHouseEngineNames.CollapsingMergeTree);
         builder.HasAnnotation(ClickHouseAnnotationNames.SignColumn, signColumn);
         builder.HasAnnotation(ClickHouseAnnotationNames.OrderBy, orderByColumns);
 
@@ -666,7 +667,7 @@ public static class ClickHouseEntityTypeBuilderExtensions
             throw new ArgumentException("At least one ORDER BY column is required for VersionedCollapsingMergeTree.", nameof(orderByExpression));
         }
 
-        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, "VersionedCollapsingMergeTree");
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, ClickHouseEngineNames.VersionedCollapsingMergeTree);
         builder.HasAnnotation(ClickHouseAnnotationNames.SignColumn, signColumn);
         builder.HasAnnotation(ClickHouseAnnotationNames.VersionColumn, versionColumn);
         builder.HasAnnotation(ClickHouseAnnotationNames.OrderBy, orderByColumns);
@@ -698,7 +699,7 @@ public static class ClickHouseEntityTypeBuilderExtensions
             throw new ArgumentException("At least one ORDER BY column is required for VersionedCollapsingMergeTree.", nameof(orderByColumns));
         }
 
-        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, "VersionedCollapsingMergeTree");
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, ClickHouseEngineNames.VersionedCollapsingMergeTree);
         builder.HasAnnotation(ClickHouseAnnotationNames.SignColumn, signColumn);
         builder.HasAnnotation(ClickHouseAnnotationNames.VersionColumn, versionColumn);
         builder.HasAnnotation(ClickHouseAnnotationNames.OrderBy, orderByColumns);
@@ -739,7 +740,7 @@ public static class ClickHouseEntityTypeBuilderExtensions
             throw new ArgumentException("At least one ORDER BY column is required for ReplicatedMergeTree.", nameof(orderByColumns));
         }
 
-        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, "ReplicatedMergeTree");
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, ClickHouseEngineNames.ReplicatedMergeTree);
         builder.HasAnnotation(ClickHouseAnnotationNames.OrderBy, orderByColumns);
         builder.HasAnnotation(ClickHouseAnnotationNames.IsReplicated, true);
 
@@ -805,7 +806,7 @@ public static class ClickHouseEntityTypeBuilderExtensions
             throw new ArgumentException("At least one ORDER BY column is required for ReplicatedReplacingMergeTree.", nameof(orderByColumns));
         }
 
-        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, "ReplicatedReplacingMergeTree");
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, ClickHouseEngineNames.ReplicatedReplacingMergeTree);
         builder.HasAnnotation(ClickHouseAnnotationNames.OrderBy, orderByColumns);
         builder.HasAnnotation(ClickHouseAnnotationNames.IsReplicated, true);
 
@@ -882,7 +883,7 @@ public static class ClickHouseEntityTypeBuilderExtensions
             throw new ArgumentException("At least one ORDER BY column is required for ReplicatedSummingMergeTree.", nameof(orderByColumns));
         }
 
-        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, "ReplicatedSummingMergeTree");
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, ClickHouseEngineNames.ReplicatedSummingMergeTree);
         builder.HasAnnotation(ClickHouseAnnotationNames.OrderBy, orderByColumns);
         builder.HasAnnotation(ClickHouseAnnotationNames.IsReplicated, true);
 
@@ -925,7 +926,7 @@ public static class ClickHouseEntityTypeBuilderExtensions
             throw new ArgumentException("At least one ORDER BY column is required for ReplicatedAggregatingMergeTree.", nameof(orderByColumns));
         }
 
-        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, "ReplicatedAggregatingMergeTree");
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, ClickHouseEngineNames.ReplicatedAggregatingMergeTree);
         builder.HasAnnotation(ClickHouseAnnotationNames.OrderBy, orderByColumns);
         builder.HasAnnotation(ClickHouseAnnotationNames.IsReplicated, true);
 
@@ -976,7 +977,7 @@ public static class ClickHouseEntityTypeBuilderExtensions
             throw new ArgumentException("At least one ORDER BY column is required for ReplicatedCollapsingMergeTree.", nameof(orderByExpression));
         }
 
-        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, "ReplicatedCollapsingMergeTree");
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, ClickHouseEngineNames.ReplicatedCollapsingMergeTree);
         builder.HasAnnotation(ClickHouseAnnotationNames.SignColumn, signColumn);
         builder.HasAnnotation(ClickHouseAnnotationNames.OrderBy, orderByColumns);
         builder.HasAnnotation(ClickHouseAnnotationNames.IsReplicated, true);
@@ -1015,7 +1016,7 @@ public static class ClickHouseEntityTypeBuilderExtensions
             throw new ArgumentException("At least one ORDER BY column is required for ReplicatedVersionedCollapsingMergeTree.", nameof(orderByExpression));
         }
 
-        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, "ReplicatedVersionedCollapsingMergeTree");
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, ClickHouseEngineNames.ReplicatedVersionedCollapsingMergeTree);
         builder.HasAnnotation(ClickHouseAnnotationNames.SignColumn, signColumn);
         builder.HasAnnotation(ClickHouseAnnotationNames.VersionColumn, versionColumn);
         builder.HasAnnotation(ClickHouseAnnotationNames.OrderBy, orderByColumns);
@@ -1261,7 +1262,7 @@ public static class ClickHouseEntityTypeBuilderExtensions
     public static EntityTypeBuilder UseNullEngine(this EntityTypeBuilder builder)
     {
         ArgumentNullException.ThrowIfNull(builder);
-        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, "Null");
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, ClickHouseEngineNames.Null);
         return builder;
     }
 
@@ -1310,7 +1311,7 @@ public static class ClickHouseEntityTypeBuilderExtensions
     public static EntityTypeBuilder UseMemoryEngine(this EntityTypeBuilder builder)
     {
         ArgumentNullException.ThrowIfNull(builder);
-        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, "Memory");
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, ClickHouseEngineNames.Memory);
         return builder;
     }
 
@@ -1355,7 +1356,7 @@ public static class ClickHouseEntityTypeBuilderExtensions
     public static EntityTypeBuilder UseLogEngine(this EntityTypeBuilder builder)
     {
         ArgumentNullException.ThrowIfNull(builder);
-        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, "Log");
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, ClickHouseEngineNames.Log);
         return builder;
     }
 
@@ -1397,7 +1398,7 @@ public static class ClickHouseEntityTypeBuilderExtensions
     public static EntityTypeBuilder UseTinyLogEngine(this EntityTypeBuilder builder)
     {
         ArgumentNullException.ThrowIfNull(builder);
-        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, "TinyLog");
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, ClickHouseEngineNames.TinyLog);
         return builder;
     }
 
@@ -1438,7 +1439,7 @@ public static class ClickHouseEntityTypeBuilderExtensions
     public static EntityTypeBuilder UseStripeLogEngine(this EntityTypeBuilder builder)
     {
         ArgumentNullException.ThrowIfNull(builder);
-        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, "StripeLog");
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, ClickHouseEngineNames.StripeLog);
         return builder;
     }
 
@@ -1494,7 +1495,7 @@ public static class ClickHouseEntityTypeBuilderExtensions
         ArgumentException.ThrowIfNullOrWhiteSpace(rootPath);
         ArgumentException.ThrowIfNullOrWhiteSpace(primaryKeyColumn);
 
-        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, "KeeperMap");
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, ClickHouseEngineNames.KeeperMap);
         builder.HasAnnotation(ClickHouseAnnotationNames.KeeperMapRootPath, rootPath);
         builder.HasAnnotation(ClickHouseAnnotationNames.PrimaryKey, new[] { primaryKeyColumn });
         if (keysLimit.HasValue)
@@ -1582,7 +1583,7 @@ public static class ClickHouseEntityTypeBuilderExtensions
         ArgumentException.ThrowIfNullOrWhiteSpace(database);
         ArgumentException.ThrowIfNullOrWhiteSpace(table);
 
-        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, "Distributed");
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, ClickHouseEngineNames.Distributed);
         builder.HasAnnotation(ClickHouseAnnotationNames.DistributedCluster, cluster);
         builder.HasAnnotation(ClickHouseAnnotationNames.DistributedDatabase, database);
         builder.HasAnnotation(ClickHouseAnnotationNames.DistributedTable, table);

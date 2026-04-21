@@ -66,7 +66,6 @@ public class ClickHouseModificationCommandBatch : ModificationCommandBatch
     private readonly List<IReadOnlyModificationCommand> _commands = [];
     private readonly List<string> _statements = [];
     private readonly StringBuilder _sqlBuilder = new();
-    private bool _requiresTransaction;
     private bool _areMoreBatchesExpected;
 
     public ClickHouseModificationCommandBatch(
@@ -85,7 +84,8 @@ public class ClickHouseModificationCommandBatch : ModificationCommandBatch
 
     public override IReadOnlyList<IReadOnlyModificationCommand> ModificationCommands => _commands;
 
-    public override bool RequiresTransaction => _requiresTransaction;
+    // ClickHouse does not support transactions (see ClickHouseNoOpTransaction).
+    public override bool RequiresTransaction => false;
 
     public override bool AreMoreBatchesExpected => _areMoreBatchesExpected;
 

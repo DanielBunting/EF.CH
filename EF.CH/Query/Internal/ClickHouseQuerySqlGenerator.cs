@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Linq.Expressions;
-using System.Threading;
 using EF.CH.Extensions;
 using EF.CH.Query.Internal.Expressions;
 using EF.CH.Query.Internal.WithFill;
@@ -21,47 +20,14 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     private bool _inDeleteContext;
     private bool _inUpdateContext;
 
-    // Thread-local storage for query settings (set during translation, read during SQL generation)
+    // Thread-local state passed from the query postprocessor to this generator.
+    // Populated via Set* methods during translation and consumed during SQL generation.
+    // See ClickHouseQueryGenerationContext for the per-feature fields.
     [ThreadStatic]
-    private static Dictionary<string, object>? _currentQuerySettings;
+    private static ClickHouseQueryGenerationContext? _context;
 
-    // Thread-local storage for WITH FILL / INTERPOLATE options
-    [ThreadStatic]
-    private static ClickHouseQueryCompilationContextOptions? _currentWithFillOptions;
-
-    // Thread-local storage for PREWHERE expression
-    [ThreadStatic]
-    private static SqlExpression? _currentPreWhereExpression;
-
-    // Thread-local storage for LIMIT BY options
-    [ThreadStatic]
-    private static int? _currentLimitByLimit;
-
-    [ThreadStatic]
-    private static int? _currentLimitByOffset;
-
-    [ThreadStatic]
-    private static List<SqlExpression>? _currentLimitByExpressions;
-
-    // Thread-local storage for GROUP BY modifier (stored as int for Interlocked.Exchange compatibility)
-    [ThreadStatic]
-    private static int _currentGroupByModifierValue;
-
-    // Thread-local storage for raw SQL filter
-    [ThreadStatic]
-    private static string? _currentRawFilter;
-
-    // Thread-local storage for CTE definitions
-    [ThreadStatic]
-    private static List<CteDefinition>? _currentCteDefinitions;
-
-    // Thread-local storage for ARRAY JOIN specifications
-    [ThreadStatic]
-    private static List<ArrayJoinSpec>? _currentArrayJoinSpecs;
-
-    // Thread-local storage for ASOF JOIN metadata
-    [ThreadStatic]
-    private static AsofJoinInfo? _currentAsofJoin;
+    private static ClickHouseQueryGenerationContext GetOrCreateContext()
+        => _context ??= new ClickHouseQueryGenerationContext();
 
     // Thread-local storage for ephemeral column names. Columns in this set are
     // rewritten to NULL during VisitColumn so ClickHouse doesn't reject the
@@ -83,29 +49,21 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
 
     /// <summary>
     /// Sets query settings to be appended as SETTINGS clause.
-    /// This is called during query translation and read during SQL generation.
-    /// Settings are automatically cleared after being consumed by GenerateSettings().
     /// </summary>
     internal static void SetQuerySettings(Dictionary<string, object> settings)
-    {
-        _currentQuerySettings = settings.Count > 0 ? new Dictionary<string, object>(settings) : null;
-    }
+        => GetOrCreateContext().QuerySettings = settings.Count > 0 ? new Dictionary<string, object>(settings) : null;
 
     /// <summary>
     /// Sets WITH FILL / INTERPOLATE options for SQL generation.
     /// </summary>
     internal static void SetWithFillOptions(ClickHouseQueryCompilationContextOptions options)
-    {
-        _currentWithFillOptions = (options.HasWithFill || options.HasInterpolate) ? options : null;
-    }
+        => GetOrCreateContext().WithFillOptions = (options.HasWithFill || options.HasInterpolate) ? options : null;
 
     /// <summary>
     /// Sets PREWHERE expression to be generated before WHERE clause.
     /// </summary>
     internal static void SetPreWhereExpression(SqlExpression expression)
-    {
-        _currentPreWhereExpression = expression;
-    }
+        => GetOrCreateContext().PreWhereExpression = expression;
 
     /// <summary>
     /// Sets LIMIT BY options for SQL generation.
@@ -113,63 +71,41 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     /// </summary>
     internal static void SetLimitBy(int limit, int? offset, List<SqlExpression> expressions)
     {
-        _currentLimitByLimit = limit;
-        _currentLimitByOffset = offset;
-        _currentLimitByExpressions = expressions;
+        var ctx = GetOrCreateContext();
+        ctx.LimitByLimit = limit;
+        ctx.LimitByOffset = offset;
+        ctx.LimitByExpressions = expressions;
     }
 
     /// <summary>
     /// Sets GROUP BY modifier (ROLLUP, CUBE, or TOTALS) for SQL generation.
     /// </summary>
     internal static void SetGroupByModifier(GroupByModifier modifier)
-    {
-        _currentGroupByModifierValue = (int)modifier;
-    }
+        => GetOrCreateContext().GroupByModifier = modifier;
 
     /// <summary>
     /// Sets a raw SQL filter to be AND-ed into the WHERE clause.
     /// </summary>
     internal static void SetRawFilter(string rawFilter)
-    {
-        _currentRawFilter = rawFilter;
-    }
+        => GetOrCreateContext().RawFilter = rawFilter;
 
     /// <summary>
     /// Sets CTE definitions to be prepended as a WITH clause.
     /// </summary>
     internal static void SetCteDefinitions(List<CteDefinition> definitions)
-    {
-        _currentCteDefinitions = definitions.Count > 0 ? definitions : null;
-    }
+        => GetOrCreateContext().CteDefinitions = definitions.Count > 0 ? definitions : null;
 
     /// <summary>
     /// Sets ARRAY JOIN specifications for SQL generation.
     /// </summary>
     internal static void SetArrayJoinSpecs(List<ArrayJoinSpec> specs)
-    {
-        _currentArrayJoinSpecs = specs.Count > 0 ? new List<ArrayJoinSpec>(specs) : null;
-    }
+        => GetOrCreateContext().ArrayJoinSpecs = specs.Count > 0 ? new List<ArrayJoinSpec>(specs) : null;
 
     /// <summary>
     /// Sets ASOF JOIN metadata for SQL generation.
     /// </summary>
     internal static void SetAsofJoin(AsofJoinInfo info)
-    {
-        _currentAsofJoin = info;
-    }
-
-    /// <summary>
-    /// Clears query settings after SQL generation.
-    /// </summary>
-    /// <remarks>
-    /// This method is no longer needed as settings are automatically cleared
-    /// when consumed by GenerateSettings(). Kept for backward compatibility.
-    /// </remarks>
-    [Obsolete("Settings are now auto-cleared after consumption. This method is no longer needed.")]
-    internal static void ClearQuerySettings()
-    {
-        _currentQuerySettings = null;
-    }
+        => GetOrCreateContext().AsofJoin = info;
 
     /// <summary>
     /// Visits a SQL parameter expression and generates ClickHouse-format parameter placeholder.
@@ -261,8 +197,9 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     /// </summary>
     private void GenerateSettings()
     {
-        // Capture and clear settings atomically to prevent leakage
-        var settings = Interlocked.Exchange(ref _currentQuerySettings, null);
+        // Capture and clear settings to prevent leakage across queries
+        var settings = _context?.QuerySettings;
+        if (_context != null) _context.QuerySettings = null;
 
         if (settings == null || settings.Count == 0)
         {
@@ -310,7 +247,7 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     protected override Expression VisitExtension(Expression extensionExpression)
     {
         // Check for ASOF JOIN override on InnerJoinExpression
-        if (extensionExpression is InnerJoinExpression innerJoin && _currentAsofJoin != null)
+        if (extensionExpression is InnerJoinExpression innerJoin && _context?.AsofJoin != null)
         {
             return VisitAsofJoin(innerJoin);
         }
@@ -632,7 +569,7 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
         var result = base.VisitOrdering(orderingExpression);
 
         // Check if this column has a WITH FILL spec
-        var options = _currentWithFillOptions;
+        var options = _context?.WithFillOptions;
         if (options?.HasWithFill == true)
         {
             var columnName = GetOrderingColumnName(orderingExpression);
@@ -788,7 +725,8 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     /// </summary>
     private void GenerateInterpolateClause()
     {
-        var options = Interlocked.Exchange(ref _currentWithFillOptions, null);
+        var options = _context?.WithFillOptions;
+        if (_context != null) _context.WithFillOptions = null;
 
         if (options?.HasInterpolate != true)
         {
@@ -830,9 +768,9 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     /// </summary>
     private void GenerateGroupByModifier()
     {
-        // Capture and clear the modifier (atomic exchange for int, then cast)
-        var modifierValue = Interlocked.Exchange(ref _currentGroupByModifierValue, 0);
-        var modifier = (GroupByModifier)modifierValue;
+        // Capture and clear the modifier
+        var modifier = _context?.GroupByModifier ?? GroupByModifier.None;
+        if (_context != null) _context.GroupByModifier = GroupByModifier.None;
 
         switch (modifier)
         {
@@ -854,15 +792,16 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     /// </summary>
     private void GenerateLimitBy()
     {
-        // Capture and clear atomically to prevent leakage
-        // Note: Interlocked.Exchange doesn't support nullable value types, so we capture and clear manually
-        var limit = _currentLimitByLimit;
-        var offset = _currentLimitByOffset;
-        var expressions = Interlocked.Exchange(ref _currentLimitByExpressions, null);
-
-        // Clear the value types after capture
-        _currentLimitByLimit = null;
-        _currentLimitByOffset = null;
+        // Capture and clear to prevent leakage across queries
+        var limit = _context?.LimitByLimit;
+        var offset = _context?.LimitByOffset;
+        var expressions = _context?.LimitByExpressions;
+        if (_context != null)
+        {
+            _context.LimitByLimit = null;
+            _context.LimitByOffset = null;
+            _context.LimitByExpressions = null;
+        }
 
         if (limit == null || expressions == null || expressions.Count == 0)
         {
@@ -1037,21 +976,24 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     protected override Expression VisitSelect(SelectExpression selectExpression)
     {
         // Capture and clear CTE definitions (only at outermost SELECT)
-        var cteDefinitions = Interlocked.Exchange(ref _currentCteDefinitions, null);
+        var cteDefinitions = _context?.CteDefinitions;
+        if (_context != null) _context.CteDefinitions = null;
         if (cteDefinitions?.Count > 0)
         {
             GenerateWithClause(cteDefinitions);
         }
 
-        // Capture and clear PREWHERE expression atomically
-        var preWhereExpr = Interlocked.Exchange(ref _currentPreWhereExpression, null);
+        // Capture and clear PREWHERE expression
+        var preWhereExpr = _context?.PreWhereExpression;
+        if (_context != null) _context.PreWhereExpression = null;
 
-        // Capture and clear raw filter atomically
-        var rawFilter = Interlocked.Exchange(ref _currentRawFilter, null);
+        // Capture and clear raw filter
+        var rawFilter = _context?.RawFilter;
+        if (_context != null) _context.RawFilter = null;
 
         // Check if we have a GROUP BY modifier - we need to handle this specially
-        var hasGroupByModifier = _currentGroupByModifierValue != 0;
-        var hasArrayJoin = _currentArrayJoinSpecs is { Count: > 0 };
+        var hasGroupByModifier = (_context?.GroupByModifier ?? GroupByModifier.None) != GroupByModifier.None;
+        var hasArrayJoin = _context?.ArrayJoinSpecs is { Count: > 0 };
 
         if (preWhereExpr == null && rawFilter == null && !hasGroupByModifier && !hasArrayJoin)
         {
@@ -1278,7 +1220,8 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     /// </summary>
     private void GenerateArrayJoin()
     {
-        var specs = Interlocked.Exchange(ref _currentArrayJoinSpecs, null);
+        var specs = _context?.ArrayJoinSpecs;
+        if (_context != null) _context.ArrayJoinSpecs = null;
         if (specs is not { Count: > 0 }) return;
 
         foreach (var group in specs.GroupBy(s => s.IsLeft))
@@ -1306,7 +1249,8 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     /// </summary>
     private Expression VisitAsofJoin(InnerJoinExpression innerJoinExpression)
     {
-        var asofJoin = Interlocked.Exchange(ref _currentAsofJoin, null);
+        var asofJoin = _context?.AsofJoin;
+        if (_context != null) _context.AsofJoin = null;
 
         Sql.AppendLine();
         Sql.Append(asofJoin!.IsLeft ? "ASOF LEFT JOIN " : "ASOF JOIN ");

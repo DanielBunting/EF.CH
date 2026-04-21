@@ -404,18 +404,16 @@ public static class ClickHouseServiceCollectionExtensions
             return new DictionaryConfigResolver(configuration);
         });
 
-        // Register bulk inserter for high-performance bulk insert operations.
-        services.TryAddScoped<IClickHouseBulkInserter, ClickHouseBulkInserter>();
-
-        // Register insert-select executor for server-side INSERT ... SELECT operations.
-        services.TryAddScoped<IClickHouseInsertSelectExecutor, ClickHouseInsertSelectExecutor>();
-
-        // Register query profiler for EXPLAIN and query statistics.
-        services.TryAddScoped<IClickHouseQueryProfiler, ClickHouseQueryProfiler>();
-
-        // Register temp table manager for session-scoped temporary tables.
-        services.TryAddScoped<IClickHouseTempTableManager, ClickHouseTempTableManager>();
+        AddClickHouseFeatureServices(services);
 
         return services;
+    }
+
+    private static void AddClickHouseFeatureServices(IServiceCollection services)
+    {
+        services.TryAddScoped<IClickHouseBulkInserter, ClickHouseBulkInserter>();
+        services.TryAddScoped<IClickHouseInsertSelectExecutor, ClickHouseInsertSelectExecutor>();
+        services.TryAddScoped<IClickHouseQueryProfiler, ClickHouseQueryProfiler>();
+        services.TryAddScoped<IClickHouseTempTableManager, ClickHouseTempTableManager>();
     }
 }

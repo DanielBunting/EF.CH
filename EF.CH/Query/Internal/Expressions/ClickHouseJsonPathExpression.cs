@@ -199,10 +199,10 @@ public sealed class ClickHouseJsonPathExpression : SqlExpression
             expressionPrinter.Append(".");
             expressionPrinter.Append($"\"{PathSegments[i]}\"");
 
-            if (ArrayIndices[i].HasValue)
+            if (ArrayIndices[i] is { } arrayIndex)
             {
                 // ClickHouse uses 1-based indexing for arrays
-                expressionPrinter.Append($"[{ArrayIndices[i].Value + 1}]");
+                expressionPrinter.Append($"[{arrayIndex + 1}]");
             }
         }
     }
