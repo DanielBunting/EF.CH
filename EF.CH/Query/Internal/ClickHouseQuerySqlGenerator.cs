@@ -99,18 +99,6 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
         => GetOrCreateContext().AsofJoin = info;
 
     /// <summary>
-    /// Clears query settings after SQL generation.
-    /// </summary>
-    /// <remarks>
-    /// Settings are now auto-cleared when consumed by GenerateSettings(). Kept for backward compatibility.
-    /// </remarks>
-    [Obsolete("Settings are now auto-cleared after consumption. This method is no longer needed.")]
-    internal static void ClearQuerySettings()
-    {
-        if (_context != null) _context.QuerySettings = null;
-    }
-
-    /// <summary>
     /// Visits a SQL parameter expression and generates ClickHouse-format parameter placeholder.
     /// ClickHouse requires {name:Type} format for parameters.
     /// </summary>

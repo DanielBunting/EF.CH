@@ -209,7 +209,7 @@ public class ClickHouseAnnotationCodeGenerator : AnnotationCodeGenerator
                 switch (engine)
                 {
                     case ClickHouseEngineNames.MergeTree:
-                        calls.Add(new MethodCallCodeFragment(UseMergeTreeMethodInfo, orderBy.Cast<object>().ToArray()));
+                        calls.Add(new MethodCallCodeFragment(UseMergeTreeMethodInfo, [.. orderBy]));
                         break;
 
                     case ClickHouseEngineNames.ReplacingMergeTree:
@@ -220,16 +220,16 @@ public class ClickHouseAnnotationCodeGenerator : AnnotationCodeGenerator
                         }
                         else
                         {
-                            calls.Add(new MethodCallCodeFragment(UseReplacingMergeTreeMethodInfo, orderBy.Cast<object>().ToArray()));
+                            calls.Add(new MethodCallCodeFragment(UseReplacingMergeTreeMethodInfo, [.. orderBy]));
                         }
                         break;
 
                     case ClickHouseEngineNames.SummingMergeTree:
-                        calls.Add(new MethodCallCodeFragment(UseSummingMergeTreeMethodInfo, orderBy.Cast<object>().ToArray()));
+                        calls.Add(new MethodCallCodeFragment(UseSummingMergeTreeMethodInfo, [.. orderBy]));
                         break;
 
                     case ClickHouseEngineNames.AggregatingMergeTree:
-                        calls.Add(new MethodCallCodeFragment(UseAggregatingMergeTreeMethodInfo, orderBy.Cast<object>().ToArray()));
+                        calls.Add(new MethodCallCodeFragment(UseAggregatingMergeTreeMethodInfo, [.. orderBy]));
                         break;
 
                     case ClickHouseEngineNames.CollapsingMergeTree:

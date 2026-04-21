@@ -56,7 +56,12 @@ public sealed class TempTableHandle<T> : IAsyncDisposable where T : class
     public IQueryable<T> Query()
     {
         ThrowIfDisposed();
+        // QuotedTableName is produced by ISqlGenerationHelper.DelimitIdentifier (see ClickHouseTempTableManager),
+        // so the identifier is already quoted/escaped. Table-name identifiers cannot be passed as SQL parameters,
+        // so FromSql/parameterization isn't an option here.
+#pragma warning disable EF1002 // Risk of vulnerability to SQL injection.
         return _context.Set<T>().FromSqlRaw($"SELECT * FROM {QuotedTableName}");
+#pragma warning restore EF1002
     }
 
     /// <summary>

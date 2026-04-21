@@ -30,5 +30,11 @@ public static class ClickHouseEngineNames
     public const string Distributed = "Distributed";
     public const string KeeperMap = "KeeperMap";
 
-    public const string MergeTreeSuffix = "MergeTree";
+    private const string ReplicatedPrefix = "Replicated";
+
+    public static bool IsMergeTreeFamily(string engine)
+        => engine.EndsWith(MergeTree, StringComparison.OrdinalIgnoreCase);
+
+    public static bool IsReplicated(string engine)
+        => engine.StartsWith(ReplicatedPrefix, StringComparison.OrdinalIgnoreCase);
 }

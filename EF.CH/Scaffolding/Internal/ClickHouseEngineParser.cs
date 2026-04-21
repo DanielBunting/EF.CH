@@ -44,7 +44,7 @@ public partial class ClickHouseEngineParser
     /// <summary>
     /// Extracts engine-specific parameters like version column and sign column.
     /// </summary>
-    private void ExtractEngineParameters(string engine, string engineFull, EngineMetadata metadata)
+    private static void ExtractEngineParameters(string engine, string engineFull, EngineMetadata metadata)
     {
         // Pattern: EngineName(param1, param2, ...) possibly followed by ORDER BY, PARTITION BY, etc.
         // The engine_full from ClickHouse looks like: "ReplacingMergeTree(version) ORDER BY id"
