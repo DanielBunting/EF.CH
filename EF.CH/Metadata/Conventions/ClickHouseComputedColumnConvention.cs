@@ -74,6 +74,23 @@ public class ClickHouseComputedColumnConvention : IPropertyAddedConvention
                 ClickHouseAnnotationNames.DefaultExpression,
                 defaultAttr.Expression,
                 fromDataAnnotation: true);
+            return;
+        }
+
+        // Check for EphemeralColumn
+        var ephemeralAttr = memberInfo.GetCustomAttribute<EphemeralColumnAttribute>();
+        if (ephemeralAttr != null)
+        {
+            // Annotation value carries the optional default expression (null when absent).
+            propertyBuilder.HasAnnotation(
+                ClickHouseAnnotationNames.EphemeralExpression,
+                ephemeralAttr.DefaultExpression,
+                fromDataAnnotation: true);
+
+            // EPHEMERAL: user supplies the value on INSERT; never updatable; not server-generated.
+            propertyBuilder.BeforeSave(PropertySaveBehavior.Save, fromDataAnnotation: true);
+            propertyBuilder.AfterSave(PropertySaveBehavior.Ignore, fromDataAnnotation: true);
+            propertyBuilder.ValueGenerated(ValueGenerated.Never, fromDataAnnotation: true);
         }
     }
 }

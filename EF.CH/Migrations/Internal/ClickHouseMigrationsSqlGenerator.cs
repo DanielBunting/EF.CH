@@ -1392,13 +1392,23 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
             builder.Append(columnType);
         }
 
-        // Check for MATERIALIZED / ALIAS / DEFAULT expression (mutually exclusive)
-        // These take precedence over operation.DefaultValue and operation.DefaultValueSql
+        // Check for MATERIALIZED / ALIAS / DEFAULT / EPHEMERAL expression (mutually exclusive).
+        // These take precedence over operation.DefaultValue and operation.DefaultValueSql.
         var materializedExpr = GetPropertyMaterializedExpression(model, operation.Schema, operation.Table, operation.Name);
         var aliasExpr = GetPropertyAliasExpression(model, operation.Schema, operation.Table, operation.Name);
         var defaultExpr = GetPropertyDefaultExpression(model, operation.Schema, operation.Table, operation.Name);
+        var ephemeral = GetPropertyEphemeralConfig(model, operation.Schema, operation.Table, operation.Name);
 
-        if (!string.IsNullOrEmpty(materializedExpr))
+        if (ephemeral.IsEphemeral)
+        {
+            builder.Append(" EPHEMERAL");
+            if (!string.IsNullOrEmpty(ephemeral.DefaultExpression))
+            {
+                builder.Append(" ");
+                builder.Append(ephemeral.DefaultExpression);
+            }
+        }
+        else if (!string.IsNullOrEmpty(materializedExpr))
         {
             builder.Append(" MATERIALIZED ");
             builder.Append(materializedExpr);
@@ -1624,6 +1634,37 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
 
         // Return the DEFAULT expression if configured
         return property.FindAnnotation(ClickHouseAnnotationNames.DefaultExpression)?.Value as string;
+    }
+
+    /// <summary>
+    /// Gets whether a property is EPHEMERAL and the optional default expression.
+    /// An EPHEMERAL column is marked solely by the presence of the annotation;
+    /// a null or empty value means "no default expression".
+    /// </summary>
+    private static (bool IsEphemeral, string? DefaultExpression) GetPropertyEphemeralConfig(
+        IModel? model, string? schema, string table, string columnName)
+    {
+        if (model == null)
+            return (false, null);
+
+        var entityType = model.GetEntityTypes()
+            .FirstOrDefault(e => e.GetTableName() == table
+                              && (e.GetSchema() ?? model.GetDefaultSchema()) == schema);
+
+        if (entityType == null)
+            return (false, null);
+
+        var property = entityType.GetProperties()
+            .FirstOrDefault(p => (p.GetColumnName() ?? p.Name) == columnName);
+
+        if (property == null)
+            return (false, null);
+
+        var annotation = property.FindAnnotation(ClickHouseAnnotationNames.EphemeralExpression);
+        if (annotation is null)
+            return (false, null);
+
+        return (true, annotation.Value as string);
     }
 
     /// <summary>

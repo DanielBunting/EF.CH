@@ -198,6 +198,41 @@ modelBuilder.Entity<Order>(entity =>
 
 `generateSerialID` requires ClickHouse Keeper to be configured. See the [IdentifierDefaultsSample](../../samples/IdentifierDefaultsSample) for a runnable example.
 
+### EPHEMERAL
+
+Write-only input columns. Not stored on disk; used to feed DEFAULT or MATERIALIZED expressions on other columns.
+
+```csharp
+modelBuilder.Entity<Record>(entity =>
+{
+    // Raw value supplied at INSERT, never stored.
+    entity.Property(x => x.UnhashedKey)
+        .HasEphemeralExpression();
+
+    // Derived column, computed server-side from the ephemeral input.
+    entity.Property(x => x.HashedKey)
+        .HasMaterializedExpression("sipHash64(\"UnhashedKey\")");
+
+    // Optional default: used if the caller omits the column from INSERT.
+    entity.Property(x => x.CreatedAt)
+        .HasEphemeralExpression("now()");
+});
+```
+
+**Generated SQL:**
+
+```sql
+UnhashedKey UInt64 EPHEMERAL,
+HashedKey UInt64 MATERIALIZED sipHash64("UnhashedKey"),
+CreatedAt DateTime64(3) EPHEMERAL now()
+```
+
+EPHEMERAL is mutually exclusive with MATERIALIZED, ALIAS, and DEFAULT on the same property. Compression codecs are not allowed (there is no storage to compress).
+
+> **Caveat — ephemeral columns always read back as defaults.** ClickHouse rejects explicit SELECTs of ephemeral columns, so EF.CH rewrites every reference to an ephemeral column in generated SQL to `defaultValueOfTypeName('<StoreType>')`. Queries succeed, but the property always comes back as the CLR default (`0`, `null`, `Guid.Empty`, etc.). Use ephemeral columns only for inputs whose derived MATERIALIZED result is the thing you actually care about.
+
+The property is configured with `BeforeSaveBehavior = Save`, `AfterSaveBehavior = Ignore`, and `ValueGenerated = Never` — included in INSERTs, excluded from UPDATEs, client-supplied.
+
 ---
 
 ## LowCardinality
