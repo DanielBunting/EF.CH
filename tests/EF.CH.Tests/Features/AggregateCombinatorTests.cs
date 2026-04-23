@@ -203,6 +203,209 @@ public class AggregateCombinatorTests : IAsyncLifetime
         Assert.Throws<InvalidOperationException>(() => items.UniqIf(x => x, x => x > 1));
     }
 
+    [Fact]
+    public void MinIf_ThrowsWhenInvokedDirectly()
+    {
+        var items = new[] { 1, 2, 3 };
+        Assert.Throws<InvalidOperationException>(() => items.MinIf(x => x, x => x > 1));
+    }
+
+    [Fact]
+    public void MaxIf_ThrowsWhenInvokedDirectly()
+    {
+        var items = new[] { 1, 2, 3 };
+        Assert.Throws<InvalidOperationException>(() => items.MaxIf(x => x, x => x > 1));
+    }
+
+    [Fact]
+    public void UniqExactIf_ThrowsWhenInvokedDirectly()
+    {
+        var items = new[] { 1, 2, 3 };
+        Assert.Throws<InvalidOperationException>(() => items.UniqExactIf(x => x, x => x > 1));
+    }
+
+    [Fact]
+    public void AnyIf_ThrowsWhenInvokedDirectly()
+    {
+        var items = new[] { 1, 2, 3 };
+        Assert.Throws<InvalidOperationException>(() => items.AnyIf(x => x, x => x > 1));
+    }
+
+    [Fact]
+    public void AnyLastIf_ThrowsWhenInvokedDirectly()
+    {
+        var items = new[] { 1, 2, 3 };
+        Assert.Throws<InvalidOperationException>(() => items.AnyLastIf(x => x, x => x > 1));
+    }
+
+    [Fact]
+    public void QuantileIf_ThrowsWhenInvokedDirectly()
+    {
+        var items = new[] { 1.0, 2.0, 3.0 };
+        Assert.Throws<InvalidOperationException>(() => items.QuantileIf(0.95, x => x, x => x > 1));
+    }
+
+    [Fact]
+    public void ArgMaxIf_ThrowsWhenInvokedDirectly()
+    {
+        var items = new[] { new { A = 1, B = 2 } };
+        Assert.Throws<InvalidOperationException>(() => items.ArgMaxIf(x => x.A, x => x.B, x => x.B > 0));
+    }
+
+    [Fact]
+    public void ArgMinIf_ThrowsWhenInvokedDirectly()
+    {
+        var items = new[] { new { A = 1, B = 2 } };
+        Assert.Throws<InvalidOperationException>(() => items.ArgMinIf(x => x.A, x => x.B, x => x.B > 0));
+    }
+
+    [Fact]
+    public void TopKIf_ThrowsWhenInvokedDirectly()
+    {
+        var items = new[] { 1, 2, 3 };
+        Assert.Throws<InvalidOperationException>(() => items.TopKIf(2, x => x, x => x > 1));
+    }
+
+    [Fact]
+    public void TopKWeightedIf_ThrowsWhenInvokedDirectly()
+    {
+        var items = new[] { 1, 2, 3 };
+        Assert.Throws<InvalidOperationException>(() => items.TopKWeightedIf(2, x => x, x => x, x => x > 1));
+    }
+
+    [Fact]
+    public void GroupArrayIf_ThrowsWhenInvokedDirectly()
+    {
+        var items = new[] { 1, 2, 3 };
+        Assert.Throws<InvalidOperationException>(() => items.GroupArrayIf(x => x, x => x > 1));
+    }
+
+    [Fact]
+    public void GroupArrayIfWithLimit_ThrowsWhenInvokedDirectly()
+    {
+        var items = new[] { 1, 2, 3 };
+        Assert.Throws<InvalidOperationException>(() => items.GroupArrayIf(10, x => x, x => x > 1));
+    }
+
+    [Fact]
+    public void GroupUniqArrayIf_ThrowsWhenInvokedDirectly()
+    {
+        var items = new[] { 1, 2, 3 };
+        Assert.Throws<InvalidOperationException>(() => items.GroupUniqArrayIf(x => x, x => x > 1));
+    }
+
+    [Fact]
+    public void GroupUniqArrayIfWithLimit_ThrowsWhenInvokedDirectly()
+    {
+        var items = new[] { 1, 2, 3 };
+        Assert.Throws<InvalidOperationException>(() => items.GroupUniqArrayIf(10, x => x, x => x > 1));
+    }
+
+    [Fact]
+    public void MedianIf_ThrowsWhenInvokedDirectly()
+    {
+        var items = new[] { 1.0, 2.0, 3.0 };
+        Assert.Throws<InvalidOperationException>(() => items.MedianIf(x => x, x => x > 1));
+    }
+
+    [Fact]
+    public void StddevPopIf_ThrowsWhenInvokedDirectly()
+    {
+        var items = new[] { 1.0, 2.0, 3.0 };
+        Assert.Throws<InvalidOperationException>(() => items.StddevPopIf(x => x, x => x > 1));
+    }
+
+    [Fact]
+    public void StddevSampIf_ThrowsWhenInvokedDirectly()
+    {
+        var items = new[] { 1.0, 2.0, 3.0 };
+        Assert.Throws<InvalidOperationException>(() => items.StddevSampIf(x => x, x => x > 1));
+    }
+
+    [Fact]
+    public void VarPopIf_ThrowsWhenInvokedDirectly()
+    {
+        var items = new[] { 1.0, 2.0, 3.0 };
+        Assert.Throws<InvalidOperationException>(() => items.VarPopIf(x => x, x => x > 1));
+    }
+
+    [Fact]
+    public void VarSampIf_ThrowsWhenInvokedDirectly()
+    {
+        var items = new[] { 1.0, 2.0, 3.0 };
+        Assert.Throws<InvalidOperationException>(() => items.VarSampIf(x => x, x => x > 1));
+    }
+
+    [Fact]
+    public void UniqCombinedIf_ThrowsWhenInvokedDirectly()
+    {
+        var items = new[] { 1, 2, 3 };
+        Assert.Throws<InvalidOperationException>(() => items.UniqCombinedIf(x => x, x => x > 1));
+    }
+
+    [Fact]
+    public void UniqCombined64If_ThrowsWhenInvokedDirectly()
+    {
+        var items = new[] { 1, 2, 3 };
+        Assert.Throws<InvalidOperationException>(() => items.UniqCombined64If(x => x, x => x > 1));
+    }
+
+    [Fact]
+    public void UniqHLL12If_ThrowsWhenInvokedDirectly()
+    {
+        var items = new[] { 1, 2, 3 };
+        Assert.Throws<InvalidOperationException>(() => items.UniqHLL12If(x => x, x => x > 1));
+    }
+
+    [Fact]
+    public void UniqThetaIf_ThrowsWhenInvokedDirectly()
+    {
+        var items = new[] { 1, 2, 3 };
+        Assert.Throws<InvalidOperationException>(() => items.UniqThetaIf(x => x, x => x > 1));
+    }
+
+    [Fact]
+    public void QuantileTDigestIf_ThrowsWhenInvokedDirectly()
+    {
+        var items = new[] { 1.0, 2.0, 3.0 };
+        Assert.Throws<InvalidOperationException>(() => items.QuantileTDigestIf(0.95, x => x, x => x > 1));
+    }
+
+    [Fact]
+    public void QuantileExactIf_ThrowsWhenInvokedDirectly()
+    {
+        var items = new[] { 1.0, 2.0, 3.0 };
+        Assert.Throws<InvalidOperationException>(() => items.QuantileExactIf(0.95, x => x, x => x > 1));
+    }
+
+    [Fact]
+    public void QuantileTimingIf_ThrowsWhenInvokedDirectly()
+    {
+        var items = new[] { 1.0, 2.0, 3.0 };
+        Assert.Throws<InvalidOperationException>(() => items.QuantileTimingIf(0.95, x => x, x => x > 1));
+    }
+
+    [Fact]
+    public void QuantileDDIf_ThrowsWhenInvokedDirectly()
+    {
+        var items = new[] { 1.0, 2.0, 3.0 };
+        Assert.Throws<InvalidOperationException>(() => items.QuantileDDIf(0.01, 0.95, x => x, x => x > 1));
+    }
+
+    [Fact]
+    public void QuantilesIf_ThrowsWhenInvokedDirectly()
+    {
+        var items = new[] { 1.0, 2.0, 3.0 };
+        Assert.Throws<InvalidOperationException>(() => items.QuantilesIf(new[] { 0.5, 0.9 }, x => x, x => x > 1));
+    }
+
+    [Fact]
+    public void QuantilesTDigestIf_ThrowsWhenInvokedDirectly()
+    {
+        var items = new[] { 1.0, 2.0, 3.0 };
+        Assert.Throws<InvalidOperationException>(() => items.QuantilesTDigestIf(new[] { 0.5, 0.9 }, x => x, x => x > 1));
+    }
+
     #endregion
 
     #region Array Combinator Marker Method Tests

@@ -100,18 +100,18 @@ public class ClickHouseAggregateMethodCallTranslator
             // Use avgOrNullIf(value, condition) to exclude defaultForNull values
             return _sqlExpressionFactory.Function(
                 "avgOrNullIf",
-                new[] { convertedArgument, defaultForNullCondition },
+                [convertedArgument, defaultForNullCondition],
                 nullable: true,
-                argumentsPropagateNullability: new[] { false, false },
+                argumentsPropagateNullability: [false, false],
                 returnType);
         }
 
         // Use avgOrNull for null-safe behavior (returns NULL for empty set)
         return _sqlExpressionFactory.Function(
             "avgOrNull",
-            new[] { convertedArgument },
+            [convertedArgument],
             nullable: true,
-            argumentsPropagateNullability: new[] { false },
+            argumentsPropagateNullability: [false],
             returnType);
     }
 
@@ -144,9 +144,9 @@ public class ClickHouseAggregateMethodCallTranslator
             // Use sumOrNullIf(value, condition) to exclude defaultForNull values
             sumExpr = _sqlExpressionFactory.Function(
                 "sumOrNullIf",
-                new[] { argument, defaultForNullCondition },
+                [argument, defaultForNullCondition],
                 nullable: true,
-                argumentsPropagateNullability: new[] { false, false },
+                argumentsPropagateNullability: [false, false],
                 clickHouseReturnType);
         }
         else
@@ -154,9 +154,9 @@ public class ClickHouseAggregateMethodCallTranslator
             // Use sumOrNull for null-safe behavior (returns NULL for empty set)
             sumExpr = _sqlExpressionFactory.Function(
                 "sumOrNull",
-                new[] { argument },
+                [argument],
                 nullable: true,
-                argumentsPropagateNullability: new[] { false },
+                argumentsPropagateNullability: [false],
                 clickHouseReturnType);
         }
 
@@ -195,17 +195,17 @@ public class ClickHouseAggregateMethodCallTranslator
             // Use minOrNullIf(value, condition) to exclude defaultForNull values
             return _sqlExpressionFactory.Function(
                 "minOrNullIf",
-                new[] { argument, defaultForNullCondition },
+                [argument, defaultForNullCondition],
                 nullable: true,
-                argumentsPropagateNullability: new[] { false, false },
+                argumentsPropagateNullability: [false, false],
                 returnType);
         }
 
         return _sqlExpressionFactory.Function(
             "minOrNull",
-            new[] { argument },
+            [argument],
             nullable: true,
-            argumentsPropagateNullability: new[] { false },
+            argumentsPropagateNullability: [false],
             returnType);
     }
 
@@ -231,17 +231,17 @@ public class ClickHouseAggregateMethodCallTranslator
             // Use maxOrNullIf(value, condition) to exclude defaultForNull values
             return _sqlExpressionFactory.Function(
                 "maxOrNullIf",
-                new[] { argument, defaultForNullCondition },
+                [argument, defaultForNullCondition],
                 nullable: true,
-                argumentsPropagateNullability: new[] { false, false },
+                argumentsPropagateNullability: [false, false],
                 returnType);
         }
 
         return _sqlExpressionFactory.Function(
             "maxOrNull",
-            new[] { argument },
+            [argument],
             nullable: true,
-            argumentsPropagateNullability: new[] { false },
+            argumentsPropagateNullability: [false],
             returnType);
     }
 
@@ -270,18 +270,18 @@ public class ClickHouseAggregateMethodCallTranslator
             // Count with predicate: countIf(predicate)
             countExpr = _sqlExpressionFactory.Function(
                 "countIf",
-                new[] { predicate },
+                [predicate],
                 nullable: false,
-                argumentsPropagateNullability: new[] { false },
+                argumentsPropagateNullability: [false],
                 typeof(ulong));
         }
 
         // Wrap in toInt32() for .NET Int32 compatibility
         return _sqlExpressionFactory.Function(
             "toInt32",
-            new[] { countExpr },
+            [countExpr],
             nullable: false,
-            argumentsPropagateNullability: new[] { false },
+            argumentsPropagateNullability: [false],
             typeof(int));
     }
 
@@ -310,18 +310,18 @@ public class ClickHouseAggregateMethodCallTranslator
             // Count with predicate
             countExpr = _sqlExpressionFactory.Function(
                 "countIf",
-                new[] { predicate },
+                [predicate],
                 nullable: false,
-                argumentsPropagateNullability: new[] { false },
+                argumentsPropagateNullability: [false],
                 typeof(ulong));
         }
 
         // Wrap in toInt64() for .NET Int64 compatibility
         return _sqlExpressionFactory.Function(
             "toInt64",
-            new[] { countExpr },
+            [countExpr],
             nullable: false,
-            argumentsPropagateNullability: new[] { false },
+            argumentsPropagateNullability: [false],
             typeof(long));
     }
 
@@ -501,7 +501,7 @@ public class ClickHouseAggregateMethodCallTranslator
 
             // If combinators - conditional aggregation
             "CountIf" => TranslateCountIfCombinator(argument),
-            "SumIf" => TranslateIfCombinator("sumIf", arguments, returnType),
+            "SumIf" => TranslateSumIfCombinator(arguments, returnType),
             "AvgIf" => TranslateIfCombinator("avgIf", arguments, typeof(double)),
             "MinIf" => TranslateIfCombinator("minIf", arguments, returnType),
             "MaxIf" => TranslateIfCombinator("maxIf", arguments, returnType),
@@ -510,6 +510,27 @@ public class ClickHouseAggregateMethodCallTranslator
             "AnyIf" => TranslateIfCombinator("anyIf", arguments, returnType),
             "AnyLastIf" => TranslateIfCombinator("anyLastIf", arguments, returnType),
             "QuantileIf" => TranslateQuantileIf(arguments),
+            "ArgMaxIf" => TranslateTwoArgIfCombinator("argMaxIf", arguments, returnType),
+            "ArgMinIf" => TranslateTwoArgIfCombinator("argMinIf", arguments, returnType),
+            "TopKIf" => TranslateTopKIf(arguments, returnType),
+            "TopKWeightedIf" => TranslateTopKWeightedIf(arguments, returnType),
+            "GroupArrayIf" => TranslateGroupArrayIf(arguments, returnType),
+            "GroupUniqArrayIf" => TranslateGroupUniqArrayIf(arguments, returnType),
+            "MedianIf" => TranslateIfCombinator("medianIf", arguments, typeof(double)),
+            "StddevPopIf" => TranslateIfCombinator("stddevPopIf", arguments, typeof(double)),
+            "StddevSampIf" => TranslateIfCombinator("stddevSampIf", arguments, typeof(double)),
+            "VarPopIf" => TranslateIfCombinator("varPopIf", arguments, typeof(double)),
+            "VarSampIf" => TranslateIfCombinator("varSampIf", arguments, typeof(double)),
+            "UniqCombinedIf" => TranslateIfCombinator("uniqCombinedIf", arguments, typeof(ulong)),
+            "UniqCombined64If" => TranslateIfCombinator("uniqCombined64If", arguments, typeof(ulong)),
+            "UniqHLL12If" => TranslateIfCombinator("uniqHLL12If", arguments, typeof(ulong)),
+            "UniqThetaIf" => TranslateIfCombinator("uniqThetaIf", arguments, typeof(ulong)),
+            "QuantileTDigestIf" => TranslateParametricIfCombinator("quantileTDigestIf", arguments),
+            "QuantileExactIf" => TranslateParametricIfCombinator("quantileExactIf", arguments),
+            "QuantileTimingIf" => TranslateParametricIfCombinator("quantileTimingIf", arguments),
+            "QuantileDDIf" => TranslateQuantileDDIf(arguments),
+            "QuantilesIf" => TranslateMultiQuantileIf("quantilesIf", arguments),
+            "QuantilesTDigestIf" => TranslateMultiQuantileIf("quantilesTDigestIf", arguments),
 
             _ => null
         };
@@ -524,9 +545,9 @@ public class ClickHouseAggregateMethodCallTranslator
 
         return _sqlExpressionFactory.Function(
             functionName,
-            new[] { argument },
+            [argument],
             nullable: true,
-            argumentsPropagateNullability: new[] { false },
+            argumentsPropagateNullability: [false],
             returnType);
     }
 
@@ -539,9 +560,9 @@ public class ClickHouseAggregateMethodCallTranslator
 
         return _sqlExpressionFactory.Function(
             functionName,
-            new[] { arguments[0], arguments[1] },
+            [arguments[0], arguments[1]],
             nullable: true,
-            argumentsPropagateNullability: new[] { false, false },
+            argumentsPropagateNullability: [false, false],
             returnType);
     }
 
@@ -566,9 +587,9 @@ public class ClickHouseAggregateMethodCallTranslator
         // ClickHouse parametric aggregate: quantile(0.95)(column)
         var innerFunction = _sqlExpressionFactory.Function(
             $"quantile({level.ToString(System.Globalization.CultureInfo.InvariantCulture)})",
-            new[] { selectorArg },
+            [selectorArg],
             nullable: true,
-            argumentsPropagateNullability: new[] { false },
+            argumentsPropagateNullability: [false],
             typeof(double));
 
         return innerFunction;
@@ -581,9 +602,9 @@ public class ClickHouseAggregateMethodCallTranslator
             // Simple groupArray(column)
             return _sqlExpressionFactory.Function(
                 "groupArray",
-                new[] { arguments[0] },
+                [arguments[0]],
                 nullable: true,
-                argumentsPropagateNullability: new[] { false },
+                argumentsPropagateNullability: [false],
                 returnType);
         }
         else if (arguments.Count >= 2)
@@ -596,9 +617,9 @@ public class ClickHouseAggregateMethodCallTranslator
             {
                 return _sqlExpressionFactory.Function(
                     $"groupArray({maxSize})",
-                    new[] { selectorArg },
+                    [selectorArg],
                     nullable: true,
-                    argumentsPropagateNullability: new[] { false },
+                    argumentsPropagateNullability: [false],
                     returnType);
             }
         }
@@ -621,9 +642,9 @@ public class ClickHouseAggregateMethodCallTranslator
         {
             return _sqlExpressionFactory.Function(
                 $"topK({k})",
-                new[] { selectorArg },
+                [selectorArg],
                 nullable: true,
-                argumentsPropagateNullability: new[] { false },
+                argumentsPropagateNullability: [false],
                 returnType);
         }
 
@@ -666,9 +687,9 @@ public class ClickHouseAggregateMethodCallTranslator
         // Create quantileState(level)(column) as a nested function call
         return _sqlExpressionFactory.Function(
             $"quantileState({level.ToString(System.Globalization.CultureInfo.InvariantCulture)})",
-            new[] { selectorArg },
+            [selectorArg],
             nullable: true,
-            argumentsPropagateNullability: new[] { false },
+            argumentsPropagateNullability: [false],
             typeof(byte[]));
     }
 
@@ -695,9 +716,9 @@ public class ClickHouseAggregateMethodCallTranslator
         // Create quantileMerge(level)(column) as a nested function call
         return _sqlExpressionFactory.Function(
             $"quantileMerge({level.ToString(System.Globalization.CultureInfo.InvariantCulture)})",
-            new[] { selectorArg },
+            [selectorArg],
             nullable: true,
-            argumentsPropagateNullability: new[] { false },
+            argumentsPropagateNullability: [false],
             typeof(double));
     }
 
@@ -713,14 +734,17 @@ public class ClickHouseAggregateMethodCallTranslator
 
         return _sqlExpressionFactory.Function(
             "countIf",
-            new[] { predicate },
+            [predicate],
             nullable: false,
-            argumentsPropagateNullability: new[] { false },
+            argumentsPropagateNullability: [false],
             typeof(long));
     }
 
     /// <summary>
     /// Translates If combinators like sumIf(column, condition), avgIf(column, condition), etc.
+    /// When the selector is a defaultForNull column, the sentinel-exclusion is ANDed into the
+    /// predicate; for sum/avg/min/max the function is also upgraded to its *OrNullIf variant so
+    /// all-sentinel slices return NULL instead of 0 (matching the defaultForNull contract).
     /// </summary>
     private SqlExpression? TranslateIfCombinator(
         string functionName,
@@ -736,12 +760,315 @@ public class ClickHouseAggregateMethodCallTranslator
         var selectorArg = arguments[0];
         var predicateArg = arguments[1];
 
+        var sentinelCondition = TryCreateSentinelExclusionCondition(selectorArg);
+        if (sentinelCondition != null)
+        {
+            predicateArg = _sqlExpressionFactory.AndAlso(predicateArg, sentinelCondition);
+            functionName = UpgradeToOrNullIf(functionName);
+        }
+
         return _sqlExpressionFactory.Function(
             functionName,
-            new[] { selectorArg, predicateArg },
+            [selectorArg, predicateArg],
             nullable: true,
-            argumentsPropagateNullability: new[] { false, false },
+            argumentsPropagateNullability: [false, false],
             returnType);
+    }
+
+    /// <summary>
+    /// Translates SumIf with defaultForNull sentinel composition and Int64 return-type coercion.
+    /// Mirrors the Int64-wrap-in-Convert pattern from TranslateSum so SumIf&lt;T, decimal&gt;
+    /// yields the user's declared return type rather than the raw ClickHouse Int64.
+    /// </summary>
+    private SqlExpression? TranslateSumIfCombinator(IReadOnlyList<SqlExpression> arguments, Type returnType)
+    {
+        if (arguments.Count < 2)
+        {
+            return null;
+        }
+
+        var selectorArg = arguments[0];
+        var predicateArg = arguments[1];
+
+        var functionName = "sumIf";
+        var sentinelCondition = TryCreateSentinelExclusionCondition(selectorArg);
+        if (sentinelCondition != null)
+        {
+            predicateArg = _sqlExpressionFactory.AndAlso(predicateArg, sentinelCondition);
+            functionName = "sumOrNullIf";
+        }
+
+        // ClickHouse sum returns Int64; wrap in Convert to match the .NET return type.
+        var clickHouseReturnType = typeof(long?);
+        var sumExpr = _sqlExpressionFactory.Function(
+            functionName,
+            [selectorArg, predicateArg],
+            nullable: true,
+            argumentsPropagateNullability: [false, false],
+            clickHouseReturnType);
+
+        return _sqlExpressionFactory.Convert(sumExpr, returnType);
+    }
+
+    /// <summary>
+    /// Upgrades an If combinator function name to its OrNullIf variant for aggregates that have one.
+    /// Only sum/avg/min/max support OrNull; uniq/any/etc. keep their base name.
+    /// </summary>
+    private static string UpgradeToOrNullIf(string functionName) => functionName switch
+    {
+        "sumIf" => "sumOrNullIf",
+        "avgIf" => "avgOrNullIf",
+        "minIf" => "minOrNullIf",
+        "maxIf" => "maxOrNullIf",
+        _ => functionName
+    };
+
+    /// <summary>
+    /// Translates two-selector If combinators like argMaxIf(arg, val, condition).
+    /// </summary>
+    private SqlExpression? TranslateTwoArgIfCombinator(
+        string functionName,
+        IReadOnlyList<SqlExpression> arguments,
+        Type returnType)
+    {
+        // Pattern: ArgMaxIf(source, argSelector, valSelector, predicate) -> [arg, val, pred]
+        if (arguments.Count < 3)
+        {
+            return null;
+        }
+
+        return _sqlExpressionFactory.Function(
+            functionName,
+            [arguments[0], arguments[1], arguments[2]],
+            nullable: true,
+            argumentsPropagateNullability: [false, false, false],
+            returnType);
+    }
+
+    /// <summary>
+    /// Translates parametric-level If combinators like quantileTDigestIf(level)(column, condition).
+    /// </summary>
+    private SqlExpression? TranslateParametricIfCombinator(
+        string functionName,
+        IReadOnlyList<SqlExpression> arguments)
+    {
+        // Pattern: QuantileXxxIf(source, level, selector, predicate) -> [selector, predicate] with level in name
+        if (arguments.Count < 3)
+        {
+            return null;
+        }
+
+        var levelArg = arguments[0];
+        var selectorArg = arguments[1];
+        var predicateArg = arguments[2];
+
+        if (levelArg is not SqlConstantExpression levelConstant || levelConstant.Value is not double level)
+        {
+            return null;
+        }
+
+        return _sqlExpressionFactory.Function(
+            $"{functionName}({level.ToString(System.Globalization.CultureInfo.InvariantCulture)})",
+            [selectorArg, predicateArg],
+            nullable: true,
+            argumentsPropagateNullability: [false, false],
+            typeof(double));
+    }
+
+    /// <summary>
+    /// Translates quantileDDIf(relative_accuracy, level)(column, condition).
+    /// </summary>
+    private SqlExpression? TranslateQuantileDDIf(IReadOnlyList<SqlExpression> arguments)
+    {
+        // Pattern: QuantileDDIf(source, relativeAccuracy, level, selector, predicate)
+        if (arguments.Count < 4)
+        {
+            return null;
+        }
+
+        var accuracyArg = arguments[0];
+        var levelArg = arguments[1];
+        var selectorArg = arguments[2];
+        var predicateArg = arguments[3];
+
+        if (accuracyArg is not SqlConstantExpression accuracyConstant || accuracyConstant.Value is not double accuracy)
+        {
+            return null;
+        }
+
+        if (levelArg is not SqlConstantExpression levelConstant || levelConstant.Value is not double level)
+        {
+            return null;
+        }
+
+        var accuracyStr = accuracy.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var levelStr = level.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+        return _sqlExpressionFactory.Function(
+            $"quantileDDIf({accuracyStr}, {levelStr})",
+            [selectorArg, predicateArg],
+            nullable: true,
+            argumentsPropagateNullability: [false, false],
+            typeof(double));
+    }
+
+    /// <summary>
+    /// Translates multi-quantile If combinators like quantilesIf(l1, l2, ...)(column, condition).
+    /// </summary>
+    private SqlExpression? TranslateMultiQuantileIf(string functionName, IReadOnlyList<SqlExpression> arguments)
+    {
+        // Pattern: QuantilesIf(source, levels[], selector, predicate)
+        if (arguments.Count < 3)
+        {
+            return null;
+        }
+
+        var levelsArg = arguments[0];
+        var selectorArg = arguments[1];
+        var predicateArg = arguments[2];
+
+        if (levelsArg is not SqlConstantExpression levelsConstant || levelsConstant.Value is not double[] levels)
+        {
+            return null;
+        }
+
+        var levelsStr = string.Join(", ", levels.Select(l => l.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+
+        return _sqlExpressionFactory.Function(
+            $"{functionName}({levelsStr})",
+            [selectorArg, predicateArg],
+            nullable: true,
+            argumentsPropagateNullability: [false, false],
+            typeof(double[]));
+    }
+
+    /// <summary>
+    /// Translates topKIf(k)(column, condition).
+    /// </summary>
+    private SqlExpression? TranslateTopKIf(IReadOnlyList<SqlExpression> arguments, Type returnType)
+    {
+        // Pattern: TopKIf(source, k, selector, predicate)
+        if (arguments.Count < 3)
+        {
+            return null;
+        }
+
+        var kArg = arguments[0];
+        var selectorArg = arguments[1];
+        var predicateArg = arguments[2];
+
+        if (kArg is not SqlConstantExpression kConstant || kConstant.Value is not int k)
+        {
+            return null;
+        }
+
+        return _sqlExpressionFactory.Function(
+            $"topKIf({k})",
+            [selectorArg, predicateArg],
+            nullable: true,
+            argumentsPropagateNullability: [false, false],
+            returnType);
+    }
+
+    /// <summary>
+    /// Translates topKWeightedIf(k)(column, weight, condition).
+    /// </summary>
+    private SqlExpression? TranslateTopKWeightedIf(IReadOnlyList<SqlExpression> arguments, Type returnType)
+    {
+        // Pattern: TopKWeightedIf(source, k, selector, weightSelector, predicate)
+        if (arguments.Count < 4)
+        {
+            return null;
+        }
+
+        var kArg = arguments[0];
+        var selectorArg = arguments[1];
+        var weightArg = arguments[2];
+        var predicateArg = arguments[3];
+
+        if (kArg is not SqlConstantExpression kConstant || kConstant.Value is not int k)
+        {
+            return null;
+        }
+
+        return _sqlExpressionFactory.Function(
+            $"topKWeightedIf({k})",
+            [selectorArg, weightArg, predicateArg],
+            nullable: true,
+            argumentsPropagateNullability: [false, false, false],
+            returnType);
+    }
+
+    /// <summary>
+    /// Translates groupArrayIf(column, condition) or groupArrayIf(maxSize)(column, condition).
+    /// </summary>
+    private SqlExpression? TranslateGroupArrayIf(IReadOnlyList<SqlExpression> arguments, Type returnType)
+    {
+        // Overload 1: GroupArrayIf(source, selector, predicate) -> [selector, predicate]
+        if (arguments.Count == 2)
+        {
+            return _sqlExpressionFactory.Function(
+                "groupArrayIf",
+                [arguments[0], arguments[1]],
+                nullable: true,
+                argumentsPropagateNullability: [false, false],
+                returnType);
+        }
+
+        // Overload 2: GroupArrayIf(source, maxSize, selector, predicate)
+        if (arguments.Count >= 3)
+        {
+            var maxSizeArg = arguments[0];
+            var selectorArg = arguments[1];
+            var predicateArg = arguments[2];
+
+            if (maxSizeArg is SqlConstantExpression maxSizeConstant && maxSizeConstant.Value is int maxSize)
+            {
+                return _sqlExpressionFactory.Function(
+                    $"groupArrayIf({maxSize})",
+                    [selectorArg, predicateArg],
+                    nullable: true,
+                    argumentsPropagateNullability: [false, false],
+                    returnType);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Translates groupUniqArrayIf(column, condition) or groupUniqArrayIf(maxSize)(column, condition).
+    /// </summary>
+    private SqlExpression? TranslateGroupUniqArrayIf(IReadOnlyList<SqlExpression> arguments, Type returnType)
+    {
+        if (arguments.Count == 2)
+        {
+            return _sqlExpressionFactory.Function(
+                "groupUniqArrayIf",
+                [arguments[0], arguments[1]],
+                nullable: true,
+                argumentsPropagateNullability: [false, false],
+                returnType);
+        }
+
+        if (arguments.Count >= 3)
+        {
+            var maxSizeArg = arguments[0];
+            var selectorArg = arguments[1];
+            var predicateArg = arguments[2];
+
+            if (maxSizeArg is SqlConstantExpression maxSizeConstant && maxSizeConstant.Value is int maxSize)
+            {
+                return _sqlExpressionFactory.Function(
+                    $"groupUniqArrayIf({maxSize})",
+                    [selectorArg, predicateArg],
+                    nullable: true,
+                    argumentsPropagateNullability: [false, false],
+                    returnType);
+            }
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -775,9 +1102,9 @@ public class ClickHouseAggregateMethodCallTranslator
 
         return _sqlExpressionFactory.Function(
             $"quantileDD({accuracyStr}, {levelStr})",
-            new[] { selectorArg },
+            [selectorArg],
             nullable: true,
-            argumentsPropagateNullability: new[] { false },
+            argumentsPropagateNullability: [false],
             typeof(double));
     }
 
@@ -802,9 +1129,9 @@ public class ClickHouseAggregateMethodCallTranslator
 
         return _sqlExpressionFactory.Function(
             $"{functionName}({level.ToString(System.Globalization.CultureInfo.InvariantCulture)})",
-            new[] { selectorArg },
+            [selectorArg],
             nullable: true,
-            argumentsPropagateNullability: new[] { false },
+            argumentsPropagateNullability: [false],
             typeof(double));
     }
 
@@ -831,9 +1158,9 @@ public class ClickHouseAggregateMethodCallTranslator
 
         return _sqlExpressionFactory.Function(
             $"{functionName}({levelsStr})",
-            new[] { selectorArg },
+            [selectorArg],
             nullable: true,
-            argumentsPropagateNullability: new[] { false },
+            argumentsPropagateNullability: [false],
             typeof(double[]));
     }
 
@@ -859,9 +1186,9 @@ public class ClickHouseAggregateMethodCallTranslator
 
         return _sqlExpressionFactory.Function(
             $"topKWeighted({k})",
-            new[] { selectorArg, weightArg },
+            [selectorArg, weightArg],
             nullable: true,
-            argumentsPropagateNullability: new[] { false, false },
+            argumentsPropagateNullability: [false, false],
             returnType);
     }
 
@@ -887,9 +1214,9 @@ public class ClickHouseAggregateMethodCallTranslator
 
         return _sqlExpressionFactory.Function(
             $"quantileIf({level.ToString(System.Globalization.CultureInfo.InvariantCulture)})",
-            new[] { selectorArg, predicateArg },
+            [selectorArg, predicateArg],
             nullable: true,
-            argumentsPropagateNullability: new[] { false, false },
+            argumentsPropagateNullability: [false, false],
             typeof(double));
     }
 }

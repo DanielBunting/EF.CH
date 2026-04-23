@@ -202,7 +202,9 @@ var result = await context.Articles
 
 ## -If Combinators (Conditional Aggregation)
 
-Apply an aggregate only to rows matching a predicate. Translated to ClickHouse `-If` combinator functions.
+Apply an aggregate only to rows matching a predicate. Translated to ClickHouse `-If` combinator functions. The predicate is evaluated in a single pass rather than via `sum(if(...))`, so the query stays on the hot path.
+
+### Core aggregates
 
 | C# Method | ClickHouse SQL |
 |-----------|----------------|
@@ -215,7 +217,55 @@ Apply an aggregate only to rows matching a predicate. Translated to ClickHouse `
 | `g.UniqExactIf(x => x.UserId, x => x.Active)` | `uniqExactIf(UserId, Active)` |
 | `g.AnyIf(x => x.Name, x => x.Active)` | `anyIf(Name, Active)` |
 | `g.AnyLastIf(x => x.Name, x => x.Active)` | `anyLastIf(Name, Active)` |
+| `g.MedianIf(x => x.Duration, x => x.Active)` | `medianIf(Duration, Active)` |
+
+### Two-selector (argMax/argMin)
+
+| C# Method | ClickHouse SQL |
+|-----------|----------------|
+| `g.ArgMaxIf(x => x.Price, x => x.Ts, x => x.Active)` | `argMaxIf(Price, Ts, Active)` |
+| `g.ArgMinIf(x => x.Price, x => x.Ts, x => x.Active)` | `argMinIf(Price, Ts, Active)` |
+
+### Array collectors
+
+| C# Method | ClickHouse SQL |
+|-----------|----------------|
+| `g.GroupArrayIf(x => x.Name, x => x.Active)` | `groupArrayIf(Name, Active)` |
+| `g.GroupArrayIf(10, x => x.Name, x => x.Active)` | `groupArrayIf(10)(Name, Active)` |
+| `g.GroupUniqArrayIf(x => x.Name, x => x.Active)` | `groupUniqArrayIf(Name, Active)` |
+| `g.GroupUniqArrayIf(10, x => x.Name, x => x.Active)` | `groupUniqArrayIf(10)(Name, Active)` |
+| `g.TopKIf(5, x => x.Name, x => x.Active)` | `topKIf(5)(Name, Active)` |
+| `g.TopKWeightedIf(5, x => x.Name, x => x.Weight, x => x.Active)` | `topKWeightedIf(5)(Name, Weight, Active)` |
+
+### Parametric quantiles
+
+| C# Method | ClickHouse SQL |
+|-----------|----------------|
 | `g.QuantileIf(0.95, x => x.Duration, x => x.Active)` | `quantileIf(0.95)(Duration, Active)` |
+| `g.QuantileTDigestIf(0.95, x => x.Duration, x => x.Active)` | `quantileTDigestIf(0.95)(Duration, Active)` |
+| `g.QuantileExactIf(0.95, x => x.Duration, x => x.Active)` | `quantileExactIf(0.95)(Duration, Active)` |
+| `g.QuantileTimingIf(0.95, x => x.Duration, x => x.Active)` | `quantileTimingIf(0.95)(Duration, Active)` |
+| `g.QuantileDDIf(0.01, 0.95, x => x.Duration, x => x.Active)` | `quantileDDIf(0.01, 0.95)(Duration, Active)` |
+| `g.QuantilesIf(new[] { 0.5, 0.9, 0.99 }, x => x.Duration, x => x.Active)` | `quantilesIf(0.5, 0.9, 0.99)(Duration, Active)` |
+| `g.QuantilesTDigestIf(new[] { 0.5, 0.9, 0.99 }, x => x.Duration, x => x.Active)` | `quantilesTDigestIf(0.5, 0.9, 0.99)(Duration, Active)` |
+
+### Statistical
+
+| C# Method | ClickHouse SQL |
+|-----------|----------------|
+| `g.StddevPopIf(x => x.Amount, x => x.Active)` | `stddevPopIf(Amount, Active)` |
+| `g.StddevSampIf(x => x.Amount, x => x.Active)` | `stddevSampIf(Amount, Active)` |
+| `g.VarPopIf(x => x.Amount, x => x.Active)` | `varPopIf(Amount, Active)` |
+| `g.VarSampIf(x => x.Amount, x => x.Active)` | `varSampIf(Amount, Active)` |
+
+### Approximate distinct count
+
+| C# Method | ClickHouse SQL |
+|-----------|----------------|
+| `g.UniqCombinedIf(x => x.UserId, x => x.Active)` | `uniqCombinedIf(UserId, Active)` |
+| `g.UniqCombined64If(x => x.UserId, x => x.Active)` | `uniqCombined64If(UserId, Active)` |
+| `g.UniqHLL12If(x => x.UserId, x => x.Active)` | `uniqHLL12If(UserId, Active)` |
+| `g.UniqThetaIf(x => x.UserId, x => x.Active)` | `uniqThetaIf(UserId, Active)` |
 
 ```csharp
 var result = await context.Orders
@@ -233,6 +283,12 @@ var result = await context.Orders
     })
     .ToListAsync();
 ```
+
+---
+
+### DefaultForNull composition for -If combinators
+
+When the selector column is configured with `HasDefaultForNull(sentinel)`, `SumIf`/`AvgIf`/`MinIf`/`MaxIf` automatically AND the sentinel-exclusion into the user predicate and upgrade the function name to `sumOrNullIf` / `avgOrNullIf` / `minOrNullIf` / `maxOrNullIf`. All-sentinel slices then return NULL (matching the contract the base aggregates already follow), instead of `0`. Other `-If` variants (uniq, any, etc.) AND the sentinel condition into the predicate but keep their base name.
 
 ---
 

@@ -498,8 +498,180 @@ internal class MaterializedViewExpressionVisitor<TSource> : ExpressionVisitor
             "TopK" => TranslateTopK(methodExpr),
             "TopKWeighted" => TranslateTopKWeighted(methodExpr),
 
+            // If combinators - conditional aggregation
+            "CountIf" => TranslateCountIfAggregate(methodExpr),
+            "SumIf" => TranslateIfAggregate("sumIf", methodExpr),
+            "AvgIf" => TranslateIfAggregate("avgIf", methodExpr),
+            "MinIf" => TranslateIfAggregate("minIf", methodExpr),
+            "MaxIf" => TranslateIfAggregate("maxIf", methodExpr),
+            "UniqIf" => TranslateIfAggregate("uniqIf", methodExpr),
+            "UniqExactIf" => TranslateIfAggregate("uniqExactIf", methodExpr),
+            "AnyIf" => TranslateIfAggregate("anyIf", methodExpr),
+            "AnyLastIf" => TranslateIfAggregate("anyLastIf", methodExpr),
+            "QuantileIf" => TranslateQuantileIfAggregate(methodExpr),
+            "ArgMaxIf" => TranslateTwoSelectorIfAggregate("argMaxIf", methodExpr),
+            "ArgMinIf" => TranslateTwoSelectorIfAggregate("argMinIf", methodExpr),
+            "TopKIf" => TranslateTopKIfAggregate(methodExpr),
+            "TopKWeightedIf" => TranslateTopKWeightedIfAggregate(methodExpr),
+            "GroupArrayIf" => TranslateGroupArrayIfAggregate(methodExpr),
+            "GroupUniqArrayIf" => TranslateGroupUniqArrayIfAggregate(methodExpr),
+            "MedianIf" => TranslateIfAggregate("medianIf", methodExpr),
+            "StddevPopIf" => TranslateIfAggregate("stddevPopIf", methodExpr),
+            "StddevSampIf" => TranslateIfAggregate("stddevSampIf", methodExpr),
+            "VarPopIf" => TranslateIfAggregate("varPopIf", methodExpr),
+            "VarSampIf" => TranslateIfAggregate("varSampIf", methodExpr),
+            "UniqCombinedIf" => TranslateIfAggregate("uniqCombinedIf", methodExpr),
+            "UniqCombined64If" => TranslateIfAggregate("uniqCombined64If", methodExpr),
+            "UniqHLL12If" => TranslateIfAggregate("uniqHLL12If", methodExpr),
+            "UniqThetaIf" => TranslateIfAggregate("uniqThetaIf", methodExpr),
+            "QuantileTDigestIf" => TranslateParametricQuantileIfAggregate("quantileTDigestIf", methodExpr),
+            "QuantileExactIf" => TranslateParametricQuantileIfAggregate("quantileExactIf", methodExpr),
+            "QuantileTimingIf" => TranslateParametricQuantileIfAggregate("quantileTimingIf", methodExpr),
+            "QuantileDDIf" => TranslateQuantileDDIfAggregate(methodExpr),
+            "QuantilesIf" => TranslateMultiQuantileIfAggregate("quantilesIf", methodExpr),
+            "QuantilesTDigestIf" => TranslateMultiQuantileIfAggregate("quantilesTDigestIf", methodExpr),
+
             _ => throw new NotSupportedException($"ClickHouse aggregate {methodName} is not supported.")
         };
+    }
+
+    private string TranslateCountIfAggregate(MethodCallExpression methodExpr)
+    {
+        // Pattern: CountIf(source, predicate)
+        var predicate = ExtractLambda(methodExpr.Arguments[1]);
+        var conditionSql = TranslateExpression(predicate.Body);
+        return $"countIf({conditionSql})";
+    }
+
+    private string TranslateIfAggregate(string function, MethodCallExpression methodExpr)
+    {
+        // Pattern: SumIf(source, selector, predicate) etc.
+        var selector = ExtractLambda(methodExpr.Arguments[1]);
+        var predicate = ExtractLambda(methodExpr.Arguments[2]);
+        var valueSql = TranslateExpression(selector.Body);
+        var conditionSql = TranslateExpression(predicate.Body);
+        return $"{function}({valueSql}, {conditionSql})";
+    }
+
+    private string TranslateQuantileIfAggregate(MethodCallExpression methodExpr)
+    {
+        // Pattern: QuantileIf(source, level, selector, predicate)
+        var level = ExtractConstantValue<double>(methodExpr.Arguments[1]);
+        var selector = ExtractLambda(methodExpr.Arguments[2]);
+        var predicate = ExtractLambda(methodExpr.Arguments[3]);
+        var valueSql = TranslateExpression(selector.Body);
+        var conditionSql = TranslateExpression(predicate.Body);
+        return $"quantileIf({level.ToString(System.Globalization.CultureInfo.InvariantCulture)})({valueSql}, {conditionSql})";
+    }
+
+    private string TranslateTwoSelectorIfAggregate(string function, MethodCallExpression methodExpr)
+    {
+        // Pattern: ArgMaxIf/ArgMinIf(source, argSelector, valSelector, predicate)
+        var argSelector = ExtractLambda(methodExpr.Arguments[1]);
+        var valSelector = ExtractLambda(methodExpr.Arguments[2]);
+        var predicate = ExtractLambda(methodExpr.Arguments[3]);
+        var argSql = TranslateExpression(argSelector.Body);
+        var valSql = TranslateExpression(valSelector.Body);
+        var conditionSql = TranslateExpression(predicate.Body);
+        return $"{function}({argSql}, {valSql}, {conditionSql})";
+    }
+
+    private string TranslateTopKIfAggregate(MethodCallExpression methodExpr)
+    {
+        var k = ExtractConstantValue<int>(methodExpr.Arguments[1]);
+        var selector = ExtractLambda(methodExpr.Arguments[2]);
+        var predicate = ExtractLambda(methodExpr.Arguments[3]);
+        var valueSql = TranslateExpression(selector.Body);
+        var conditionSql = TranslateExpression(predicate.Body);
+        return $"topKIf({k})({valueSql}, {conditionSql})";
+    }
+
+    private string TranslateTopKWeightedIfAggregate(MethodCallExpression methodExpr)
+    {
+        var k = ExtractConstantValue<int>(methodExpr.Arguments[1]);
+        var selector = ExtractLambda(methodExpr.Arguments[2]);
+        var weightSelector = ExtractLambda(methodExpr.Arguments[3]);
+        var predicate = ExtractLambda(methodExpr.Arguments[4]);
+        var valueSql = TranslateExpression(selector.Body);
+        var weightSql = TranslateExpression(weightSelector.Body);
+        var conditionSql = TranslateExpression(predicate.Body);
+        return $"topKWeightedIf({k})({valueSql}, {weightSql}, {conditionSql})";
+    }
+
+    private string TranslateGroupArrayIfAggregate(MethodCallExpression methodExpr)
+    {
+        if (methodExpr.Arguments.Count == 3)
+        {
+            var selector = ExtractLambda(methodExpr.Arguments[1]);
+            var predicate = ExtractLambda(methodExpr.Arguments[2]);
+            var valueSql = TranslateExpression(selector.Body);
+            var conditionSql = TranslateExpression(predicate.Body);
+            return $"groupArrayIf({valueSql}, {conditionSql})";
+        }
+        else
+        {
+            var maxSize = ExtractConstantValue<int>(methodExpr.Arguments[1]);
+            var selector = ExtractLambda(methodExpr.Arguments[2]);
+            var predicate = ExtractLambda(methodExpr.Arguments[3]);
+            var valueSql = TranslateExpression(selector.Body);
+            var conditionSql = TranslateExpression(predicate.Body);
+            return $"groupArrayIf({maxSize})({valueSql}, {conditionSql})";
+        }
+    }
+
+    private string TranslateGroupUniqArrayIfAggregate(MethodCallExpression methodExpr)
+    {
+        if (methodExpr.Arguments.Count == 3)
+        {
+            var selector = ExtractLambda(methodExpr.Arguments[1]);
+            var predicate = ExtractLambda(methodExpr.Arguments[2]);
+            var valueSql = TranslateExpression(selector.Body);
+            var conditionSql = TranslateExpression(predicate.Body);
+            return $"groupUniqArrayIf({valueSql}, {conditionSql})";
+        }
+        else
+        {
+            var maxSize = ExtractConstantValue<int>(methodExpr.Arguments[1]);
+            var selector = ExtractLambda(methodExpr.Arguments[2]);
+            var predicate = ExtractLambda(methodExpr.Arguments[3]);
+            var valueSql = TranslateExpression(selector.Body);
+            var conditionSql = TranslateExpression(predicate.Body);
+            return $"groupUniqArrayIf({maxSize})({valueSql}, {conditionSql})";
+        }
+    }
+
+    private string TranslateParametricQuantileIfAggregate(string functionName, MethodCallExpression methodExpr)
+    {
+        var level = ExtractConstantValue<double>(methodExpr.Arguments[1]);
+        var selector = ExtractLambda(methodExpr.Arguments[2]);
+        var predicate = ExtractLambda(methodExpr.Arguments[3]);
+        var valueSql = TranslateExpression(selector.Body);
+        var conditionSql = TranslateExpression(predicate.Body);
+        return $"{functionName}({level.ToString(System.Globalization.CultureInfo.InvariantCulture)})({valueSql}, {conditionSql})";
+    }
+
+    private string TranslateQuantileDDIfAggregate(MethodCallExpression methodExpr)
+    {
+        var accuracy = ExtractConstantValue<double>(methodExpr.Arguments[1]);
+        var level = ExtractConstantValue<double>(methodExpr.Arguments[2]);
+        var selector = ExtractLambda(methodExpr.Arguments[3]);
+        var predicate = ExtractLambda(methodExpr.Arguments[4]);
+        var valueSql = TranslateExpression(selector.Body);
+        var conditionSql = TranslateExpression(predicate.Body);
+        var accuracyStr = accuracy.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var levelStr = level.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        return $"quantileDDIf({accuracyStr}, {levelStr})({valueSql}, {conditionSql})";
+    }
+
+    private string TranslateMultiQuantileIfAggregate(string functionName, MethodCallExpression methodExpr)
+    {
+        var levels = ExtractConstantValue<double[]>(methodExpr.Arguments[1]);
+        var selector = ExtractLambda(methodExpr.Arguments[2]);
+        var predicate = ExtractLambda(methodExpr.Arguments[3]);
+        var valueSql = TranslateExpression(selector.Body);
+        var conditionSql = TranslateExpression(predicate.Body);
+        var levelsStr = string.Join(", ", levels.Select(l => l.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        return $"{functionName}({levelsStr})({valueSql}, {conditionSql})";
     }
 
     private string TranslateSimpleClickHouseAggregate(string function, MethodCallExpression methodExpr)
