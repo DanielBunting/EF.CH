@@ -291,6 +291,181 @@ public class ClickHouseAggregatesTests : IAsyncLifetime
 
     #endregion
 
+    #region If Combinator Projection Tests
+
+    [Fact]
+    public void Projection_ArgMaxIf_TranslatesCorrectly()
+    {
+        using var context = CreateContext<ArgMaxIfProjectionContext>();
+        var projections = context.Model.FindEntityType(typeof(PriceHistory))!
+            .FindAnnotation(ClickHouseAnnotationNames.Projections)?.Value as List<ProjectionDefinition>;
+
+        Assert.NotNull(projections);
+        Assert.Single(projections);
+        Assert.Contains("argMaxIf(", projections[0].SelectSql);
+        Assert.Contains("\"Price\"", projections[0].SelectSql);
+        Assert.Contains("\"Timestamp\"", projections[0].SelectSql);
+    }
+
+    [Fact]
+    public void Projection_ArgMinIf_TranslatesCorrectly()
+    {
+        using var context = CreateContext<ArgMinIfProjectionContext>();
+        var projections = context.Model.FindEntityType(typeof(PriceHistory))!
+            .FindAnnotation(ClickHouseAnnotationNames.Projections)?.Value as List<ProjectionDefinition>;
+
+        Assert.NotNull(projections);
+        Assert.Contains("argMinIf(", projections![0].SelectSql);
+    }
+
+    [Fact]
+    public void Projection_TopKIf_TranslatesCorrectly()
+    {
+        using var context = CreateContext<TopKIfProjectionContext>();
+        var projections = context.Model.FindEntityType(typeof(AggOrderItem))!
+            .FindAnnotation(ClickHouseAnnotationNames.Projections)?.Value as List<ProjectionDefinition>;
+
+        Assert.NotNull(projections);
+        Assert.Contains("topKIf(5)(", projections![0].SelectSql);
+    }
+
+    [Fact]
+    public void Projection_TopKWeightedIf_TranslatesCorrectly()
+    {
+        using var context = CreateContext<TopKWeightedIfProjectionContext>();
+        var projections = context.Model.FindEntityType(typeof(AggOrderItem))!
+            .FindAnnotation(ClickHouseAnnotationNames.Projections)?.Value as List<ProjectionDefinition>;
+
+        Assert.NotNull(projections);
+        Assert.Contains("topKWeightedIf(3)(", projections![0].SelectSql);
+    }
+
+    [Fact]
+    public void Projection_GroupArrayIf_TranslatesCorrectly()
+    {
+        using var context = CreateContext<GroupArrayIfProjectionContext>();
+        var projections = context.Model.FindEntityType(typeof(AggOrderItem))!
+            .FindAnnotation(ClickHouseAnnotationNames.Projections)?.Value as List<ProjectionDefinition>;
+
+        Assert.NotNull(projections);
+        Assert.Contains("groupArrayIf(", projections![0].SelectSql);
+    }
+
+    [Fact]
+    public void Projection_GroupArrayIfWithLimit_TranslatesCorrectly()
+    {
+        using var context = CreateContext<GroupArrayIfLimitedProjectionContext>();
+        var projections = context.Model.FindEntityType(typeof(AggOrderItem))!
+            .FindAnnotation(ClickHouseAnnotationNames.Projections)?.Value as List<ProjectionDefinition>;
+
+        Assert.NotNull(projections);
+        Assert.Contains("groupArrayIf(10)(", projections![0].SelectSql);
+    }
+
+    [Fact]
+    public void Projection_GroupUniqArrayIf_TranslatesCorrectly()
+    {
+        using var context = CreateContext<GroupUniqArrayIfProjectionContext>();
+        var projections = context.Model.FindEntityType(typeof(AggOrderItem))!
+            .FindAnnotation(ClickHouseAnnotationNames.Projections)?.Value as List<ProjectionDefinition>;
+
+        Assert.NotNull(projections);
+        Assert.Contains("groupUniqArrayIf(", projections![0].SelectSql);
+    }
+
+    [Fact]
+    public void Projection_MedianIf_TranslatesCorrectly()
+    {
+        using var context = CreateContext<MedianIfProjectionContext>();
+        var projections = context.Model.FindEntityType(typeof(SalesRecord))!
+            .FindAnnotation(ClickHouseAnnotationNames.Projections)?.Value as List<ProjectionDefinition>;
+
+        Assert.NotNull(projections);
+        Assert.Contains("medianIf(", projections![0].SelectSql);
+    }
+
+    [Fact]
+    public void Projection_StddevPopIf_TranslatesCorrectly()
+    {
+        using var context = CreateContext<StddevPopIfProjectionContext>();
+        var projections = context.Model.FindEntityType(typeof(SalesRecord))!
+            .FindAnnotation(ClickHouseAnnotationNames.Projections)?.Value as List<ProjectionDefinition>;
+
+        Assert.NotNull(projections);
+        Assert.Contains("stddevPopIf(", projections![0].SelectSql);
+    }
+
+    [Fact]
+    public void Projection_UniqCombinedIf_TranslatesCorrectly()
+    {
+        using var context = CreateContext<UniqCombinedIfProjectionContext>();
+        var projections = context.Model.FindEntityType(typeof(ClickEvent))!
+            .FindAnnotation(ClickHouseAnnotationNames.Projections)?.Value as List<ProjectionDefinition>;
+
+        Assert.NotNull(projections);
+        Assert.Contains("uniqCombinedIf(", projections![0].SelectSql);
+    }
+
+    [Fact]
+    public void Projection_QuantileTDigestIf_TranslatesCorrectly()
+    {
+        using var context = CreateContext<QuantileTDigestIfProjectionContext>();
+        var projections = context.Model.FindEntityType(typeof(SalesRecord))!
+            .FindAnnotation(ClickHouseAnnotationNames.Projections)?.Value as List<ProjectionDefinition>;
+
+        Assert.NotNull(projections);
+        Assert.Contains("quantileTDigestIf(0.95)(", projections![0].SelectSql);
+    }
+
+    [Fact]
+    public void Projection_QuantileDDIf_TranslatesCorrectly()
+    {
+        using var context = CreateContext<QuantileDDIfProjectionContext>();
+        var projections = context.Model.FindEntityType(typeof(SalesRecord))!
+            .FindAnnotation(ClickHouseAnnotationNames.Projections)?.Value as List<ProjectionDefinition>;
+
+        Assert.NotNull(projections);
+        Assert.Contains("quantileDDIf(0.01, 0.95)(", projections![0].SelectSql);
+    }
+
+    [Fact]
+    public void Projection_QuantilesIf_TranslatesCorrectly()
+    {
+        using var context = CreateContext<QuantilesIfProjectionContext>();
+        var projections = context.Model.FindEntityType(typeof(SalesRecord))!
+            .FindAnnotation(ClickHouseAnnotationNames.Projections)?.Value as List<ProjectionDefinition>;
+
+        Assert.NotNull(projections);
+        Assert.Contains("quantilesIf(0.5, 0.9, 0.99)(", projections![0].SelectSql);
+    }
+
+    [Fact]
+    public void Projection_MultipleIfAggregates_ShareSingleGroupBy()
+    {
+        using var context = CreateContext<MultiIfProjectionContext>();
+        var projections = context.Model.FindEntityType(typeof(SalesRecord))!
+            .FindAnnotation(ClickHouseAnnotationNames.Projections)?.Value as List<ProjectionDefinition>;
+
+        Assert.NotNull(projections);
+        Assert.Single(projections);
+        var sql = projections![0].SelectSql;
+
+        Assert.Contains("sumIf(", sql);
+        Assert.Contains("countIf(", sql);
+        Assert.Contains("uniqIf(", sql);
+
+        var groupByCount = 0;
+        var idx = 0;
+        while ((idx = sql.IndexOf("GROUP BY", idx, StringComparison.Ordinal)) != -1)
+        {
+            groupByCount++;
+            idx += "GROUP BY".Length;
+        }
+        Assert.Equal(1, groupByCount);
+    }
+
+    #endregion
+
     #region Integration Tests
 
     [Fact]
@@ -878,6 +1053,334 @@ public class TopKProjectionContext : DbContext
                 {
                     OrderId = g.Key,
                     TopProducts = ClickHouseAggregates.TopK(g, 5, i => i.ProductName)
+                })
+                .Build();
+        });
+    }
+}
+
+#endregion
+
+#region Test Contexts - If Combinators
+
+public class ArgMaxIfProjectionContext : DbContext
+{
+    public ArgMaxIfProjectionContext(DbContextOptions<ArgMaxIfProjectionContext> options) : base(options) { }
+    public DbSet<PriceHistory> Prices => Set<PriceHistory>();
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<PriceHistory>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.ToTable("price_history");
+            entity.UseMergeTree(x => new { x.ProductId, x.Timestamp });
+            entity.HasProjection()
+                .GroupBy(p => p.ProductId)
+                .Select(g => new
+                {
+                    ProductId = g.Key,
+                    LatestPositive = ClickHouseAggregates.ArgMaxIf(g, p => p.Price, p => p.Timestamp, p => p.Price > 0m)
+                })
+                .Build();
+        });
+    }
+}
+
+public class ArgMinIfProjectionContext : DbContext
+{
+    public ArgMinIfProjectionContext(DbContextOptions<ArgMinIfProjectionContext> options) : base(options) { }
+    public DbSet<PriceHistory> Prices => Set<PriceHistory>();
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<PriceHistory>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.ToTable("price_history");
+            entity.UseMergeTree(x => new { x.ProductId, x.Timestamp });
+            entity.HasProjection()
+                .GroupBy(p => p.ProductId)
+                .Select(g => new
+                {
+                    ProductId = g.Key,
+                    EarliestPositive = ClickHouseAggregates.ArgMinIf(g, p => p.Price, p => p.Timestamp, p => p.Price > 0m)
+                })
+                .Build();
+        });
+    }
+}
+
+public class TopKIfProjectionContext : DbContext
+{
+    public TopKIfProjectionContext(DbContextOptions<TopKIfProjectionContext> options) : base(options) { }
+    public DbSet<AggOrderItem> Items => Set<AggOrderItem>();
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<AggOrderItem>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.ToTable("order_items");
+            entity.UseMergeTree(x => new { x.OrderId, x.Id });
+            entity.HasProjection()
+                .GroupBy(i => i.OrderId)
+                .Select(g => new
+                {
+                    OrderId = g.Key,
+                    TopBulk = ClickHouseAggregates.TopKIf(g, 5, i => i.ProductName, i => i.Quantity > 1)
+                })
+                .Build();
+        });
+    }
+}
+
+public class TopKWeightedIfProjectionContext : DbContext
+{
+    public TopKWeightedIfProjectionContext(DbContextOptions<TopKWeightedIfProjectionContext> options) : base(options) { }
+    public DbSet<AggOrderItem> Items => Set<AggOrderItem>();
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<AggOrderItem>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.ToTable("order_items");
+            entity.UseMergeTree(x => new { x.OrderId, x.Id });
+            entity.HasProjection()
+                .GroupBy(i => i.OrderId)
+                .Select(g => new
+                {
+                    OrderId = g.Key,
+                    TopWeighted = ClickHouseAggregates.TopKWeightedIf(g, 3, i => i.ProductName, i => i.Quantity, i => i.Quantity > 0)
+                })
+                .Build();
+        });
+    }
+}
+
+public class GroupArrayIfProjectionContext : DbContext
+{
+    public GroupArrayIfProjectionContext(DbContextOptions<GroupArrayIfProjectionContext> options) : base(options) { }
+    public DbSet<AggOrderItem> Items => Set<AggOrderItem>();
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<AggOrderItem>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.ToTable("order_items");
+            entity.UseMergeTree(x => new { x.OrderId, x.Id });
+            entity.HasProjection()
+                .GroupBy(i => i.OrderId)
+                .Select(g => new
+                {
+                    OrderId = g.Key,
+                    BulkProducts = ClickHouseAggregates.GroupArrayIf(g, i => i.ProductName, i => i.Quantity > 1)
+                })
+                .Build();
+        });
+    }
+}
+
+public class GroupArrayIfLimitedProjectionContext : DbContext
+{
+    public GroupArrayIfLimitedProjectionContext(DbContextOptions<GroupArrayIfLimitedProjectionContext> options) : base(options) { }
+    public DbSet<AggOrderItem> Items => Set<AggOrderItem>();
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<AggOrderItem>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.ToTable("order_items");
+            entity.UseMergeTree(x => new { x.OrderId, x.Id });
+            entity.HasProjection()
+                .GroupBy(i => i.OrderId)
+                .Select(g => new
+                {
+                    OrderId = g.Key,
+                    BulkFirstTen = ClickHouseAggregates.GroupArrayIf(g, 10, i => i.ProductName, i => i.Quantity > 1)
+                })
+                .Build();
+        });
+    }
+}
+
+public class GroupUniqArrayIfProjectionContext : DbContext
+{
+    public GroupUniqArrayIfProjectionContext(DbContextOptions<GroupUniqArrayIfProjectionContext> options) : base(options) { }
+    public DbSet<AggOrderItem> Items => Set<AggOrderItem>();
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<AggOrderItem>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.ToTable("order_items");
+            entity.UseMergeTree(x => new { x.OrderId, x.Id });
+            entity.HasProjection()
+                .GroupBy(i => i.OrderId)
+                .Select(g => new
+                {
+                    OrderId = g.Key,
+                    UniqBulk = ClickHouseAggregates.GroupUniqArrayIf(g, i => i.ProductName, i => i.Quantity > 1)
+                })
+                .Build();
+        });
+    }
+}
+
+public class MedianIfProjectionContext : DbContext
+{
+    public MedianIfProjectionContext(DbContextOptions<MedianIfProjectionContext> options) : base(options) { }
+    public DbSet<SalesRecord> Sales => Set<SalesRecord>();
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<SalesRecord>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.ToTable("sales");
+            entity.UseMergeTree(x => new { x.SaleDate, x.Id });
+            entity.HasProjection()
+                .GroupBy(s => s.Region)
+                .Select(g => new
+                {
+                    Region = g.Key,
+                    MedianPositive = ClickHouseAggregates.MedianIf(g, s => s.Amount, s => s.Amount > 0)
+                })
+                .Build();
+        });
+    }
+}
+
+public class StddevPopIfProjectionContext : DbContext
+{
+    public StddevPopIfProjectionContext(DbContextOptions<StddevPopIfProjectionContext> options) : base(options) { }
+    public DbSet<SalesRecord> Sales => Set<SalesRecord>();
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<SalesRecord>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.ToTable("sales");
+            entity.UseMergeTree(x => new { x.SaleDate, x.Id });
+            entity.HasProjection()
+                .GroupBy(s => s.Region)
+                .Select(g => new
+                {
+                    Region = g.Key,
+                    StdDevPositive = ClickHouseAggregates.StddevPopIf(g, s => s.Amount, s => s.Amount > 0)
+                })
+                .Build();
+        });
+    }
+}
+
+public class UniqCombinedIfProjectionContext : DbContext
+{
+    public UniqCombinedIfProjectionContext(DbContextOptions<UniqCombinedIfProjectionContext> options) : base(options) { }
+    public DbSet<ClickEvent> Events => Set<ClickEvent>();
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<ClickEvent>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.ToTable("click_events");
+            entity.UseMergeTree(x => new { x.EventDate, x.Id });
+            entity.HasProjection()
+                .GroupBy(e => e.EventDate)
+                .Select(g => new
+                {
+                    Date = g.Key,
+                    ClickUsers = ClickHouseAggregates.UniqCombinedIf(g, e => e.UserId, e => e.EventType == "click")
+                })
+                .Build();
+        });
+    }
+}
+
+public class QuantileTDigestIfProjectionContext : DbContext
+{
+    public QuantileTDigestIfProjectionContext(DbContextOptions<QuantileTDigestIfProjectionContext> options) : base(options) { }
+    public DbSet<SalesRecord> Sales => Set<SalesRecord>();
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<SalesRecord>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.ToTable("sales");
+            entity.UseMergeTree(x => new { x.SaleDate, x.Id });
+            entity.HasProjection()
+                .GroupBy(s => s.Region)
+                .Select(g => new
+                {
+                    Region = g.Key,
+                    P95Positive = ClickHouseAggregates.QuantileTDigestIf(g, 0.95, s => s.Amount, s => s.Amount > 0)
+                })
+                .Build();
+        });
+    }
+}
+
+public class QuantileDDIfProjectionContext : DbContext
+{
+    public QuantileDDIfProjectionContext(DbContextOptions<QuantileDDIfProjectionContext> options) : base(options) { }
+    public DbSet<SalesRecord> Sales => Set<SalesRecord>();
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<SalesRecord>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.ToTable("sales");
+            entity.UseMergeTree(x => new { x.SaleDate, x.Id });
+            entity.HasProjection()
+                .GroupBy(s => s.Region)
+                .Select(g => new
+                {
+                    Region = g.Key,
+                    P95 = ClickHouseAggregates.QuantileDDIf(g, 0.01, 0.95, s => s.Amount, s => s.Amount > 0)
+                })
+                .Build();
+        });
+    }
+}
+
+public class QuantilesIfProjectionContext : DbContext
+{
+    public QuantilesIfProjectionContext(DbContextOptions<QuantilesIfProjectionContext> options) : base(options) { }
+    public DbSet<SalesRecord> Sales => Set<SalesRecord>();
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<SalesRecord>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.ToTable("sales");
+            entity.UseMergeTree(x => new { x.SaleDate, x.Id });
+            entity.HasProjection()
+                .GroupBy(s => s.Region)
+                .Select(g => new
+                {
+                    Region = g.Key,
+                    Quantiles = ClickHouseAggregates.QuantilesIf(g, new[] { 0.5, 0.9, 0.99 }, s => s.Amount, s => s.Amount > 0)
+                })
+                .Build();
+        });
+    }
+}
+
+public class MultiIfProjectionContext : DbContext
+{
+    public MultiIfProjectionContext(DbContextOptions<MultiIfProjectionContext> options) : base(options) { }
+    public DbSet<SalesRecord> Sales => Set<SalesRecord>();
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<SalesRecord>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.ToTable("sales");
+            entity.UseMergeTree(x => new { x.SaleDate, x.Id });
+            entity.HasProjection()
+                .GroupBy(s => s.Region)
+                .Select(g => new
+                {
+                    Region = g.Key,
+                    PositiveTotal = ClickHouseAggregates.SumIf(g, s => s.Amount, s => s.Amount > 0),
+                    ZeroCount = ClickHouseAggregates.CountIf(g, s => s.Amount == 0),
+                    PositiveUniq = ClickHouseAggregates.UniqIf(g, s => s.Id, s => s.Amount > 0)
                 })
                 .Build();
         });

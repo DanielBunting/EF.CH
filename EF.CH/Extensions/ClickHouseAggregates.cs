@@ -1,8 +1,11 @@
 namespace EF.CH.Extensions;
 
 /// <summary>
-/// Provides ClickHouse-specific aggregate functions for use in projections, materialized views, and LINQ queries.
-/// These methods are translated to their corresponding ClickHouse SQL functions and should not be invoked directly.
+/// Provides ClickHouse-specific aggregate functions for use in projection definitions and materialized-view
+/// query expressions (<c>HasProjection().Select(...)</c>, <c>AsMaterializedView(...)</c>). These methods are
+/// translation stubs — they throw if invoked directly, and are converted to ClickHouse SQL by the
+/// projection-DDL translator. They are not currently recognized as aggregates by EF Core's runtime LINQ
+/// pipeline, so <c>ctx.DbSet.GroupBy(...).Select(g => g.SumIf(...))</c> will not translate.
 /// </summary>
 public static class ClickHouseAggregates
 {
@@ -663,6 +666,221 @@ public static class ClickHouseAggregates
         double level,
         Func<TSource, double> selector,
         Func<TSource, bool> predicate) => Throw<double>();
+
+    /// <summary>
+    /// Returns the arg value at the row where val is maximum, restricted to rows matching the predicate.
+    /// Translates to argMaxIf(arg, val, condition).
+    /// </summary>
+    public static TArg ArgMaxIf<TSource, TArg, TVal>(
+        this IEnumerable<TSource> source,
+        Func<TSource, TArg> argSelector,
+        Func<TSource, TVal> valSelector,
+        Func<TSource, bool> predicate) => Throw<TArg>();
+
+    /// <summary>
+    /// Returns the arg value at the row where val is minimum, restricted to rows matching the predicate.
+    /// Translates to argMinIf(arg, val, condition).
+    /// </summary>
+    public static TArg ArgMinIf<TSource, TArg, TVal>(
+        this IEnumerable<TSource> source,
+        Func<TSource, TArg> argSelector,
+        Func<TSource, TVal> valSelector,
+        Func<TSource, bool> predicate) => Throw<TArg>();
+
+    /// <summary>
+    /// Returns the top K most frequent values where predicate is true. Translates to topKIf(k)(column, condition).
+    /// </summary>
+    public static TValue[] TopKIf<TSource, TValue>(
+        this IEnumerable<TSource> source,
+        int k,
+        Func<TSource, TValue> selector,
+        Func<TSource, bool> predicate) => Throw<TValue[]>();
+
+    /// <summary>
+    /// Returns the top K most frequent values weighted by a weight column, restricted to rows matching the predicate.
+    /// Translates to topKWeightedIf(k)(column, weight, condition).
+    /// </summary>
+    public static TValue[] TopKWeightedIf<TSource, TValue, TWeight>(
+        this IEnumerable<TSource> source,
+        int k,
+        Func<TSource, TValue> selector,
+        Func<TSource, TWeight> weightSelector,
+        Func<TSource, bool> predicate) => Throw<TValue[]>();
+
+    /// <summary>
+    /// Collects values matching the predicate into an array. Translates to groupArrayIf(column, condition).
+    /// </summary>
+    public static TValue[] GroupArrayIf<TSource, TValue>(
+        this IEnumerable<TSource> source,
+        Func<TSource, TValue> selector,
+        Func<TSource, bool> predicate) => Throw<TValue[]>();
+
+    /// <summary>
+    /// Collects up to maxSize values matching the predicate into an array.
+    /// Translates to groupArrayIf(maxSize)(column, condition).
+    /// </summary>
+    public static TValue[] GroupArrayIf<TSource, TValue>(
+        this IEnumerable<TSource> source,
+        int maxSize,
+        Func<TSource, TValue> selector,
+        Func<TSource, bool> predicate) => Throw<TValue[]>();
+
+    /// <summary>
+    /// Collects unique values matching the predicate into an array. Translates to groupUniqArrayIf(column, condition).
+    /// </summary>
+    public static TValue[] GroupUniqArrayIf<TSource, TValue>(
+        this IEnumerable<TSource> source,
+        Func<TSource, TValue> selector,
+        Func<TSource, bool> predicate) => Throw<TValue[]>();
+
+    /// <summary>
+    /// Collects up to maxSize unique values matching the predicate into an array.
+    /// Translates to groupUniqArrayIf(maxSize)(column, condition).
+    /// </summary>
+    public static TValue[] GroupUniqArrayIf<TSource, TValue>(
+        this IEnumerable<TSource> source,
+        int maxSize,
+        Func<TSource, TValue> selector,
+        Func<TSource, bool> predicate) => Throw<TValue[]>();
+
+    /// <summary>
+    /// Computes the median where predicate is true. Translates to medianIf(column, condition).
+    /// </summary>
+    public static double MedianIf<TSource>(
+        this IEnumerable<TSource> source,
+        Func<TSource, double> selector,
+        Func<TSource, bool> predicate) => Throw<double>();
+
+    /// <summary>
+    /// Calculates the population standard deviation where predicate is true.
+    /// Translates to stddevPopIf(column, condition).
+    /// </summary>
+    public static double StddevPopIf<TSource>(
+        this IEnumerable<TSource> source,
+        Func<TSource, double> selector,
+        Func<TSource, bool> predicate) => Throw<double>();
+
+    /// <summary>
+    /// Calculates the sample standard deviation where predicate is true.
+    /// Translates to stddevSampIf(column, condition).
+    /// </summary>
+    public static double StddevSampIf<TSource>(
+        this IEnumerable<TSource> source,
+        Func<TSource, double> selector,
+        Func<TSource, bool> predicate) => Throw<double>();
+
+    /// <summary>
+    /// Calculates the population variance where predicate is true. Translates to varPopIf(column, condition).
+    /// </summary>
+    public static double VarPopIf<TSource>(
+        this IEnumerable<TSource> source,
+        Func<TSource, double> selector,
+        Func<TSource, bool> predicate) => Throw<double>();
+
+    /// <summary>
+    /// Calculates the sample variance where predicate is true. Translates to varSampIf(column, condition).
+    /// </summary>
+    public static double VarSampIf<TSource>(
+        this IEnumerable<TSource> source,
+        Func<TSource, double> selector,
+        Func<TSource, bool> predicate) => Throw<double>();
+
+    /// <summary>
+    /// Approximate distinct count where predicate is true using the Combined algorithm.
+    /// Translates to uniqCombinedIf(column, condition).
+    /// </summary>
+    public static ulong UniqCombinedIf<TSource, TValue>(
+        this IEnumerable<TSource> source,
+        Func<TSource, TValue> selector,
+        Func<TSource, bool> predicate) => Throw<ulong>();
+
+    /// <summary>
+    /// Approximate distinct count where predicate is true using the Combined64 algorithm.
+    /// Translates to uniqCombined64If(column, condition).
+    /// </summary>
+    public static ulong UniqCombined64If<TSource, TValue>(
+        this IEnumerable<TSource> source,
+        Func<TSource, TValue> selector,
+        Func<TSource, bool> predicate) => Throw<ulong>();
+
+    /// <summary>
+    /// Approximate distinct count where predicate is true using HyperLogLog.
+    /// Translates to uniqHLL12If(column, condition).
+    /// </summary>
+    public static ulong UniqHLL12If<TSource, TValue>(
+        this IEnumerable<TSource> source,
+        Func<TSource, TValue> selector,
+        Func<TSource, bool> predicate) => Throw<ulong>();
+
+    /// <summary>
+    /// Approximate distinct count where predicate is true using Theta Sketch.
+    /// Translates to uniqThetaIf(column, condition).
+    /// </summary>
+    public static ulong UniqThetaIf<TSource, TValue>(
+        this IEnumerable<TSource> source,
+        Func<TSource, TValue> selector,
+        Func<TSource, bool> predicate) => Throw<ulong>();
+
+    /// <summary>
+    /// Approximate quantile using the t-digest algorithm, restricted to rows matching the predicate.
+    /// Translates to quantileTDigestIf(level)(column, condition).
+    /// </summary>
+    public static double QuantileTDigestIf<TSource>(
+        this IEnumerable<TSource> source,
+        double level,
+        Func<TSource, double> selector,
+        Func<TSource, bool> predicate) => Throw<double>();
+
+    /// <summary>
+    /// Exact quantile, restricted to rows matching the predicate.
+    /// Translates to quantileExactIf(level)(column, condition).
+    /// </summary>
+    public static double QuantileExactIf<TSource>(
+        this IEnumerable<TSource> source,
+        double level,
+        Func<TSource, double> selector,
+        Func<TSource, bool> predicate) => Throw<double>();
+
+    /// <summary>
+    /// Approximate quantile optimized for timing data, restricted to rows matching the predicate.
+    /// Translates to quantileTimingIf(level)(column, condition).
+    /// </summary>
+    public static double QuantileTimingIf<TSource>(
+        this IEnumerable<TSource> source,
+        double level,
+        Func<TSource, double> selector,
+        Func<TSource, bool> predicate) => Throw<double>();
+
+    /// <summary>
+    /// Approximate quantile using the DD (DDSketch) algorithm, restricted to rows matching the predicate.
+    /// Translates to quantileDDIf(relative_accuracy, level)(column, condition).
+    /// </summary>
+    public static double QuantileDDIf<TSource>(
+        this IEnumerable<TSource> source,
+        double relativeAccuracy,
+        double level,
+        Func<TSource, double> selector,
+        Func<TSource, bool> predicate) => Throw<double>();
+
+    /// <summary>
+    /// Computes multiple approximate quantiles in a single pass, restricted to rows matching the predicate.
+    /// Translates to quantilesIf(level1, level2, ...)(column, condition).
+    /// </summary>
+    public static double[] QuantilesIf<TSource>(
+        this IEnumerable<TSource> source,
+        double[] levels,
+        Func<TSource, double> selector,
+        Func<TSource, bool> predicate) => Throw<double[]>();
+
+    /// <summary>
+    /// Computes multiple approximate quantiles using t-digest in a single pass, restricted to rows matching the predicate.
+    /// Translates to quantilesTDigestIf(level1, level2, ...)(column, condition).
+    /// </summary>
+    public static double[] QuantilesTDigestIf<TSource>(
+        this IEnumerable<TSource> source,
+        double[] levels,
+        Func<TSource, double> selector,
+        Func<TSource, bool> predicate) => Throw<double[]>();
 
     #endregion
 
