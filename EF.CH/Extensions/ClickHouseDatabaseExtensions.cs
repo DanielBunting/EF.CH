@@ -1,6 +1,8 @@
 using EF.CH.Infrastructure;
+using EF.CH.Metadata;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Storage;
 
 namespace EF.CH.Extensions;
@@ -247,6 +249,181 @@ public static class ClickHouseDatabaseExtensions
         return entityType.GetTableName()
             ?? throw new InvalidOperationException(
                 $"Entity type '{typeof(TEntity).Name}' does not have a table name.");
+    }
+
+    #endregion
+
+    #region TRUNCATE
+
+    /// <summary>
+    /// Issues <c>TRUNCATE TABLE "..."</c> for the entity's mapped table.
+    /// Unlike <c>ExecuteDelete</c> this is a synchronous, atomic drop of all
+    /// parts and doesn't increment the mutation counter.
+    /// </summary>
+    public static Task<int> TruncateTableAsync<TEntity>(
+        this DatabaseFacade database,
+        string? onCluster = null,
+        CancellationToken cancellationToken = default) where TEntity : class
+        => TruncateTableAsync(database, GetTableName<TEntity>(database), onCluster, cancellationToken);
+
+    /// <summary>
+    /// Issues <c>TRUNCATE TABLE "..."</c> for an explicit table name.
+    /// </summary>
+    public static Task<int> TruncateTableAsync(
+        this DatabaseFacade database,
+        string tableName,
+        string? onCluster = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
+        var sqlHelper = database.GetService<ISqlGenerationHelper>();
+        var cluster = onCluster is null
+            ? string.Empty
+            : ClickHouseClusterMacros.ContainsMacro(onCluster)
+                ? $" ON CLUSTER '{onCluster.Replace("'", "''")}'"
+                : $" ON CLUSTER {sqlHelper.DelimitIdentifier(onCluster)}";
+        return database.ExecuteSqlRawAsync(
+            $"TRUNCATE TABLE {sqlHelper.DelimitIdentifier(tableName)}{cluster}",
+            cancellationToken);
+    }
+
+    #endregion
+
+    #region SYSTEM admin commands
+
+    public static Task<int> ReloadDictionaryAsync(this DatabaseFacade database, string name, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        var helper = database.GetService<ISqlGenerationHelper>();
+        return database.ExecuteSqlRawAsync($"SYSTEM RELOAD DICTIONARY {helper.DelimitIdentifier(name)}", ct);
+    }
+
+    public static Task<int> FlushLogsAsync(this DatabaseFacade database, CancellationToken ct = default)
+        => database.ExecuteSqlRawAsync("SYSTEM FLUSH LOGS", ct);
+
+    public static Task<int> SyncReplicaAsync(this DatabaseFacade database, string tableName, bool strict = false, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
+        var helper = database.GetService<ISqlGenerationHelper>();
+        var sql = $"SYSTEM SYNC REPLICA {helper.DelimitIdentifier(tableName)}" + (strict ? " STRICT" : string.Empty);
+        return database.ExecuteSqlRawAsync(sql, ct);
+    }
+
+    public static Task<int> DropMarkCacheAsync(this DatabaseFacade database, CancellationToken ct = default)
+        => database.ExecuteSqlRawAsync("SYSTEM DROP MARK CACHE", ct);
+
+    public static Task<int> RestartReplicasAsync(this DatabaseFacade database, CancellationToken ct = default)
+        => database.ExecuteSqlRawAsync("SYSTEM RESTART REPLICAS", ct);
+
+    #endregion
+
+    #region Deferred materialised views
+
+    /// <summary>
+    /// Creates a materialised view that was declared with
+    /// <see cref="ClickHouseEntityTypeBuilderExtensions.AsMaterializedViewDeferred{TEntity}"/>.
+    /// The view's target table must already exist
+    /// (normally created via <c>EnsureCreatedAsync</c>). Use <paramref name="populate"/>
+    /// to backfill from the source table at attach time.
+    /// </summary>
+    public static Task<int> CreateMaterializedViewAsync<TEntity>(
+        this DatabaseFacade database,
+        bool populate = false,
+        CancellationToken cancellationToken = default) where TEntity : class
+    {
+        var context = database.GetService<ICurrentDbContext>().Context;
+        var entityType = context.Model.FindEntityType(typeof(TEntity))
+            ?? throw new InvalidOperationException($"Entity type '{typeof(TEntity).Name}' is not in the model.");
+
+        var viewName = entityType.GetTableName()
+            ?? throw new InvalidOperationException($"Entity '{typeof(TEntity).Name}' has no table name.");
+        var selectSql = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewQuery)?.Value as string
+            ?? throw new InvalidOperationException(
+                $"Entity '{typeof(TEntity).Name}' is not configured as a materialised view. " +
+                "Call AsMaterializedView(…) or AsMaterializedViewRaw(…) first.");
+
+        var helper = database.GetService<ISqlGenerationHelper>();
+        var engineSql = BuildEngineClauseForEntity(entityType);
+        var sql = new System.Text.StringBuilder()
+            .Append("CREATE MATERIALIZED VIEW IF NOT EXISTS ").Append(helper.DelimitIdentifier(viewName)).Append(' ')
+            .Append(engineSql)
+            .Append(populate ? " POPULATE AS " : " AS ")
+            .Append(selectSql)
+            .ToString();
+
+        return database.ExecuteSqlRawAsync(sql, cancellationToken);
+    }
+
+    private static string BuildEngineClauseForEntity(IEntityType entityType)
+    {
+        var engine = entityType.FindAnnotation(ClickHouseAnnotationNames.Engine)?.Value as string ?? "MergeTree";
+        var orderBy = entityType.FindAnnotation(ClickHouseAnnotationNames.OrderBy)?.Value as string[];
+        var sb = new System.Text.StringBuilder("ENGINE = ").Append(engine);
+        if (string.Equals(engine, "MergeTree", StringComparison.OrdinalIgnoreCase)
+         || engine.EndsWith("MergeTree", StringComparison.OrdinalIgnoreCase))
+            sb.Append("()");
+        if (orderBy is { Length: > 0 })
+            sb.Append(" ORDER BY (").Append(string.Join(", ", orderBy.Select(c => "\"" + c + "\""))).Append(')');
+        return sb.ToString();
+    }
+
+    #endregion
+
+    #region Projections
+
+    /// <summary>
+    /// <c>ALTER TABLE … ADD PROJECTION … (SELECT …)</c>. Call
+    /// <see cref="MaterializeProjectionAsync"/> afterwards to backfill existing data.
+    /// </summary>
+    public static Task<int> AddProjectionAsync(
+        this DatabaseFacade database,
+        string tableName,
+        string projectionName,
+        string selectSql,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(projectionName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(selectSql);
+        var helper = database.GetService<ISqlGenerationHelper>();
+        var sql =
+            $"ALTER TABLE {helper.DelimitIdentifier(tableName)} " +
+            $"ADD PROJECTION IF NOT EXISTS {helper.DelimitIdentifier(projectionName)} ({selectSql})";
+        return database.ExecuteSqlRawAsync(sql, cancellationToken);
+    }
+
+    /// <summary>
+    /// <c>ALTER TABLE … MATERIALIZE PROJECTION …</c> — backfills the named projection.
+    /// </summary>
+    public static Task<int> MaterializeProjectionAsync(
+        this DatabaseFacade database,
+        string tableName,
+        string projectionName,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(projectionName);
+        var helper = database.GetService<ISqlGenerationHelper>();
+        var sql = $"ALTER TABLE {helper.DelimitIdentifier(tableName)} " +
+                  $"MATERIALIZE PROJECTION {helper.DelimitIdentifier(projectionName)}";
+        return database.ExecuteSqlRawAsync(sql, cancellationToken);
+    }
+
+    /// <summary>
+    /// <c>ALTER TABLE … DROP PROJECTION …</c>.
+    /// </summary>
+    public static Task<int> DropProjectionAsync(
+        this DatabaseFacade database,
+        string tableName,
+        string projectionName,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(projectionName);
+        var helper = database.GetService<ISqlGenerationHelper>();
+        var sql = $"ALTER TABLE {helper.DelimitIdentifier(tableName)} " +
+                  $"DROP PROJECTION IF EXISTS {helper.DelimitIdentifier(projectionName)}";
+        return database.ExecuteSqlRawAsync(sql, cancellationToken);
     }
 
     #endregion

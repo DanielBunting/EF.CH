@@ -29,16 +29,7 @@ public class UpdateTests : IAsyncLifetime
     {
         await using var context = CreateContext();
 
-        await context.Database.ExecuteSqlRawAsync(@"
-            CREATE TABLE IF NOT EXISTS ""UpdateProducts"" (
-                ""Id"" UUID,
-                ""Name"" String,
-                ""Price"" Decimal64(2),
-                ""Category"" String,
-                ""UpdatedAt"" DateTime64(3)
-            ) ENGINE = MergeTree()
-            ORDER BY ""Id""
-        ");
+        await context.Database.EnsureCreatedAsync();
 
         var id = Guid.NewGuid();
         context.Products.Add(new UpdateProduct
@@ -70,16 +61,7 @@ public class UpdateTests : IAsyncLifetime
     {
         await using var context = CreateContext();
 
-        await context.Database.ExecuteSqlRawAsync(@"
-            CREATE TABLE IF NOT EXISTS ""UpdateProducts"" (
-                ""Id"" UUID,
-                ""Name"" String,
-                ""Price"" Decimal64(2),
-                ""Category"" String,
-                ""UpdatedAt"" DateTime64(3)
-            ) ENGINE = MergeTree()
-            ORDER BY ""Id""
-        ");
+        await context.Database.EnsureCreatedAsync();
 
         var id = Guid.NewGuid();
         context.Products.Add(new UpdateProduct
@@ -113,16 +95,7 @@ public class UpdateTests : IAsyncLifetime
     {
         await using var context = CreateContext();
 
-        await context.Database.ExecuteSqlRawAsync(@"
-            CREATE TABLE IF NOT EXISTS ""UpdateProducts"" (
-                ""Id"" UUID,
-                ""Name"" String,
-                ""Price"" Decimal64(2),
-                ""Category"" String,
-                ""UpdatedAt"" DateTime64(3)
-            ) ENGINE = MergeTree()
-            ORDER BY ""Id""
-        ");
+        await context.Database.EnsureCreatedAsync();
 
         var id1 = Guid.NewGuid();
         var id2 = Guid.NewGuid();
@@ -151,16 +124,7 @@ public class UpdateTests : IAsyncLifetime
     {
         await using var context = CreateContext();
 
-        await context.Database.ExecuteSqlRawAsync(@"
-            CREATE TABLE IF NOT EXISTS ""UpdateProducts"" (
-                ""Id"" UUID,
-                ""Name"" String,
-                ""Price"" Decimal64(2),
-                ""Category"" String,
-                ""UpdatedAt"" DateTime64(3)
-            ) ENGINE = MergeTree()
-            ORDER BY ""Id""
-        ");
+        await context.Database.EnsureCreatedAsync();
 
         // Should not throw even with no matching rows
         await context.Products
@@ -173,16 +137,7 @@ public class UpdateTests : IAsyncLifetime
     {
         await using var context = CreateContext();
 
-        await context.Database.ExecuteSqlRawAsync(@"
-            CREATE TABLE IF NOT EXISTS ""UpdateProducts"" (
-                ""Id"" UUID,
-                ""Name"" String,
-                ""Price"" Decimal64(2),
-                ""Category"" String,
-                ""UpdatedAt"" DateTime64(3)
-            ) ENGINE = MergeTree()
-            ORDER BY ""Id""
-        ");
+        await context.Database.EnsureCreatedAsync();
 
         var entity = new UpdateProduct
         {

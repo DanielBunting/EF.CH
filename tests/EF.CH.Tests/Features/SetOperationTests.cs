@@ -171,15 +171,7 @@ public class SetOperationTests : IAsyncLifetime
 
     private async Task SetupTable(SetOperationTestContext context)
     {
-        await context.Database.ExecuteSqlRawAsync(@"
-            CREATE TABLE IF NOT EXISTS ""SetItems"" (
-                ""Id"" UUID,
-                ""Name"" String,
-                ""Category"" String,
-                ""Price"" Decimal64(2)
-            ) ENGINE = MergeTree()
-            ORDER BY ""Id""
-        ");
+        await context.Database.EnsureCreatedAsync();
     }
 
     private async Task SeedData(SetOperationTestContext context)

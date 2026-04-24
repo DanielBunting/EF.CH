@@ -335,11 +335,22 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
             return;
         }
 
-        var isMaterializedView = GetAnnotation<bool?>(operation, ClickHouseAnnotationNames.MaterializedView)
-                              ?? GetEntityAnnotation<bool?>(entityType, ClickHouseAnnotationNames.MaterializedView)
-                              ?? false;
+        var deferredMv = GetAnnotation<bool?>(operation, ClickHouseAnnotationNames.MaterializedViewDeferred)
+                      ?? GetEntityAnnotation<bool?>(entityType, ClickHouseAnnotationNames.MaterializedViewDeferred)
+                      ?? false;
+        var markedAsMaterializedView = GetAnnotation<bool?>(operation, ClickHouseAnnotationNames.MaterializedView)
+                                    ?? GetEntityAnnotation<bool?>(entityType, ClickHouseAnnotationNames.MaterializedView)
+                                    ?? false;
 
-        if (isMaterializedView)
+        // Deferred MV: skip both the MV creation AND the base-table creation. The caller
+        // is responsible for issuing CREATE MATERIALIZED VIEW … POPULATE via
+        // DatabaseFacade.CreateMaterializedViewAsync<T>().
+        if (deferredMv && markedAsMaterializedView)
+        {
+            return;
+        }
+
+        if (!deferredMv && markedAsMaterializedView)
         {
             GenerateMaterializedView(operation, entityType, model, builder, terminate);
             return;
@@ -910,11 +921,21 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         var distributedPolicy = GetAnnotation<string>(operation, ClickHouseAnnotationNames.DistributedPolicyName)
                              ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.DistributedPolicyName);
 
+        var externalEngineArgs = GetAnnotation<string>(operation, ClickHouseAnnotationNames.ExternalEngineArguments)
+                              ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.ExternalEngineArguments);
+
         builder.Append("ENGINE = ");
 
         // Generate engine with parameters
         switch (engine)
         {
+            case ClickHouseEngineNames.PostgreSQL
+              or ClickHouseEngineNames.MySQL
+              or ClickHouseEngineNames.Redis
+              or ClickHouseEngineNames.ODBC when !string.IsNullOrEmpty(externalEngineArgs):
+                builder.Append($"{engine}({externalEngineArgs})");
+                break;
+
             case ClickHouseEngineNames.ReplacingMergeTree when !string.IsNullOrEmpty(versionColumn) && !string.IsNullOrEmpty(isDeletedColumn):
                 // ReplacingMergeTree(version, is_deleted) - ClickHouse 23.2+
                 builder.Append($"{ClickHouseEngineNames.ReplacingMergeTree}({Dependencies.SqlGenerationHelper.DelimitIdentifier(versionColumn)}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(isDeletedColumn)})");
@@ -1064,6 +1085,10 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
                               ?? GetEntityAnnotation<ulong?>(entityType, ClickHouseAnnotationNames.KeeperMapKeysLimit);
         var isKeeperMap = string.Equals(engine, ClickHouseEngineNames.KeeperMap, StringComparison.OrdinalIgnoreCase);
 
+        // External integration engine arguments (PostgreSQL/MySQL/Redis/ODBC).
+        var externalEngineArgs = GetAnnotation<string>(operation, ClickHouseAnnotationNames.ExternalEngineArguments)
+                              ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.ExternalEngineArguments);
+
         builder.AppendLine();
         builder.Append("ENGINE = ");
 
@@ -1083,6 +1108,14 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         // Generate engine with parameters
         switch (engine)
         {
+            // External integration engines — emit the already-quoted arg list verbatim.
+            case ClickHouseEngineNames.PostgreSQL
+              or ClickHouseEngineNames.MySQL
+              or ClickHouseEngineNames.Redis
+              or ClickHouseEngineNames.ODBC when !string.IsNullOrEmpty(externalEngineArgs):
+                builder.Append($"{engine}({externalEngineArgs})");
+                break;
+
             // Replicated engines
             case ClickHouseEngineNames.ReplicatedReplacingMergeTree when !string.IsNullOrEmpty(versionColumn) && !string.IsNullOrEmpty(isDeletedColumn):
                 builder.Append($"{ClickHouseEngineNames.ReplicatedReplacingMergeTree}({replicationPath}, {replicaName}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(versionColumn)}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(isDeletedColumn)})");
@@ -2224,8 +2257,19 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
             return string.Empty;
         }
 
-        return $" ON CLUSTER {Dependencies.SqlGenerationHelper.DelimitIdentifier(clusterName)}";
+        return $" ON CLUSTER {FormatClusterName(clusterName)}";
     }
+
+    /// <summary>
+    /// Formats a cluster name for <c>ON CLUSTER</c>. Macro references such as
+    /// <c>{cluster}</c> are emitted as single-quoted string literals so that
+    /// ClickHouse expands them from the server's <c>&lt;macros&gt;</c> config.
+    /// Literal cluster names are emitted as delimited identifiers.
+    /// </summary>
+    private string FormatClusterName(string clusterName)
+        => ClickHouseClusterMacros.ContainsMacro(clusterName)
+            ? $"'{clusterName.Replace("'", "''")}'"
+            : Dependencies.SqlGenerationHelper.DelimitIdentifier(clusterName);
 
     /// <summary>
     /// Gets the cluster name for an entity type.

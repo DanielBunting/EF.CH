@@ -402,6 +402,65 @@ public static class ClickHouseAggregates
 
     #endregion
 
+    #region MergeState Combinators
+
+    // `-MergeState` combines `-Merge` and `-State`: reads an AMT state column,
+    // merges it, and re-emits the result as a state blob for downstream
+    // AggregatingMergeTrees. Used to chain source AMT → rollup AMT (e.g. hourly → daily).
+
+    /// <summary>countMergeState(stateCol) — re-state of a merged count.</summary>
+    public static byte[] CountMergeState<TSource>(
+        this IEnumerable<TSource> source,
+        Func<TSource, byte[]> stateSelector) => Throw<byte[]>();
+
+    /// <summary>sumMergeState(stateCol).</summary>
+    public static byte[] SumMergeState<TSource>(
+        this IEnumerable<TSource> source,
+        Func<TSource, byte[]> stateSelector) => Throw<byte[]>();
+
+    /// <summary>avgMergeState(stateCol).</summary>
+    public static byte[] AvgMergeState<TSource>(
+        this IEnumerable<TSource> source,
+        Func<TSource, byte[]> stateSelector) => Throw<byte[]>();
+
+    /// <summary>minMergeState(stateCol).</summary>
+    public static byte[] MinMergeState<TSource>(
+        this IEnumerable<TSource> source,
+        Func<TSource, byte[]> stateSelector) => Throw<byte[]>();
+
+    /// <summary>maxMergeState(stateCol).</summary>
+    public static byte[] MaxMergeState<TSource>(
+        this IEnumerable<TSource> source,
+        Func<TSource, byte[]> stateSelector) => Throw<byte[]>();
+
+    /// <summary>uniqMergeState(stateCol).</summary>
+    public static byte[] UniqMergeState<TSource>(
+        this IEnumerable<TSource> source,
+        Func<TSource, byte[]> stateSelector) => Throw<byte[]>();
+
+    /// <summary>uniqExactMergeState(stateCol).</summary>
+    public static byte[] UniqExactMergeState<TSource>(
+        this IEnumerable<TSource> source,
+        Func<TSource, byte[]> stateSelector) => Throw<byte[]>();
+
+    /// <summary>anyMergeState(stateCol).</summary>
+    public static byte[] AnyMergeState<TSource>(
+        this IEnumerable<TSource> source,
+        Func<TSource, byte[]> stateSelector) => Throw<byte[]>();
+
+    /// <summary>anyLastMergeState(stateCol).</summary>
+    public static byte[] AnyLastMergeState<TSource>(
+        this IEnumerable<TSource> source,
+        Func<TSource, byte[]> stateSelector) => Throw<byte[]>();
+
+    /// <summary>quantileMergeState(level)(stateCol).</summary>
+    public static byte[] QuantileMergeState<TSource>(
+        this IEnumerable<TSource> source,
+        double level,
+        Func<TSource, byte[]> stateSelector) => Throw<byte[]>();
+
+    #endregion
+
     #region Merge Combinators
 
     /// <summary>
@@ -881,6 +940,364 @@ public static class ClickHouseAggregates
         double[] levels,
         Func<TSource, double> selector,
         Func<TSource, bool> predicate) => Throw<double[]>();
+
+    #endregion
+
+    #region State Combinators - broader family
+
+    // These complete the -State surface so every aggregate recognised by
+    // MaterializedViewSqlTranslator has a matching -State variant. They all
+    // translate to their ClickHouse equivalents inside AsMaterializedView(...)
+    // LINQ expressions; direct invocation throws.
+
+    /// <summary>Intermediate state of median(). Translates to medianState(column).</summary>
+    public static byte[] MedianState<TSource>(
+        this IEnumerable<TSource> source,
+        Func<TSource, double> selector) => Throw<byte[]>();
+
+    /// <summary>Intermediate state of stddevPop(). Translates to stddevPopState(column).</summary>
+    public static byte[] StddevPopState<TSource>(
+        this IEnumerable<TSource> source,
+        Func<TSource, double> selector) => Throw<byte[]>();
+
+    /// <summary>Intermediate state of stddevSamp(). Translates to stddevSampState(column).</summary>
+    public static byte[] StddevSampState<TSource>(
+        this IEnumerable<TSource> source,
+        Func<TSource, double> selector) => Throw<byte[]>();
+
+    /// <summary>Intermediate state of varPop(). Translates to varPopState(column).</summary>
+    public static byte[] VarPopState<TSource>(
+        this IEnumerable<TSource> source,
+        Func<TSource, double> selector) => Throw<byte[]>();
+
+    /// <summary>Intermediate state of varSamp(). Translates to varSampState(column).</summary>
+    public static byte[] VarSampState<TSource>(
+        this IEnumerable<TSource> source,
+        Func<TSource, double> selector) => Throw<byte[]>();
+
+    /// <summary>Intermediate state of uniqCombined(). Translates to uniqCombinedState(column).</summary>
+    public static byte[] UniqCombinedState<TSource, TValue>(
+        this IEnumerable<TSource> source,
+        Func<TSource, TValue> selector) => Throw<byte[]>();
+
+    /// <summary>Intermediate state of uniqCombined64(). Translates to uniqCombined64State(column).</summary>
+    public static byte[] UniqCombined64State<TSource, TValue>(
+        this IEnumerable<TSource> source,
+        Func<TSource, TValue> selector) => Throw<byte[]>();
+
+    /// <summary>Intermediate state of uniqHLL12(). Translates to uniqHLL12State(column).</summary>
+    public static byte[] UniqHLL12State<TSource, TValue>(
+        this IEnumerable<TSource> source,
+        Func<TSource, TValue> selector) => Throw<byte[]>();
+
+    /// <summary>Intermediate state of uniqTheta(). Translates to uniqThetaState(column).</summary>
+    public static byte[] UniqThetaState<TSource, TValue>(
+        this IEnumerable<TSource> source,
+        Func<TSource, TValue> selector) => Throw<byte[]>();
+
+    /// <summary>Intermediate state of argMax(). Translates to argMaxState(arg, val).</summary>
+    public static byte[] ArgMaxState<TSource, TArg, TVal>(
+        this IEnumerable<TSource> source,
+        Func<TSource, TArg> argSelector,
+        Func<TSource, TVal> valSelector) => Throw<byte[]>();
+
+    /// <summary>Intermediate state of argMin(). Translates to argMinState(arg, val).</summary>
+    public static byte[] ArgMinState<TSource, TArg, TVal>(
+        this IEnumerable<TSource> source,
+        Func<TSource, TArg> argSelector,
+        Func<TSource, TVal> valSelector) => Throw<byte[]>();
+
+    /// <summary>Intermediate state of quantileTDigest(). Translates to quantileTDigestState(level)(column).</summary>
+    public static byte[] QuantileTDigestState<TSource>(
+        this IEnumerable<TSource> source,
+        double level,
+        Func<TSource, double> selector) => Throw<byte[]>();
+
+    /// <summary>Intermediate state of quantileExact(). Translates to quantileExactState(level)(column).</summary>
+    public static byte[] QuantileExactState<TSource>(
+        this IEnumerable<TSource> source,
+        double level,
+        Func<TSource, double> selector) => Throw<byte[]>();
+
+    /// <summary>Intermediate state of quantileTiming(). Translates to quantileTimingState(level)(column).</summary>
+    public static byte[] QuantileTimingState<TSource>(
+        this IEnumerable<TSource> source,
+        double level,
+        Func<TSource, double> selector) => Throw<byte[]>();
+
+    /// <summary>Intermediate state of quantileDD(). Translates to quantileDDState(acc, level)(column).</summary>
+    public static byte[] QuantileDDState<TSource>(
+        this IEnumerable<TSource> source,
+        double relativeAccuracy,
+        double level,
+        Func<TSource, double> selector) => Throw<byte[]>();
+
+    /// <summary>Intermediate state of quantiles(). Translates to quantilesState(level1, level2, ...)(column).</summary>
+    public static byte[] QuantilesState<TSource>(
+        this IEnumerable<TSource> source,
+        double[] levels,
+        Func<TSource, double> selector) => Throw<byte[]>();
+
+    /// <summary>Intermediate state of quantilesTDigest(). Translates to quantilesTDigestState(level1, ...)(column).</summary>
+    public static byte[] QuantilesTDigestState<TSource>(
+        this IEnumerable<TSource> source,
+        double[] levels,
+        Func<TSource, double> selector) => Throw<byte[]>();
+
+    /// <summary>Intermediate state of groupArray(). Translates to groupArrayState(column).</summary>
+    public static byte[] GroupArrayState<TSource, TValue>(
+        this IEnumerable<TSource> source,
+        Func<TSource, TValue> selector) => Throw<byte[]>();
+
+    /// <summary>Intermediate state of groupArray(max). Translates to groupArrayState(max)(column).</summary>
+    public static byte[] GroupArrayState<TSource, TValue>(
+        this IEnumerable<TSource> source,
+        int maxSize,
+        Func<TSource, TValue> selector) => Throw<byte[]>();
+
+    /// <summary>Intermediate state of groupUniqArray(). Translates to groupUniqArrayState(column).</summary>
+    public static byte[] GroupUniqArrayState<TSource, TValue>(
+        this IEnumerable<TSource> source,
+        Func<TSource, TValue> selector) => Throw<byte[]>();
+
+    /// <summary>Intermediate state of groupUniqArray(max). Translates to groupUniqArrayState(max)(column).</summary>
+    public static byte[] GroupUniqArrayState<TSource, TValue>(
+        this IEnumerable<TSource> source,
+        int maxSize,
+        Func<TSource, TValue> selector) => Throw<byte[]>();
+
+    /// <summary>Intermediate state of topK(k). Translates to topKState(k)(column).</summary>
+    public static byte[] TopKState<TSource, TValue>(
+        this IEnumerable<TSource> source,
+        int k,
+        Func<TSource, TValue> selector) => Throw<byte[]>();
+
+    /// <summary>Intermediate state of topKWeighted(k). Translates to topKWeightedState(k)(column, weight).</summary>
+    public static byte[] TopKWeightedState<TSource, TValue, TWeight>(
+        this IEnumerable<TSource> source,
+        int k,
+        Func<TSource, TValue> selector,
+        Func<TSource, TWeight> weightSelector) => Throw<byte[]>();
+
+    #endregion
+
+    #region StateIf Combinators
+
+    // -StateIf = -State + -If. Store a partial aggregate restricted to rows
+    // matching a predicate — used inside AsMaterializedView to land conditional
+    // rollups into AggregatingMergeTree targets.
+
+    /// <summary>countStateIf(condition).</summary>
+    public static byte[] CountStateIf<TSource>(
+        this IEnumerable<TSource> source,
+        Func<TSource, bool> predicate) => Throw<byte[]>();
+
+    /// <summary>sumStateIf(column, condition).</summary>
+    public static byte[] SumStateIf<TSource, TValue>(
+        this IEnumerable<TSource> source,
+        Func<TSource, TValue> selector,
+        Func<TSource, bool> predicate) => Throw<byte[]>();
+
+    /// <summary>avgStateIf(column, condition).</summary>
+    public static byte[] AvgStateIf<TSource>(
+        this IEnumerable<TSource> source,
+        Func<TSource, double> selector,
+        Func<TSource, bool> predicate) => Throw<byte[]>();
+
+    /// <summary>minStateIf(column, condition).</summary>
+    public static byte[] MinStateIf<TSource, TValue>(
+        this IEnumerable<TSource> source,
+        Func<TSource, TValue> selector,
+        Func<TSource, bool> predicate) => Throw<byte[]>();
+
+    /// <summary>maxStateIf(column, condition).</summary>
+    public static byte[] MaxStateIf<TSource, TValue>(
+        this IEnumerable<TSource> source,
+        Func<TSource, TValue> selector,
+        Func<TSource, bool> predicate) => Throw<byte[]>();
+
+    /// <summary>uniqStateIf(column, condition).</summary>
+    public static byte[] UniqStateIf<TSource, TValue>(
+        this IEnumerable<TSource> source,
+        Func<TSource, TValue> selector,
+        Func<TSource, bool> predicate) => Throw<byte[]>();
+
+    /// <summary>uniqExactStateIf(column, condition).</summary>
+    public static byte[] UniqExactStateIf<TSource, TValue>(
+        this IEnumerable<TSource> source,
+        Func<TSource, TValue> selector,
+        Func<TSource, bool> predicate) => Throw<byte[]>();
+
+    /// <summary>anyStateIf(column, condition).</summary>
+    public static byte[] AnyStateIf<TSource, TValue>(
+        this IEnumerable<TSource> source,
+        Func<TSource, TValue> selector,
+        Func<TSource, bool> predicate) => Throw<byte[]>();
+
+    /// <summary>anyLastStateIf(column, condition).</summary>
+    public static byte[] AnyLastStateIf<TSource, TValue>(
+        this IEnumerable<TSource> source,
+        Func<TSource, TValue> selector,
+        Func<TSource, bool> predicate) => Throw<byte[]>();
+
+    /// <summary>quantileStateIf(level)(column, condition).</summary>
+    public static byte[] QuantileStateIf<TSource>(
+        this IEnumerable<TSource> source,
+        double level,
+        Func<TSource, double> selector,
+        Func<TSource, bool> predicate) => Throw<byte[]>();
+
+    /// <summary>medianStateIf(column, condition).</summary>
+    public static byte[] MedianStateIf<TSource>(
+        this IEnumerable<TSource> source,
+        Func<TSource, double> selector,
+        Func<TSource, bool> predicate) => Throw<byte[]>();
+
+    /// <summary>stddevPopStateIf(column, condition).</summary>
+    public static byte[] StddevPopStateIf<TSource>(
+        this IEnumerable<TSource> source,
+        Func<TSource, double> selector,
+        Func<TSource, bool> predicate) => Throw<byte[]>();
+
+    /// <summary>stddevSampStateIf(column, condition).</summary>
+    public static byte[] StddevSampStateIf<TSource>(
+        this IEnumerable<TSource> source,
+        Func<TSource, double> selector,
+        Func<TSource, bool> predicate) => Throw<byte[]>();
+
+    /// <summary>varPopStateIf(column, condition).</summary>
+    public static byte[] VarPopStateIf<TSource>(
+        this IEnumerable<TSource> source,
+        Func<TSource, double> selector,
+        Func<TSource, bool> predicate) => Throw<byte[]>();
+
+    /// <summary>varSampStateIf(column, condition).</summary>
+    public static byte[] VarSampStateIf<TSource>(
+        this IEnumerable<TSource> source,
+        Func<TSource, double> selector,
+        Func<TSource, bool> predicate) => Throw<byte[]>();
+
+    /// <summary>uniqCombinedStateIf(column, condition).</summary>
+    public static byte[] UniqCombinedStateIf<TSource, TValue>(
+        this IEnumerable<TSource> source,
+        Func<TSource, TValue> selector,
+        Func<TSource, bool> predicate) => Throw<byte[]>();
+
+    /// <summary>uniqCombined64StateIf(column, condition).</summary>
+    public static byte[] UniqCombined64StateIf<TSource, TValue>(
+        this IEnumerable<TSource> source,
+        Func<TSource, TValue> selector,
+        Func<TSource, bool> predicate) => Throw<byte[]>();
+
+    /// <summary>uniqHLL12StateIf(column, condition).</summary>
+    public static byte[] UniqHLL12StateIf<TSource, TValue>(
+        this IEnumerable<TSource> source,
+        Func<TSource, TValue> selector,
+        Func<TSource, bool> predicate) => Throw<byte[]>();
+
+    /// <summary>uniqThetaStateIf(column, condition).</summary>
+    public static byte[] UniqThetaStateIf<TSource, TValue>(
+        this IEnumerable<TSource> source,
+        Func<TSource, TValue> selector,
+        Func<TSource, bool> predicate) => Throw<byte[]>();
+
+    /// <summary>argMaxStateIf(arg, val, condition).</summary>
+    public static byte[] ArgMaxStateIf<TSource, TArg, TVal>(
+        this IEnumerable<TSource> source,
+        Func<TSource, TArg> argSelector,
+        Func<TSource, TVal> valSelector,
+        Func<TSource, bool> predicate) => Throw<byte[]>();
+
+    /// <summary>argMinStateIf(arg, val, condition).</summary>
+    public static byte[] ArgMinStateIf<TSource, TArg, TVal>(
+        this IEnumerable<TSource> source,
+        Func<TSource, TArg> argSelector,
+        Func<TSource, TVal> valSelector,
+        Func<TSource, bool> predicate) => Throw<byte[]>();
+
+    /// <summary>quantileTDigestStateIf(level)(column, condition).</summary>
+    public static byte[] QuantileTDigestStateIf<TSource>(
+        this IEnumerable<TSource> source,
+        double level,
+        Func<TSource, double> selector,
+        Func<TSource, bool> predicate) => Throw<byte[]>();
+
+    /// <summary>quantileExactStateIf(level)(column, condition).</summary>
+    public static byte[] QuantileExactStateIf<TSource>(
+        this IEnumerable<TSource> source,
+        double level,
+        Func<TSource, double> selector,
+        Func<TSource, bool> predicate) => Throw<byte[]>();
+
+    /// <summary>quantileTimingStateIf(level)(column, condition).</summary>
+    public static byte[] QuantileTimingStateIf<TSource>(
+        this IEnumerable<TSource> source,
+        double level,
+        Func<TSource, double> selector,
+        Func<TSource, bool> predicate) => Throw<byte[]>();
+
+    /// <summary>quantileDDStateIf(acc, level)(column, condition).</summary>
+    public static byte[] QuantileDDStateIf<TSource>(
+        this IEnumerable<TSource> source,
+        double relativeAccuracy,
+        double level,
+        Func<TSource, double> selector,
+        Func<TSource, bool> predicate) => Throw<byte[]>();
+
+    /// <summary>quantilesStateIf(levels)(column, condition).</summary>
+    public static byte[] QuantilesStateIf<TSource>(
+        this IEnumerable<TSource> source,
+        double[] levels,
+        Func<TSource, double> selector,
+        Func<TSource, bool> predicate) => Throw<byte[]>();
+
+    /// <summary>quantilesTDigestStateIf(levels)(column, condition).</summary>
+    public static byte[] QuantilesTDigestStateIf<TSource>(
+        this IEnumerable<TSource> source,
+        double[] levels,
+        Func<TSource, double> selector,
+        Func<TSource, bool> predicate) => Throw<byte[]>();
+
+    /// <summary>groupArrayStateIf(column, condition).</summary>
+    public static byte[] GroupArrayStateIf<TSource, TValue>(
+        this IEnumerable<TSource> source,
+        Func<TSource, TValue> selector,
+        Func<TSource, bool> predicate) => Throw<byte[]>();
+
+    /// <summary>groupArrayStateIf(max)(column, condition).</summary>
+    public static byte[] GroupArrayStateIf<TSource, TValue>(
+        this IEnumerable<TSource> source,
+        int maxSize,
+        Func<TSource, TValue> selector,
+        Func<TSource, bool> predicate) => Throw<byte[]>();
+
+    /// <summary>groupUniqArrayStateIf(column, condition).</summary>
+    public static byte[] GroupUniqArrayStateIf<TSource, TValue>(
+        this IEnumerable<TSource> source,
+        Func<TSource, TValue> selector,
+        Func<TSource, bool> predicate) => Throw<byte[]>();
+
+    /// <summary>groupUniqArrayStateIf(max)(column, condition).</summary>
+    public static byte[] GroupUniqArrayStateIf<TSource, TValue>(
+        this IEnumerable<TSource> source,
+        int maxSize,
+        Func<TSource, TValue> selector,
+        Func<TSource, bool> predicate) => Throw<byte[]>();
+
+    /// <summary>topKStateIf(k)(column, condition).</summary>
+    public static byte[] TopKStateIf<TSource, TValue>(
+        this IEnumerable<TSource> source,
+        int k,
+        Func<TSource, TValue> selector,
+        Func<TSource, bool> predicate) => Throw<byte[]>();
+
+    /// <summary>topKWeightedStateIf(k)(column, weight, condition).</summary>
+    public static byte[] TopKWeightedStateIf<TSource, TValue, TWeight>(
+        this IEnumerable<TSource> source,
+        int k,
+        Func<TSource, TValue> selector,
+        Func<TSource, TWeight> weightSelector,
+        Func<TSource, bool> predicate) => Throw<byte[]>();
 
     #endregion
 

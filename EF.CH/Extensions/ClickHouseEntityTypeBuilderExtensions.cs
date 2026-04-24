@@ -61,6 +61,15 @@ public class ReplicatedEngineBuilder<TEntity> where TEntity : class
     }
 
     /// <summary>
+    /// Configures this entity to emit <c>ON CLUSTER '{cluster}'</c>, deferring
+    /// cluster resolution to the server's <c>&lt;macros&gt;&lt;cluster&gt;</c>
+    /// config entry. Use when the DDL should run against whichever cluster the
+    /// target node belongs to, without hardcoding a cluster name.
+    /// </summary>
+    public ReplicatedEngineBuilder<TEntity> WithCluster()
+        => WithCluster(ClickHouseClusterMacros.Cluster);
+
+    /// <summary>
     /// Configures replication settings for this entity.
     /// </summary>
     /// <param name="zooKeeperPath">The ZooKeeper/Keeper path for replication metadata. Supports placeholders: {database}, {table}, {uuid}</param>
@@ -1074,6 +1083,18 @@ public static class ClickHouseEntityTypeBuilderExtensions
     }
 
     /// <summary>
+    /// Configures this entity to emit <c>ON CLUSTER '{cluster}'</c>, deferring
+    /// cluster resolution to the server's <c>&lt;macros&gt;</c> config.
+    /// </summary>
+    public static EntityTypeBuilder UseCluster(this EntityTypeBuilder builder)
+        => builder.UseCluster(ClickHouseClusterMacros.Cluster);
+
+    /// <inheritdoc cref="UseCluster(EntityTypeBuilder)"/>
+    public static EntityTypeBuilder<TEntity> UseCluster<TEntity>(this EntityTypeBuilder<TEntity> builder)
+        where TEntity : class
+        => builder.UseCluster(ClickHouseClusterMacros.Cluster);
+
+    /// <summary>
     /// Assigns this entity to a table group.
     /// </summary>
     /// <remarks>
@@ -1590,6 +1611,132 @@ public static class ClickHouseEntityTypeBuilderExtensions
 
         return builder;
     }
+
+    #region Parameterised views
+
+    /// <summary>
+    /// Marks this entity as a ClickHouse parameterised view. The type's DbSet
+    /// can be queried via <see cref="ClickHouseQueryableParameterExtensions.WithParameter"/>.
+    /// </summary>
+    public static EntityTypeBuilder<TEntity> ToParameterizedView<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        string viewName) where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(viewName);
+        builder.HasNoKey();
+        builder.ToView(viewName);
+        builder.HasAnnotation(EF.CH.Metadata.ClickHouseAnnotationNames.ParameterizedView, true);
+        return builder;
+    }
+
+    #endregion
+
+    #region Nested columns
+
+    /// <summary>
+    /// Declares that the given collection property maps to a ClickHouse
+    /// <c>Nested(...)</c> column — parallel arrays under a shared prefix
+    /// (e.g. <c>Participants.name</c>, <c>Participants.age</c>). Call
+    /// <see cref="NestedColumnBuilder{TNested}.WithParallelAccess"/> to tag
+    /// the property for parallel-array codegen (arrayMap / arrayZip / indexed
+    /// access target the sub-columns directly).
+    /// </summary>
+    public static NestedColumnBuilder<TNested> HasNested<TEntity, TNested>(
+        this EntityTypeBuilder<TEntity> builder,
+        System.Linq.Expressions.Expression<Func<TEntity, IEnumerable<TNested>>> navigation)
+        where TEntity : class
+        where TNested : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(navigation);
+        return new NestedColumnBuilder<TNested>(builder.Metadata, navigation);
+    }
+
+    #endregion
+
+    #region External integration engines
+
+    /// <summary>
+    /// <c>ENGINE = PostgreSQL(host:port, database, table, user, password [, schema [, on_conflict]])</c>.
+    /// </summary>
+    public static EntityTypeBuilder<TEntity> UsePostgreSqlEngine<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        string hostAndPort, string database, string table, string user, string password,
+        string? schema = null) where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(hostAndPort);
+        ArgumentException.ThrowIfNullOrWhiteSpace(database);
+        ArgumentException.ThrowIfNullOrWhiteSpace(table);
+        ArgumentException.ThrowIfNullOrWhiteSpace(user);
+        var parts = new List<string> { SqlLiteral(hostAndPort), SqlLiteral(database), SqlLiteral(table), SqlLiteral(user), SqlLiteral(password ?? "") };
+        if (!string.IsNullOrEmpty(schema)) parts.Add(SqlLiteral(schema));
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, ClickHouseEngineNames.PostgreSQL);
+        builder.HasAnnotation(ClickHouseAnnotationNames.ExternalEngineArguments, string.Join(", ", parts));
+        return builder;
+    }
+
+    /// <summary>
+    /// <c>ENGINE = MySQL(host:port, database, table, user, password)</c>.
+    /// </summary>
+    public static EntityTypeBuilder<TEntity> UseMySqlEngine<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        string hostAndPort, string database, string table, string user, string password) where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(hostAndPort);
+        ArgumentException.ThrowIfNullOrWhiteSpace(database);
+        ArgumentException.ThrowIfNullOrWhiteSpace(table);
+        ArgumentException.ThrowIfNullOrWhiteSpace(user);
+        var args = string.Join(", ", new[] { hostAndPort, database, table, user, password ?? "" }.Select(SqlLiteral));
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, ClickHouseEngineNames.MySQL);
+        builder.HasAnnotation(ClickHouseAnnotationNames.ExternalEngineArguments, args);
+        return builder;
+    }
+
+    /// <summary>
+    /// <c>ENGINE = Redis(host:port [, db_index [, password [, pool_size]]])</c>.
+    /// Primary key is required — pass via <see cref="EntityTypeBuilder.HasKey"/>.
+    /// </summary>
+    public static EntityTypeBuilder<TEntity> UseRedisEngine<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        string hostAndPort, int dbIndex = 0, string? password = null, int? poolSize = null) where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(hostAndPort);
+        var parts = new List<string> { SqlLiteral(hostAndPort), dbIndex.ToString(System.Globalization.CultureInfo.InvariantCulture) };
+        if (password is not null || poolSize is not null)
+        {
+            parts.Add(SqlLiteral(password ?? ""));
+            if (poolSize is not null)
+                parts.Add(poolSize.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, ClickHouseEngineNames.Redis);
+        builder.HasAnnotation(ClickHouseAnnotationNames.ExternalEngineArguments, string.Join(", ", parts));
+        return builder;
+    }
+
+    /// <summary>
+    /// <c>ENGINE = ODBC(connection_string, database, table)</c>.
+    /// </summary>
+    public static EntityTypeBuilder<TEntity> UseOdbcEngine<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        string connectionString, string externalDatabase, string externalTable) where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+        ArgumentException.ThrowIfNullOrWhiteSpace(externalDatabase);
+        ArgumentException.ThrowIfNullOrWhiteSpace(externalTable);
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, ClickHouseEngineNames.ODBC);
+        builder.HasAnnotation(ClickHouseAnnotationNames.ExternalEngineArguments,
+            string.Join(", ", new[] { connectionString, externalDatabase, externalTable }.Select(SqlLiteral)));
+        return builder;
+    }
+
+    private static string SqlLiteral(string value) => "'" + value.Replace("'", "''") + "'";
+
+    #endregion
 
     /// <summary>
     /// Configures the entity to use a Distributed engine that queries across a cluster.
@@ -2204,6 +2351,19 @@ public static class ClickHouseEntityTypeBuilderExtensions
         return builder;
     }
 
+    /// <summary>
+    /// Marks the entity's materialised view as deferred: <c>EnsureCreatedAsync</c>
+    /// skips emitting it, so the caller can seed source data first and then
+    /// attach via <c>DatabaseFacade.CreateMaterializedViewAsync&lt;TEntity&gt;(populate: true)</c>.
+    /// </summary>
+    public static EntityTypeBuilder<TEntity> AsMaterializedViewDeferred<TEntity>(
+        this EntityTypeBuilder<TEntity> builder) where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewDeferred, true);
+        return builder;
+    }
+
     #endregion
 
     #region Dictionaries
@@ -2685,4 +2845,40 @@ public static class ClickHouseEntityTypeBuilderExtensions
     }
 
     #endregion
+}
+
+/// <summary>
+/// Builder returned by <c>EntityTypeBuilder&lt;T&gt;.HasNested(...)</c>. Marks the
+/// navigation as a ClickHouse <c>Nested</c> column with parallel-array access
+/// semantics. The actual column layout is already produced by the Nested type
+/// mapping; this builder is the declarative hook users call when they intend
+/// to reach the sub-columns via <c>Participants.name</c> / <c>.age</c>.
+/// </summary>
+public sealed class NestedColumnBuilder<TNested> where TNested : class
+{
+    private readonly Microsoft.EntityFrameworkCore.Metadata.IMutableEntityType _entityType;
+    private readonly System.Linq.Expressions.LambdaExpression _navigation;
+
+    internal NestedColumnBuilder(
+        Microsoft.EntityFrameworkCore.Metadata.IMutableEntityType entityType,
+        System.Linq.Expressions.LambdaExpression navigation)
+    {
+        _entityType = entityType;
+        _navigation = navigation;
+    }
+
+    /// <summary>
+    /// Tags the Nested column as parallel-array-accessible. The annotation is
+    /// read by downstream LINQ translators when generating SQL that addresses
+    /// individual sub-columns.
+    /// </summary>
+    public NestedColumnBuilder<TNested> WithParallelAccess()
+    {
+        var memberName = (_navigation.Body as System.Linq.Expressions.MemberExpression)?.Member.Name
+            ?? "Nested";
+        _entityType.AddAnnotation(
+            EF.CH.Metadata.ClickHouseAnnotationNames.NestedParallelAccess + ":" + memberName,
+            true);
+        return this;
+    }
 }

@@ -1,6 +1,7 @@
 using System.Data.Common;
 using ClickHouse.Driver.ADO;
 using EF.CH.Infrastructure;
+using EF.CH.Metadata;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -42,7 +43,11 @@ public class ClickHouseDatabaseCreator : RelationalDatabaseCreator
     private string GetOnClusterClause()
     {
         var clusterName = GetClusterName();
-        return string.IsNullOrEmpty(clusterName) ? "" : $" ON CLUSTER {clusterName}";
+        if (string.IsNullOrEmpty(clusterName)) return string.Empty;
+        var formatted = ClickHouseClusterMacros.ContainsMacro(clusterName)
+            ? $"'{clusterName.Replace("'", "''")}'"
+            : $"`{clusterName.Replace("`", "``")}`";
+        return $" ON CLUSTER {formatted}";
     }
 
     /// <summary>

@@ -80,7 +80,7 @@ static async Task DemoReplicatedEngine(string connectionString)
     Console.WriteLine("Configuration in OnModelCreating:\n");
     Console.WriteLine("""
       entity.UseReplicatedMergeTree<Event>(x => new { x.EventDate, x.EventId })
-          .WithCluster("sample_cluster")
+          .WithCluster()          // defers to the server's {cluster} macro
           .WithReplication(
               "/clickhouse/{database}/{table}",
               "{replica}");
@@ -88,7 +88,7 @@ static async Task DemoReplicatedEngine(string connectionString)
 
     Console.WriteLine("\nThis generates DDL like:");
     Console.WriteLine("""
-      CREATE TABLE events ON CLUSTER sample_cluster (
+      CREATE TABLE events ON CLUSTER '{cluster}' (
           ...
       ) ENGINE = ReplicatedMergeTree(
           '/clickhouse/{database}/{table}',
@@ -96,21 +96,10 @@ static async Task DemoReplicatedEngine(string connectionString)
       ) ORDER BY (EventDate, EventId)
     """);
 
-    // Create the table on all cluster nodes via ON CLUSTER
-    await context.Database.ExecuteSqlRawAsync("""
-        CREATE TABLE IF NOT EXISTS events ON CLUSTER sample_cluster (
-            EventId UInt64,
-            EventDate DateTime64(3),
-            EventType String,
-            UserId UInt64,
-            Payload String
-        ) ENGINE = ReplicatedMergeTree(
-            '/clickhouse/{database}/events',
-            '{replica}'
-        ) ORDER BY (EventDate, EventId)
-        """);
+    // The model's fluent configuration drives EnsureCreatedAsync — no raw DDL.
+    await context.Database.EnsureCreatedAsync();
 
-    Console.WriteLine("\nTable 'events' created on all 3 cluster nodes.");
+    Console.WriteLine("\nTable 'events' created on all 3 cluster nodes via EnsureCreatedAsync.");
 
     // Insert data on node 1 using BulkInsertAsync
     await context.BulkInsertAsync(new List<Event>
@@ -277,11 +266,10 @@ public class ClusterDemoContext : DbContext
             return; // Already configured via DbContextOptions constructor
 
         optionsBuilder.UseClickHouse(_connectionString, o => o
-            // Set the default cluster for all DDL operations
-            .UseCluster("sample_cluster")
-            // Enable read/write routing
+            // Set the default cluster to the server-side {cluster} macro so
+            // DDL works against whichever cluster the connected node belongs to.
+            .UseCluster()
             .UseConnectionRouting()
-            // Define table groups for logical organization
             .AddTableGroup("Core", group => group
                 .UseCluster("sample_cluster")
                 .Replicated())
@@ -296,13 +284,12 @@ public class ClusterDemoContext : DbContext
         {
             entity.HasNoKey();
             entity.ToTable("events");
-            // In a real application you would use:
-            // entity.UseReplicatedMergeTree<Event>(x => new { x.EventDate, x.EventId })
-            //     .WithCluster("sample_cluster")
-            //     .WithReplication("/clickhouse/{database}/{table}", "{replica}");
-            //
-            // For this sample, the table is created via raw SQL to work with
-            // the docker-compose cluster without ZooKeeper/Keeper.
+            // Fluent replicated-engine configuration with the {cluster} macro —
+            // EF.CH emits ON CLUSTER '{cluster}' and lets ClickHouse expand it
+            // per node. No raw DDL required.
+            entity.UseReplicatedMergeTree(x => new { x.EventDate, x.EventId })
+                .WithCluster()
+                .WithReplication("/clickhouse/{database}/{table}", "{replica}");
         });
     }
 }

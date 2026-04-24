@@ -83,6 +83,20 @@ public static class ClickHouseAnnotationNames
     /// </summary>
     public const string MaterializedViewPopulate = Prefix + "MaterializedViewPopulate";
 
+    /// <summary>
+    /// If true, <c>EnsureCreatedAsync</c> skips emitting this MV so the caller
+    /// can deploy it manually via <c>DatabaseFacade.CreateMaterializedViewAsync</c>
+    /// after the source is seeded (useful for POPULATE backfill).
+    /// </summary>
+    public const string MaterializedViewDeferred = Prefix + "MaterializedViewDeferred";
+
+    /// <summary>
+    /// Marker prefix used to tag <c>Nested(...)</c> columns that opt into
+    /// parallel-array sub-column access. Combined with the navigation's member
+    /// name to form the full annotation key (e.g. <c>…NestedParallelAccess:Participants</c>).
+    /// </summary>
+    public const string NestedParallelAccess = Prefix + "NestedParallelAccess";
+
     #endregion
 
     #region Nested Types
@@ -516,6 +530,17 @@ public static class ClickHouseAnnotationNames
     /// The storage policy name for the Distributed engine.
     /// </summary>
     public const string DistributedPolicyName = Prefix + "DistributedPolicyName";
+
+    #endregion
+
+    #region External (integration) engines
+
+    /// <summary>
+    /// Serialised arguments (already-quoted ClickHouse literals, comma-joined) for
+    /// PostgreSQL / MySQL / Redis / ODBC engines — emitted verbatim inside
+    /// <c>ENGINE = Foo(args…)</c>.
+    /// </summary>
+    public const string ExternalEngineArguments = Prefix + "ExternalEngineArguments";
 
     #endregion
 

@@ -72,17 +72,14 @@ try
     // the final value persists.
     Console.WriteLine("[2] Inserting key 'beta-search' three times with different values...");
 
-    await context.Database.ExecuteSqlRawAsync(
-        @"INSERT INTO ""FeatureFlags"" (""Name"", ""Enabled"", ""RolloutPct"") VALUES ('beta-search', 0, 0)");
-    Console.WriteLine("    INSERT  beta-search  Enabled=false  RolloutPct=0");
+    await context.Flags.UpsertRangeAsync([new FeatureFlag { Name = "beta-search", Enabled = false, RolloutPct = 0 }]);
+    Console.WriteLine("    UPSERT  beta-search  Enabled=false  RolloutPct=0");
 
-    await context.Database.ExecuteSqlRawAsync(
-        @"INSERT INTO ""FeatureFlags"" (""Name"", ""Enabled"", ""RolloutPct"") VALUES ('beta-search', 1, 10)");
-    Console.WriteLine("    INSERT  beta-search  Enabled=true   RolloutPct=10");
+    await context.Flags.UpsertRangeAsync([new FeatureFlag { Name = "beta-search", Enabled = true, RolloutPct = 10 }]);
+    Console.WriteLine("    UPSERT  beta-search  Enabled=true   RolloutPct=10");
 
-    await context.Database.ExecuteSqlRawAsync(
-        @"INSERT INTO ""FeatureFlags"" (""Name"", ""Enabled"", ""RolloutPct"") VALUES ('beta-search', 1, 100)");
-    Console.WriteLine("    INSERT  beta-search  Enabled=true   RolloutPct=100\n");
+    await context.Flags.UpsertRangeAsync([new FeatureFlag { Name = "beta-search", Enabled = true, RolloutPct = 100 }]);
+    Console.WriteLine("    UPSERT  beta-search  Enabled=true   RolloutPct=100\n");
 
     var rowCount = await context.Flags.LongCountAsync();
     var betaSearch = await context.Flags.SingleAsync(f => f.Name == "beta-search");
@@ -111,9 +108,9 @@ try
 
     // Step 4: Overwrite an existing flag. This is the canonical "update" path
     // for KeeperMap: there is no ALTER TABLE UPDATE dance, just INSERT.
-    Console.WriteLine("[4] Rolling 'ai-suggest' from 25% -> 75% via INSERT on the same key...");
-    await context.Database.ExecuteSqlRawAsync(
-        @"INSERT INTO ""FeatureFlags"" (""Name"", ""Enabled"", ""RolloutPct"") VALUES ('ai-suggest', 1, 75)");
+    Console.WriteLine("[4] Rolling 'ai-suggest' from 25% -> 75% via UpsertRangeAsync on the same key...");
+    await context.Flags.UpsertRangeAsync(
+        [new FeatureFlag { Name = "ai-suggest", Enabled = true, RolloutPct = 75 }]);
 
     var aiSuggest = await context.Flags.AsNoTracking().SingleAsync(f => f.Name == "ai-suggest");
     var postRollCount = await context.Flags.LongCountAsync();

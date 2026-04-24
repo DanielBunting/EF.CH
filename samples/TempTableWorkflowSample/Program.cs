@@ -337,7 +337,7 @@ static async Task ScopedWorkflowAsync(EtlDbContext context)
         Console.WriteLine("\n[Load] Moving filtered data to final table...");
 
         // Clear existing final records for clean demo
-        await context.Database.ExecuteSqlRawAsync(@"TRUNCATE TABLE ""final_records""");
+        await context.Database.TruncateTableAsync("final_records");
 
         var loadResult = await context.FinalRecords.ExecuteInsertFromQueryAsync(
             filterTemp.Query(),

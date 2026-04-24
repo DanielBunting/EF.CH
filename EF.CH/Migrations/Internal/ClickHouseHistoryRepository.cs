@@ -1,5 +1,6 @@
 using EF.CH.Configuration;
 using EF.CH.Infrastructure;
+using EF.CH.Metadata;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
@@ -104,8 +105,13 @@ public class ClickHouseHistoryRepository : HistoryRepository
             return string.Empty;
         }
 
-        return $" ON CLUSTER {SqlGenerationHelper.DelimitIdentifier(clusterName)}";
+        return $" ON CLUSTER {FormatClusterName(clusterName)}";
     }
+
+    private string FormatClusterName(string clusterName)
+        => ClickHouseClusterMacros.ContainsMacro(clusterName)
+            ? $"'{clusterName.Replace("'", "''")}'"
+            : SqlGenerationHelper.DelimitIdentifier(clusterName);
 
     /// <summary>
     /// Gets the ENGINE clause for the history table.

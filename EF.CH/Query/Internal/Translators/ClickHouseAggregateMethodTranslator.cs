@@ -39,7 +39,19 @@ public class ClickHouseAggregateMethodCallTranslator
         // Store model for defaultForNull lookups
         _currentModel = model;
 
-        // Handle ClickHouseAggregates extension methods
+        // Merge-sentinel: the preprocessor rewrote `g.XxxMerge(sel)` into a surrogate
+        // Enumerable.Sum/Count/… with the selector wrapped in ClickHouseFunctions.MergeSentinel.
+        // The selector was translated to a ClickHouseMergeSentinelExpression; unwrap it here
+        // and emit the real xxxMerge(state) function, bypassing the outer surrogate aggregate.
+        if (source.Selector is Expressions.ClickHouseMergeSentinelExpression sentinel)
+        {
+            // Use the sentinel's own (real) return type — that's what the user declared —
+            // and ignore the outer surrogate method's return type.
+            return TranslateMergeSentinel(sentinel, sentinel.Type);
+        }
+
+        // Handle ClickHouseAggregates extension methods (primarily from MV contexts where
+        // the preprocessor rewrite does not run — those are static-form calls, not IGrouping-form).
         if (method.DeclaringType?.FullName == "EF.CH.Extensions.ClickHouseAggregates")
         {
             return TranslateClickHouseAggregate(method, source, arguments);
@@ -1218,6 +1230,80 @@ public class ClickHouseAggregateMethodCallTranslator
             nullable: true,
             argumentsPropagateNullability: [false, false],
             typeof(double));
+    }
+
+    /// <summary>
+    /// Extracts the real merge function from a
+    /// <see cref="Expressions.ClickHouseMergeSentinelExpression"/> planted by the preprocessor.
+    /// Wraps the emitted merge in a ClickHouse cast when the user's declared CLR return type
+    /// doesn't match what ClickHouse natively returns — e.g. <c>countMerge</c> / <c>uniqMerge</c>
+    /// return <c>UInt64</c> but the user may declare <c>long</c>.
+    /// </summary>
+    private SqlExpression TranslateMergeSentinel(
+        Expressions.ClickHouseMergeSentinelExpression sentinel,
+        Type returnType)
+    {
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        string functionName = sentinel.FunctionName;
+        // Decide whether the parametric float is for the `fn(k)(col)` or `fn(0.5)(col)` form.
+        // Int-parametric (TopK) was stored as double; we detect via integer-valued doubles.
+        if (sentinel.MergeParameter is double p)
+        {
+            functionName = p == Math.Floor(p) && !double.IsInfinity(p)
+                ? $"{sentinel.FunctionName}({((long)p).ToString(inv)})"
+                : $"{sentinel.FunctionName}({p.ToString(inv)})";
+        }
+        else if (sentinel.Parameters is { Count: > 0 } ps)
+        {
+            functionName = $"{sentinel.FunctionName}({string.Join(", ", ps.Select(x => x.ToString(inv)))})";
+        }
+
+        SqlExpression[] funcArgs = sentinel.SecondArg is null
+            ? [sentinel.StateColumn]
+            : [sentinel.StateColumn, sentinel.SecondArg];
+        var merge = _sqlExpressionFactory.Function(
+            functionName,
+            funcArgs,
+            nullable: true,
+            argumentsPropagateNullability: Enumerable.Repeat(false, funcArgs.Length).ToArray(),
+            returnType);
+
+        // Wrap in a ClickHouse cast only for scalar types where the native ClickHouse
+        // return differs from what EF expects (e.g. countMerge/uniqMerge return UInt64
+        // but the user may declare long). Array-returning aggregates (topK, groupArray,
+        // quantiles) are not cast — the driver already materialises Array(T) into T[].
+        if (returnType.IsArray)
+        {
+            return merge;
+        }
+        var castFn = ClickHouseCastFunctionFor(returnType);
+        return castFn is null
+            ? merge
+            : _sqlExpressionFactory.Function(
+                castFn,
+                [merge],
+                nullable: true,
+                argumentsPropagateNullability: [false],
+                returnType);
+    }
+
+    private static string? ClickHouseCastFunctionFor(Type t)
+    {
+        var actual = Nullable.GetUnderlyingType(t) ?? t;
+        return actual switch
+        {
+            _ when actual == typeof(long) => "toInt64",
+            _ when actual == typeof(ulong) => "toUInt64",
+            _ when actual == typeof(int) => "toInt32",
+            _ when actual == typeof(uint) => "toUInt32",
+            _ when actual == typeof(short) => "toInt16",
+            _ when actual == typeof(ushort) => "toUInt16",
+            _ when actual == typeof(sbyte) => "toInt8",
+            _ when actual == typeof(byte) => "toUInt8",
+            _ when actual == typeof(double) => "toFloat64",
+            _ when actual == typeof(float) => "toFloat32",
+            _ => null,
+        };
     }
 }
 

@@ -22,8 +22,8 @@ Console.WriteLine("Creating database and tables...");
 await context.Database.EnsureCreatedAsync();
 
 // Clean up any existing data
-await context.Database.ExecuteSqlRawAsync("TRUNCATE TABLE Events");
-await context.Database.ExecuteSqlRawAsync("TRUNCATE TABLE Products");
+await context.Database.TruncateTableAsync<Event>();
+await context.Database.TruncateTableAsync<Product>();
 
 // ============================================================
 // 1. Basic Bulk Insert
@@ -46,7 +46,7 @@ Console.WriteLine($"Throughput: {result.RowsPerSecond:N0} rows/sec");
 
 Console.WriteLine("\n--- Bulk Insert with Batch Size ---");
 
-await context.Database.ExecuteSqlRawAsync("TRUNCATE TABLE Events");
+await context.Database.TruncateTableAsync<Event>();
 
 events = GenerateEvents(25_000);
 
@@ -62,7 +62,7 @@ Console.WriteLine($"Throughput: {result.RowsPerSecond:N0} rows/sec");
 
 Console.WriteLine("\n--- Progress Callback ---");
 
-await context.Database.ExecuteSqlRawAsync("TRUNCATE TABLE Events");
+await context.Database.TruncateTableAsync<Event>();
 
 events = GenerateEvents(30_000);
 
@@ -81,7 +81,7 @@ Console.WriteLine($"Complete: {result.RowsInserted:N0} rows in {result.Elapsed.T
 
 Console.WriteLine("\n--- Streaming Insert (IAsyncEnumerable) ---");
 
-await context.Database.ExecuteSqlRawAsync("TRUNCATE TABLE Events");
+await context.Database.TruncateTableAsync<Event>();
 
 result = await context.BulkInsertStreamingAsync(
     GenerateEventsAsync(50_000),
@@ -98,7 +98,7 @@ Console.WriteLine($"Throughput: {result.RowsPerSecond:N0} rows/sec");
 
 Console.WriteLine("\n--- JSONEachRow Format ---");
 
-await context.Database.ExecuteSqlRawAsync("TRUNCATE TABLE Events");
+await context.Database.TruncateTableAsync<Event>();
 
 events = GenerateEvents(10_000);
 
@@ -114,7 +114,7 @@ Console.WriteLine($"Throughput: {result.RowsPerSecond:N0} rows/sec");
 
 Console.WriteLine("\n--- Async Insert Mode ---");
 
-await context.Database.ExecuteSqlRawAsync("TRUNCATE TABLE Events");
+await context.Database.TruncateTableAsync<Event>();
 
 events = GenerateEvents(10_000);
 
@@ -130,7 +130,7 @@ Console.WriteLine($"Throughput: {result.RowsPerSecond:N0} rows/sec");
 
 Console.WriteLine("\n--- Parallel Insertion ---");
 
-await context.Database.ExecuteSqlRawAsync("TRUNCATE TABLE Events");
+await context.Database.TruncateTableAsync<Event>();
 
 events = GenerateEvents(100_000);
 
@@ -162,7 +162,7 @@ Console.WriteLine($"Throughput: {result.RowsPerSecond:N0} rows/sec");
 
 Console.WriteLine("\n--- Custom ClickHouse Settings ---");
 
-await context.Database.ExecuteSqlRawAsync("TRUNCATE TABLE Events");
+await context.Database.TruncateTableAsync<Event>();
 
 events = GenerateEvents(10_000);
 
@@ -179,7 +179,7 @@ Console.WriteLine($"Inserted {result.RowsInserted:N0} rows with custom settings"
 
 Console.WriteLine("\n--- Performance Comparison ---");
 
-await context.Database.ExecuteSqlRawAsync("TRUNCATE TABLE Events");
+await context.Database.TruncateTableAsync<Event>();
 
 const int comparisonCount = 5_000;
 
@@ -199,7 +199,7 @@ Console.WriteLine($"  Throughput: {standardRowsPerSec:N0} rows/sec");
 
 // Clear change tracker
 context.ChangeTracker.Clear();
-await context.Database.ExecuteSqlRawAsync("TRUNCATE TABLE Events");
+await context.Database.TruncateTableAsync<Event>();
 
 // Bulk insert approach
 Console.WriteLine($"\nBulk Insert - {comparisonCount:N0} rows:");
@@ -219,7 +219,7 @@ Console.WriteLine($"\nBulk insert is {speedup:F1}x faster!");
 
 Console.WriteLine("\n--- Via DbSet ---");
 
-await context.Database.ExecuteSqlRawAsync("TRUNCATE TABLE Products");
+await context.Database.TruncateTableAsync<Product>();
 
 var moreProducts = GenerateProducts(2_000);
 

@@ -129,25 +129,16 @@ public class ArrayJoinTests : IAsyncLifetime
 
     private async Task SetupTable(ArrayJoinTestContext context)
     {
-        await context.Database.ExecuteSqlRawAsync(@"
-            CREATE TABLE IF NOT EXISTS ""ArrayJoinEvents"" (
-                ""Id"" UInt32,
-                ""Name"" String,
-                ""Tags"" Array(String),
-                ""Scores"" Array(Int32)
-            ) ENGINE = ReplacingMergeTree()
-            ORDER BY ""Id""
-        ");
+        await context.Database.EnsureCreatedAsync();
     }
 
     private async Task SeedData(ArrayJoinTestContext context)
     {
-        await context.Database.ExecuteSqlRawAsync(@"
-            INSERT INTO ""ArrayJoinEvents"" (""Id"", ""Name"", ""Tags"", ""Scores"") VALUES
-            (1, 'Alert', ['critical', 'urgent', 'production'], [10, 20, 30]),
-            (2, 'Log', ['info', 'debug'], [5, 15]),
-            (3, 'Empty', [], [])
-        ");
+        context.ArrayJoinEvents.AddRange(
+            new ArrayJoinEvent { Id = 1, Name = "Alert", Tags = ["critical", "urgent", "production"], Scores = [10, 20, 30] },
+            new ArrayJoinEvent { Id = 2, Name = "Log",   Tags = ["info", "debug"], Scores = [5, 15] },
+            new ArrayJoinEvent { Id = 3, Name = "Empty", Tags = [],              Scores = [] });
+        await context.SaveChangesAsync();
     }
 
     private ArrayJoinTestContext CreateContext()
@@ -180,7 +171,7 @@ public class ArrayJoinTestContext : DbContext
         {
             entity.HasKey(e => e.Id);
             entity.ToTable("ArrayJoinEvents");
-            entity.UseMergeTree(x => x.Id);
+            entity.UseReplacingMergeTree(x => x.Id);
         });
     }
 }

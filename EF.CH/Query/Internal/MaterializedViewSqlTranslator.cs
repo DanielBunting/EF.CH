@@ -62,6 +62,7 @@ internal class MaterializedViewExpressionVisitor<TSource> : ExpressionVisitor
     private readonly List<string> _groupByColumns = [];
     private string? _groupByParameter;
     private readonly Dictionary<string, string> _groupKeyMappings = new();
+    private readonly List<string> _whereClauses = [];
 
     public MaterializedViewExpressionVisitor(IModel model, string sourceTableName)
     {
@@ -86,6 +87,13 @@ internal class MaterializedViewExpressionVisitor<TSource> : ExpressionVisitor
         sql.Append("FROM ");
         sql.Append(QuoteIdentifier(_sourceTableName));
 
+        if (_whereClauses.Count > 0)
+        {
+            sql.AppendLine();
+            sql.Append("WHERE ");
+            sql.Append(string.Join(" AND ", _whereClauses));
+        }
+
         if (_groupByColumns.Count > 0)
         {
             sql.AppendLine();
@@ -98,7 +106,7 @@ internal class MaterializedViewExpressionVisitor<TSource> : ExpressionVisitor
 
     protected override Expression VisitMethodCall(MethodCallExpression node)
     {
-        // Handle LINQ methods: GroupBy, Select
+        // Handle LINQ methods: Where, GroupBy, Select.
         if (node.Method.DeclaringType == typeof(Queryable) ||
             node.Method.DeclaringType == typeof(Enumerable))
         {
@@ -108,10 +116,38 @@ internal class MaterializedViewExpressionVisitor<TSource> : ExpressionVisitor
                     return VisitGroupBy(node);
                 case "Select":
                     return VisitSelect(node);
+                case "Where":
+                    return VisitWhere(node);
+                default:
+                    // Fail loudly instead of silently descending — silent drops of
+                    // unsupported operators (OrderBy, Take, etc.) would emit SQL
+                    // that compiles but produces the wrong view contents.
+                    throw new NotSupportedException(
+                        $"LINQ operator '{node.Method.Name}' is not supported in materialized view definitions. " +
+                        "Supported: Where, GroupBy, Select.");
             }
         }
 
         return base.VisitMethodCall(node);
+    }
+
+    private Expression VisitWhere(MethodCallExpression node)
+    {
+        Visit(node.Arguments[0]);
+
+        LambdaExpression? predicate = node.Arguments[1] switch
+        {
+            UnaryExpression { Operand: LambdaExpression lambda } => lambda,
+            LambdaExpression lambda => lambda,
+            _ => null,
+        };
+
+        if (predicate != null)
+        {
+            _whereClauses.Add(TranslateExpression(predicate.Body));
+        }
+
+        return node;
     }
 
     private Expression VisitGroupBy(MethodCallExpression node)
@@ -531,8 +567,214 @@ internal class MaterializedViewExpressionVisitor<TSource> : ExpressionVisitor
             "QuantilesIf" => TranslateMultiQuantileIfAggregate("quantilesIf", methodExpr),
             "QuantilesTDigestIf" => TranslateMultiQuantileIfAggregate("quantilesTDigestIf", methodExpr),
 
+            // -State combinators — for AggregatingMergeTree storage.
+            "CountState" => "countState()",
+            "SumState" => TranslateSimpleClickHouseAggregate("sumState", methodExpr),
+            "AvgState" => TranslateSimpleClickHouseAggregate("avgState", methodExpr),
+            "MinState" => TranslateSimpleClickHouseAggregate("minState", methodExpr),
+            "MaxState" => TranslateSimpleClickHouseAggregate("maxState", methodExpr),
+            "UniqState" => TranslateSimpleClickHouseAggregate("uniqState", methodExpr),
+            "UniqExactState" => TranslateSimpleClickHouseAggregate("uniqExactState", methodExpr),
+            "AnyState" => TranslateSimpleClickHouseAggregate("anyState", methodExpr),
+            "AnyLastState" => TranslateSimpleClickHouseAggregate("anyLastState", methodExpr),
+            "MedianState" => TranslateSimpleClickHouseAggregate("medianState", methodExpr),
+            "StddevPopState" => TranslateSimpleClickHouseAggregate("stddevPopState", methodExpr),
+            "StddevSampState" => TranslateSimpleClickHouseAggregate("stddevSampState", methodExpr),
+            "VarPopState" => TranslateSimpleClickHouseAggregate("varPopState", methodExpr),
+            "VarSampState" => TranslateSimpleClickHouseAggregate("varSampState", methodExpr),
+            "UniqCombinedState" => TranslateSimpleClickHouseAggregate("uniqCombinedState", methodExpr),
+            "UniqCombined64State" => TranslateSimpleClickHouseAggregate("uniqCombined64State", methodExpr),
+            "UniqHLL12State" => TranslateSimpleClickHouseAggregate("uniqHLL12State", methodExpr),
+            "UniqThetaState" => TranslateSimpleClickHouseAggregate("uniqThetaState", methodExpr),
+            "ArgMaxState" => TranslateTwoSelectorAggregate("argMaxState", methodExpr),
+            "ArgMinState" => TranslateTwoSelectorAggregate("argMinState", methodExpr),
+            "QuantileState" => TranslateParametricQuantile("quantileState", methodExpr),
+            "QuantileTDigestState" => TranslateParametricQuantile("quantileTDigestState", methodExpr),
+            "QuantileExactState" => TranslateParametricQuantile("quantileExactState", methodExpr),
+            "QuantileTimingState" => TranslateParametricQuantile("quantileTimingState", methodExpr),
+            "QuantileDDState" => TranslateQuantileDDState(methodExpr),
+            "QuantilesState" => TranslateMultiQuantile("quantilesState", methodExpr),
+            "QuantilesTDigestState" => TranslateMultiQuantile("quantilesTDigestState", methodExpr),
+            "GroupArrayState" => TranslateGroupArrayState(methodExpr),
+            "GroupUniqArrayState" => TranslateGroupUniqArrayState(methodExpr),
+            "TopKState" => TranslateTopKState(methodExpr),
+            "TopKWeightedState" => TranslateTopKWeightedState(methodExpr),
+
+            // -StateIf combinators — conditional -State for AggregatingMergeTree.
+            "CountStateIf" => TranslateCountStateIfAggregate(methodExpr),
+            "SumStateIf" => TranslateIfAggregate("sumStateIf", methodExpr),
+            "AvgStateIf" => TranslateIfAggregate("avgStateIf", methodExpr),
+            "MinStateIf" => TranslateIfAggregate("minStateIf", methodExpr),
+            "MaxStateIf" => TranslateIfAggregate("maxStateIf", methodExpr),
+            "UniqStateIf" => TranslateIfAggregate("uniqStateIf", methodExpr),
+            "UniqExactStateIf" => TranslateIfAggregate("uniqExactStateIf", methodExpr),
+            "AnyStateIf" => TranslateIfAggregate("anyStateIf", methodExpr),
+            "AnyLastStateIf" => TranslateIfAggregate("anyLastStateIf", methodExpr),
+            "MedianStateIf" => TranslateIfAggregate("medianStateIf", methodExpr),
+            "StddevPopStateIf" => TranslateIfAggregate("stddevPopStateIf", methodExpr),
+            "StddevSampStateIf" => TranslateIfAggregate("stddevSampStateIf", methodExpr),
+            "VarPopStateIf" => TranslateIfAggregate("varPopStateIf", methodExpr),
+            "VarSampStateIf" => TranslateIfAggregate("varSampStateIf", methodExpr),
+            "UniqCombinedStateIf" => TranslateIfAggregate("uniqCombinedStateIf", methodExpr),
+            "UniqCombined64StateIf" => TranslateIfAggregate("uniqCombined64StateIf", methodExpr),
+            "UniqHLL12StateIf" => TranslateIfAggregate("uniqHLL12StateIf", methodExpr),
+            "UniqThetaStateIf" => TranslateIfAggregate("uniqThetaStateIf", methodExpr),
+            "ArgMaxStateIf" => TranslateTwoSelectorIfAggregate("argMaxStateIf", methodExpr),
+            "ArgMinStateIf" => TranslateTwoSelectorIfAggregate("argMinStateIf", methodExpr),
+            "QuantileStateIf" => TranslateQuantileStateIf("quantileStateIf", methodExpr),
+            "QuantileTDigestStateIf" => TranslateParametricQuantileIfAggregate("quantileTDigestStateIf", methodExpr),
+            "QuantileExactStateIf" => TranslateParametricQuantileIfAggregate("quantileExactStateIf", methodExpr),
+            "QuantileTimingStateIf" => TranslateParametricQuantileIfAggregate("quantileTimingStateIf", methodExpr),
+            "QuantileDDStateIf" => TranslateQuantileDDStateIf(methodExpr),
+            "QuantilesStateIf" => TranslateMultiQuantileIfAggregate("quantilesStateIf", methodExpr),
+            "QuantilesTDigestStateIf" => TranslateMultiQuantileIfAggregate("quantilesTDigestStateIf", methodExpr),
+            "GroupArrayStateIf" => TranslateGroupArrayStateIf(methodExpr),
+            "GroupUniqArrayStateIf" => TranslateGroupUniqArrayStateIf(methodExpr),
+            "TopKStateIf" => TranslateTopKStateIf(methodExpr),
+            "TopKWeightedStateIf" => TranslateTopKWeightedStateIf(methodExpr),
+
             _ => throw new NotSupportedException($"ClickHouse aggregate {methodName} is not supported.")
         };
+    }
+
+    // -State helpers that mirror their non-State counterparts but emit stateful function names.
+
+    private string TranslateCountStateIfAggregate(MethodCallExpression methodExpr)
+    {
+        // CountStateIf(source, predicate)
+        var predicate = ExtractLambda(methodExpr.Arguments[1]);
+        var conditionSql = TranslateExpression(predicate.Body);
+        return $"countStateIf({conditionSql})";
+    }
+
+    private string TranslateQuantileDDState(MethodCallExpression methodExpr)
+    {
+        var accuracy = ExtractConstantValue<double>(methodExpr.Arguments[1]);
+        var level = ExtractConstantValue<double>(methodExpr.Arguments[2]);
+        var selector = ExtractLambda(methodExpr.Arguments[3]);
+        var innerSql = TranslateExpression(selector.Body);
+        var accuracyStr = accuracy.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var levelStr = level.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        return $"quantileDDState({accuracyStr}, {levelStr})({innerSql})";
+    }
+
+    private string TranslateGroupArrayState(MethodCallExpression methodExpr)
+    {
+        if (methodExpr.Arguments.Count == 2)
+        {
+            var selector = ExtractLambda(methodExpr.Arguments[1]);
+            return $"groupArrayState({TranslateExpression(selector.Body)})";
+        }
+        else
+        {
+            var maxSize = ExtractConstantValue<int>(methodExpr.Arguments[1]);
+            var selector = ExtractLambda(methodExpr.Arguments[2]);
+            return $"groupArrayState({maxSize})({TranslateExpression(selector.Body)})";
+        }
+    }
+
+    private string TranslateGroupUniqArrayState(MethodCallExpression methodExpr)
+    {
+        if (methodExpr.Arguments.Count == 2)
+        {
+            var selector = ExtractLambda(methodExpr.Arguments[1]);
+            return $"groupUniqArrayState({TranslateExpression(selector.Body)})";
+        }
+        else
+        {
+            var maxSize = ExtractConstantValue<int>(methodExpr.Arguments[1]);
+            var selector = ExtractLambda(methodExpr.Arguments[2]);
+            return $"groupUniqArrayState({maxSize})({TranslateExpression(selector.Body)})";
+        }
+    }
+
+    private string TranslateTopKState(MethodCallExpression methodExpr)
+    {
+        var k = ExtractConstantValue<int>(methodExpr.Arguments[1]);
+        var selector = ExtractLambda(methodExpr.Arguments[2]);
+        return $"topKState({k})({TranslateExpression(selector.Body)})";
+    }
+
+    private string TranslateTopKWeightedState(MethodCallExpression methodExpr)
+    {
+        var k = ExtractConstantValue<int>(methodExpr.Arguments[1]);
+        var selector = ExtractLambda(methodExpr.Arguments[2]);
+        var weightSelector = ExtractLambda(methodExpr.Arguments[3]);
+        return $"topKWeightedState({k})({TranslateExpression(selector.Body)}, {TranslateExpression(weightSelector.Body)})";
+    }
+
+    private string TranslateQuantileStateIf(string functionName, MethodCallExpression methodExpr)
+    {
+        var level = ExtractConstantValue<double>(methodExpr.Arguments[1]);
+        var selector = ExtractLambda(methodExpr.Arguments[2]);
+        var predicate = ExtractLambda(methodExpr.Arguments[3]);
+        var valueSql = TranslateExpression(selector.Body);
+        var conditionSql = TranslateExpression(predicate.Body);
+        return $"{functionName}({level.ToString(System.Globalization.CultureInfo.InvariantCulture)})({valueSql}, {conditionSql})";
+    }
+
+    private string TranslateQuantileDDStateIf(MethodCallExpression methodExpr)
+    {
+        var accuracy = ExtractConstantValue<double>(methodExpr.Arguments[1]);
+        var level = ExtractConstantValue<double>(methodExpr.Arguments[2]);
+        var selector = ExtractLambda(methodExpr.Arguments[3]);
+        var predicate = ExtractLambda(methodExpr.Arguments[4]);
+        var valueSql = TranslateExpression(selector.Body);
+        var conditionSql = TranslateExpression(predicate.Body);
+        var accuracyStr = accuracy.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var levelStr = level.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        return $"quantileDDStateIf({accuracyStr}, {levelStr})({valueSql}, {conditionSql})";
+    }
+
+    private string TranslateGroupArrayStateIf(MethodCallExpression methodExpr)
+    {
+        if (methodExpr.Arguments.Count == 3)
+        {
+            var selector = ExtractLambda(methodExpr.Arguments[1]);
+            var predicate = ExtractLambda(methodExpr.Arguments[2]);
+            return $"groupArrayStateIf({TranslateExpression(selector.Body)}, {TranslateExpression(predicate.Body)})";
+        }
+        else
+        {
+            var maxSize = ExtractConstantValue<int>(methodExpr.Arguments[1]);
+            var selector = ExtractLambda(methodExpr.Arguments[2]);
+            var predicate = ExtractLambda(methodExpr.Arguments[3]);
+            return $"groupArrayStateIf({maxSize})({TranslateExpression(selector.Body)}, {TranslateExpression(predicate.Body)})";
+        }
+    }
+
+    private string TranslateGroupUniqArrayStateIf(MethodCallExpression methodExpr)
+    {
+        if (methodExpr.Arguments.Count == 3)
+        {
+            var selector = ExtractLambda(methodExpr.Arguments[1]);
+            var predicate = ExtractLambda(methodExpr.Arguments[2]);
+            return $"groupUniqArrayStateIf({TranslateExpression(selector.Body)}, {TranslateExpression(predicate.Body)})";
+        }
+        else
+        {
+            var maxSize = ExtractConstantValue<int>(methodExpr.Arguments[1]);
+            var selector = ExtractLambda(methodExpr.Arguments[2]);
+            var predicate = ExtractLambda(methodExpr.Arguments[3]);
+            return $"groupUniqArrayStateIf({maxSize})({TranslateExpression(selector.Body)}, {TranslateExpression(predicate.Body)})";
+        }
+    }
+
+    private string TranslateTopKStateIf(MethodCallExpression methodExpr)
+    {
+        var k = ExtractConstantValue<int>(methodExpr.Arguments[1]);
+        var selector = ExtractLambda(methodExpr.Arguments[2]);
+        var predicate = ExtractLambda(methodExpr.Arguments[3]);
+        return $"topKStateIf({k})({TranslateExpression(selector.Body)}, {TranslateExpression(predicate.Body)})";
+    }
+
+    private string TranslateTopKWeightedStateIf(MethodCallExpression methodExpr)
+    {
+        var k = ExtractConstantValue<int>(methodExpr.Arguments[1]);
+        var selector = ExtractLambda(methodExpr.Arguments[2]);
+        var weightSelector = ExtractLambda(methodExpr.Arguments[3]);
+        var predicate = ExtractLambda(methodExpr.Arguments[4]);
+        return $"topKWeightedStateIf({k})({TranslateExpression(selector.Body)}, {TranslateExpression(weightSelector.Body)}, {TranslateExpression(predicate.Body)})";
     }
 
     private string TranslateCountIfAggregate(MethodCallExpression methodExpr)

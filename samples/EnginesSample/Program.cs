@@ -210,7 +210,7 @@ static async Task DemoAggregatingMergeTree(string connectionString)
     await using var context = new AggregatingMergeTreeContext(connectionString);
 
     // EnsureCreatedAsync generates the source table, target table, and materialized view.
-    // The AsMaterializedViewRaw in the model wires them together:
+    // The AsMaterializedView<TEntity, TSource>(LINQ) in the model wires them together:
     //   CREATE TABLE RawEventsAgg (...) ENGINE = MergeTree() ORDER BY (EventType, Timestamp)
     //   CREATE TABLE EventStats (...) ENGINE = AggregatingMergeTree() ORDER BY (EventType)
     //   CREATE MATERIALIZED VIEW ... TO EventStats AS SELECT ... FROM RawEventsAgg ...
@@ -231,17 +231,20 @@ static async Task DemoAggregatingMergeTree(string connectionString)
     Console.WriteLine("Inserted 5 raw events into source table.");
     Console.WriteLine("Materialized view automatically stores aggregate states.");
 
-    // Query the aggregated view using -Merge functions via raw SQL
-    // -Merge functions finalize the intermediate aggregate states
-    var stats = await context.Database.SqlQueryRaw<AggResult>("""
-        SELECT
-            EventType,
-            countMerge(EventCount) AS Count,
-            sumMerge(TotalAmount) AS Total
-        FROM EventStats
-        GROUP BY EventType
-        ORDER BY EventType
-    """).ToListAsync();
+    // Query the aggregated view using -Merge combinators through typed LINQ.
+    // ClickHouseQueryTranslationPreprocessor rewrites CountMerge / SumMerge into a
+    // surrogate aggregate with a merge-sentinel selector; the aggregate translator
+    // unwraps it and emits countMerge(state) / sumMerge(state) directly.
+    var stats = await context.EventStats
+        .GroupBy(s => s.EventType)
+        .Select(g => new AggResult
+        {
+            EventType = g.Key,
+            Count = g.CountMerge(s => s.EventCount),
+            Total = g.SumMerge<EventStat, double>(s => s.TotalAmount),
+        })
+        .OrderBy(r => r.EventType)
+        .ToListAsync();
 
     Console.WriteLine("Querying aggregated view with -Merge functions:");
     foreach (var stat in stats)
@@ -422,7 +425,8 @@ public class EventStat
 public class AggResult
 {
     public string EventType { get; set; } = "";
-    public ulong Count { get; set; }
+    // CountMerge returns Int64 (long), not UInt64 — match the translator return type.
+    public long Count { get; set; }
     public double Total { get; set; }
 }
 
@@ -453,14 +457,15 @@ public class AggregatingMergeTreeContext(string connectionString) : DbContext
             entity.Property(x => x.TotalAmount).HasAggregateFunction("sum", typeof(double));
 
             // Define the materialized view that populates this table from RawEventsAgg
-            entity.AsMaterializedViewRaw(
-                sourceTable: "RawEventsAgg",
-                selectSql: @"SELECT
-                    EventType,
-                    countState() AS EventCount,
-                    sumState(Amount) AS TotalAmount
-                FROM RawEventsAgg
-                GROUP BY EventType");
+            // using the typed LINQ overload with -State combinators.
+            entity.AsMaterializedView<EventStat, RawEvent>(events => events
+                .GroupBy(x => x.EventType)
+                .Select(g => new EventStat
+                {
+                    EventType = g.Key,
+                    EventCount = g.CountState(),
+                    TotalAmount = g.SumState(x => x.Amount),
+                }));
         });
 
         modelBuilder.Entity<AggResult>(entity =>

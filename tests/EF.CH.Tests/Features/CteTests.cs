@@ -100,16 +100,7 @@ public class CteTests : IAsyncLifetime
 
     private async Task SetupTable(CteTestContext context)
     {
-        await context.Database.ExecuteSqlRawAsync(@"
-            CREATE TABLE IF NOT EXISTS ""CteEvents"" (
-                ""Id"" UUID,
-                ""Name"" String,
-                ""Category"" String,
-                ""Amount"" Decimal64(2),
-                ""EventDate"" DateTime64(3)
-            ) ENGINE = MergeTree()
-            ORDER BY ""Id""
-        ");
+        await context.Database.EnsureCreatedAsync();
     }
 
     private async Task SeedData(CteTestContext context)

@@ -94,8 +94,340 @@ internal class ClickHouseMethodRewritingVisitor : ExpressionVisitor
         if (genericDef == ClickHouseQueryableExtensions.AsofLeftJoinMethodInfo)
             return RewriteAsofJoin(visited, isLeft: true);
 
+        // ClickHouseAggregates.XxxMerge on a grouping — rewrite into Enumerable.Sum/Count/…
+        // with a MergeSentinel selector so EF's navigation expander accepts it.
+        if (visited.Method.DeclaringType == typeof(ClickHouseAggregates)
+            && MergeRewrites.TryGetValue(visited.Method.Name, out var rewrite))
+        {
+            var rewritten = rewrite(visited);
+            if (rewritten != null) return rewritten;
+        }
+
         return visited;
     }
+
+    private static readonly Dictionary<string, Func<MethodCallExpression, Expression?>> MergeRewrites = new()
+    {
+        // -Merge (read AggregatingMergeTree state back into scalars)
+        ["CountMerge"] = e => RewriteSimpleMerge(e, "countMerge", "Sum"),
+        ["SumMerge"] = e => RewriteSimpleMerge(e, "sumMerge", "Sum"),
+        ["AvgMerge"] = e => RewriteSimpleMerge(e, "avgMerge", "Sum"),
+        ["MinMerge"] = e => RewriteSimpleMerge(e, "minMerge", "Sum"),
+        ["MaxMerge"] = e => RewriteSimpleMerge(e, "maxMerge", "Sum"),
+        ["UniqMerge"] = e => RewriteSimpleMerge(e, "uniqMerge", "Sum"),
+        ["UniqExactMerge"] = e => RewriteSimpleMerge(e, "uniqExactMerge", "Sum"),
+        ["AnyMerge"] = e => RewriteSimpleMerge(e, "anyMerge", "Sum"),
+        ["AnyLastMerge"] = e => RewriteSimpleMerge(e, "anyLastMerge", "Sum"),
+        ["QuantileMerge"] = e => RewriteParametricMerge(e, "quantileMerge"),
+
+        // Non-merge aggregates on runtime groupings. Each rewrites
+        // `ClickHouseAggregates.X(g, ...)` into `Enumerable.Max(g, s => AggregateSentinel...(s.col, "x"))`
+        // or similar. The aggregate translator intercepts the sentinel in
+        // source.Selector and emits the real function (see
+        // ClickHouseAggregateMethodTranslator.TranslateMergeSentinel).
+        ["Uniq"] = e => RewriteSimpleAggregate(e, "uniq"),
+        ["UniqExact"] = e => RewriteSimpleAggregate(e, "uniqExact"),
+        ["UniqCombined"] = e => RewriteSimpleAggregate(e, "uniqCombined"),
+        ["UniqCombined64"] = e => RewriteSimpleAggregate(e, "uniqCombined64"),
+        ["UniqHLL12"] = e => RewriteSimpleAggregate(e, "uniqHLL12"),
+        ["UniqTheta"] = e => RewriteSimpleAggregate(e, "uniqTheta"),
+        ["AnyValue"] = e => RewriteSimpleAggregate(e, "any"),
+        ["AnyLastValue"] = e => RewriteSimpleAggregate(e, "anyLast"),
+        ["Median"] = e => RewriteSimpleAggregate(e, "median"),
+        ["StddevPop"] = e => RewriteSimpleAggregate(e, "stddevPop"),
+        ["StddevSamp"] = e => RewriteSimpleAggregate(e, "stddevSamp"),
+        ["VarPop"] = e => RewriteSimpleAggregate(e, "varPop"),
+        ["VarSamp"] = e => RewriteSimpleAggregate(e, "varSamp"),
+        ["GroupArray"] = e => RewriteGroupArray(e, "groupArray"),
+        ["GroupUniqArray"] = e => RewriteGroupArray(e, "groupUniqArray"),
+        ["Quantile"] = e => RewriteParametricAggregate(e, "quantile"),
+        ["QuantileTDigest"] = e => RewriteParametricAggregate(e, "quantileTDigest"),
+        ["QuantileExact"] = e => RewriteParametricAggregate(e, "quantileExact"),
+        ["QuantileTiming"] = e => RewriteParametricAggregate(e, "quantileTiming"),
+        ["Quantiles"] = e => RewriteMultiQuantileAggregate(e, "quantiles"),
+        ["QuantilesTDigest"] = e => RewriteMultiQuantileAggregate(e, "quantilesTDigest"),
+        ["TopK"] = e => RewriteTopK(e, "topK"),
+        ["ArgMax"] = e => RewriteTwoSelectorAggregate(e, "argMax"),
+        ["ArgMin"] = e => RewriteTwoSelectorAggregate(e, "argMin"),
+    };
+
+    /// <summary>
+    /// Rewrites <c>ClickHouseAggregates.XxxMerge(grouping, sel)</c> into
+    /// <c>Enumerable.Sum(grouping, s =&gt; ClickHouseFunctions.MergeSentinel&lt;long&gt;(sel(s), "xxxMerge"))</c>.
+    /// Navigation expander accepts <c>Enumerable.Sum</c>; the aggregate translator later
+    /// detects the sentinel in the selector and emits <c>xxxMerge(state)</c> directly with
+    /// the user's declared return type. If the user's return type isn't <c>long</c> we wrap
+    /// the outer call in a Convert so the LINQ type-checking matches; at SQL-translation
+    /// time that Convert is a no-op because the sentinel emits the real function.
+    /// </summary>
+    private static Expression? RewriteSimpleMerge(
+        MethodCallExpression call,
+        string sqlFunctionName,
+        string _surrogateAggregate)
+    {
+        if (call.Arguments.Count != 2) return null;
+
+        var groupingArg = call.Arguments[0];
+        var selector = UnwrapLambda(call.Arguments[1]);
+        var sourceType = call.Method.GetGenericArguments()[0];
+        var userReturnType = call.Method.ReturnType;
+
+        // Sentinel always returns long, so we can always hit Enumerable.Sum<TSource>(…, Func<TSource,long>).
+        var sentinelMethod = typeof(ClickHouseFunctions)
+            .GetMethod(nameof(ClickHouseFunctions.MergeSentinel))!
+            .MakeGenericMethod(typeof(long), userReturnType);
+
+        var newBody = Expression.Call(
+            sentinelMethod,
+            selector.Body,
+            Expression.Constant(sqlFunctionName));
+        var newSelector = Expression.Lambda(
+            typeof(Func<,>).MakeGenericType(sourceType, typeof(long)),
+            newBody,
+            selector.Parameters);
+
+        var sumLong = typeof(Enumerable).GetMethods()
+            .Where(m => m.Name == "Sum" && m.GetParameters().Length == 2 && m.IsGenericMethodDefinition)
+            .First(m => m.GetParameters()[1].ParameterType.GetGenericArguments().Last() == typeof(long))
+            .MakeGenericMethod(sourceType);
+
+        Expression aggregate = Expression.Call(null, sumLong, groupingArg, newSelector);
+
+        // If the user's declared return type isn't long, add an unchecked cast. The SQL
+        // translator ignores the Convert because the sentinel produces the final value.
+        if (userReturnType != typeof(long))
+        {
+            aggregate = Expression.Convert(aggregate, userReturnType);
+        }
+
+        return aggregate;
+    }
+
+    private static Expression? RewriteParametricMerge(
+        MethodCallExpression call,
+        string sqlFunctionName)
+    {
+        // Args: [0]=grouping, [1]=level (double), [2]=stateSelector
+        if (call.Arguments.Count != 3) return null;
+
+        var groupingArg = call.Arguments[0];
+        var levelArg = call.Arguments[1];
+        var selector = UnwrapLambda(call.Arguments[2]);
+        var sourceType = call.Method.GetGenericArguments()[0];
+        var userReturnType = call.Method.ReturnType;
+
+        var sentinelMethod = typeof(ClickHouseFunctions)
+            .GetMethod(nameof(ClickHouseFunctions.MergeSentinelParametric))!
+            .MakeGenericMethod(typeof(double), userReturnType);
+
+        var newBody = Expression.Call(
+            sentinelMethod,
+            selector.Body,
+            Expression.Constant(sqlFunctionName),
+            levelArg);
+        var newSelector = Expression.Lambda(
+            typeof(Func<,>).MakeGenericType(sourceType, typeof(double)),
+            newBody,
+            selector.Parameters);
+
+        var sumDouble = typeof(Enumerable).GetMethods()
+            .Where(m => m.Name == "Sum" && m.GetParameters().Length == 2 && m.IsGenericMethodDefinition)
+            .First(m => m.GetParameters()[1].ParameterType.GetGenericArguments().Last() == typeof(double))
+            .MakeGenericMethod(sourceType);
+
+        Expression aggregate = Expression.Call(null, sumDouble, groupingArg, newSelector);
+        if (userReturnType != typeof(double))
+            aggregate = Expression.Convert(aggregate, userReturnType);
+        return aggregate;
+    }
+
+    // ─── Non-merge aggregate rewrites ────────────────────────────────────────
+
+    private static Expression? RewriteSimpleAggregate(MethodCallExpression call, string sqlFunctionName)
+    {
+        // Shape: ClickHouseAggregates.X(grouping, Func<T, TInput>) → returnType
+        if (call.Arguments.Count != 2) return null;
+        var groupingArg = call.Arguments[0];
+        var selector = UnwrapLambda(call.Arguments[1]);
+        var sourceType = call.Method.GetGenericArguments()[0];
+        var inputType = selector.Body.Type;
+        var returnType = call.Method.ReturnType;
+
+        // Sentinel: AggregateSentinel<TInput, TSurrogate, TReal>(input, fn) → TSurrogate.
+        // Surrogate = long so we can hit Enumerable.Sum<TSource, long> — then Convert to TReal.
+        var sentinel = typeof(ClickHouseFunctions)
+            .GetMethod(nameof(ClickHouseFunctions.AggregateSentinel))!
+            .MakeGenericMethod(inputType, typeof(long), returnType);
+        var newBody = Expression.Call(sentinel, selector.Body, Expression.Constant(sqlFunctionName));
+        var newSelector = Expression.Lambda(
+            typeof(Func<,>).MakeGenericType(sourceType, typeof(long)),
+            newBody, selector.Parameters);
+
+        var sumLong = FindSumWithReturnType(sourceType, typeof(long));
+        Expression agg = Expression.Call(null, sumLong, groupingArg, newSelector);
+        if (returnType != typeof(long)) agg = Expression.Convert(agg, returnType);
+        return agg;
+    }
+
+    private static Expression? RewriteParametricAggregate(MethodCallExpression call, string sqlFunctionName)
+    {
+        // Shape: X(grouping, double level, Func<T, double>) → double
+        if (call.Arguments.Count != 3) return null;
+        var groupingArg = call.Arguments[0];
+        var levelArg = call.Arguments[1];
+        var selector = UnwrapLambda(call.Arguments[2]);
+        var sourceType = call.Method.GetGenericArguments()[0];
+        var inputType = selector.Body.Type;
+        var returnType = call.Method.ReturnType;
+
+        var sentinel = typeof(ClickHouseFunctions)
+            .GetMethod(nameof(ClickHouseFunctions.AggregateSentinelParametric))!
+            .MakeGenericMethod(inputType, typeof(double), returnType);
+        var newBody = Expression.Call(sentinel, selector.Body, Expression.Constant(sqlFunctionName), levelArg);
+        var newSelector = Expression.Lambda(
+            typeof(Func<,>).MakeGenericType(sourceType, typeof(double)),
+            newBody, selector.Parameters);
+
+        var sumDouble = FindSumWithReturnType(sourceType, typeof(double));
+        Expression agg = Expression.Call(null, sumDouble, groupingArg, newSelector);
+        if (returnType != typeof(double)) agg = Expression.Convert(agg, returnType);
+        return agg;
+    }
+
+    private static Expression? RewriteMultiQuantileAggregate(MethodCallExpression call, string sqlFunctionName)
+    {
+        // Shape: X(grouping, double[] levels, Func<T, double>) → double[]
+        if (call.Arguments.Count != 3) return null;
+        var groupingArg = call.Arguments[0];
+        var levelsArg = call.Arguments[1];
+        var selector = UnwrapLambda(call.Arguments[2]);
+        var sourceType = call.Method.GetGenericArguments()[0];
+        var inputType = selector.Body.Type;
+        var returnType = call.Method.ReturnType; // double[]
+
+        var sentinel = typeof(ClickHouseFunctions)
+            .GetMethod(nameof(ClickHouseFunctions.AggregateSentinelMultiParam))!
+            .MakeGenericMethod(inputType, returnType, returnType);
+        var newBody = Expression.Call(sentinel, selector.Body, Expression.Constant(sqlFunctionName), levelsArg);
+        var newSelector = Expression.Lambda(
+            typeof(Func<,>).MakeGenericType(sourceType, returnType),
+            newBody, selector.Parameters);
+
+        var maxMethod = FindMaxWithGenericReturn(sourceType, returnType);
+        return Expression.Call(null, maxMethod, groupingArg, newSelector);
+    }
+
+    private static Expression? RewriteGroupArray(MethodCallExpression call, string sqlFunctionName)
+    {
+        // Two overloads:
+        //   X(grouping, Func<T, TValue>) → TValue[]
+        //   X(grouping, int maxSize, Func<T, TValue>) → TValue[]
+        var groupingArg = call.Arguments[0];
+        LambdaExpression selector;
+        Expression? maxSizeArg = null;
+        if (call.Arguments.Count == 2)
+        {
+            selector = UnwrapLambda(call.Arguments[1]);
+        }
+        else if (call.Arguments.Count == 3)
+        {
+            maxSizeArg = call.Arguments[1];
+            selector = UnwrapLambda(call.Arguments[2]);
+        }
+        else return null;
+
+        var sourceType = call.Method.GetGenericArguments()[0];
+        var inputType = selector.Body.Type;
+        var returnType = call.Method.ReturnType;
+
+        Expression newBody;
+        if (maxSizeArg is null)
+        {
+            var sentinel = typeof(ClickHouseFunctions)
+                .GetMethod(nameof(ClickHouseFunctions.AggregateSentinel))!
+                .MakeGenericMethod(inputType, returnType, returnType);
+            newBody = Expression.Call(sentinel, selector.Body, Expression.Constant(sqlFunctionName));
+        }
+        else
+        {
+            var sentinel = typeof(ClickHouseFunctions)
+                .GetMethod(nameof(ClickHouseFunctions.AggregateSentinelIntParametric))!
+                .MakeGenericMethod(inputType, returnType, returnType);
+            newBody = Expression.Call(sentinel, selector.Body, Expression.Constant(sqlFunctionName), maxSizeArg);
+        }
+
+        var newSelector = Expression.Lambda(
+            typeof(Func<,>).MakeGenericType(sourceType, returnType),
+            newBody, selector.Parameters);
+        var maxMethod = FindMaxWithGenericReturn(sourceType, returnType);
+        return Expression.Call(null, maxMethod, groupingArg, newSelector);
+    }
+
+    private static Expression? RewriteTopK(MethodCallExpression call, string sqlFunctionName)
+    {
+        // Shape: TopK(grouping, int k, Func<T, TValue>) → TValue[]
+        if (call.Arguments.Count != 3) return null;
+        var groupingArg = call.Arguments[0];
+        var kArg = call.Arguments[1];
+        var selector = UnwrapLambda(call.Arguments[2]);
+        var sourceType = call.Method.GetGenericArguments()[0];
+        var inputType = selector.Body.Type;
+        var returnType = call.Method.ReturnType;
+
+        var sentinel = typeof(ClickHouseFunctions)
+            .GetMethod(nameof(ClickHouseFunctions.AggregateSentinelIntParametric))!
+            .MakeGenericMethod(inputType, returnType, returnType);
+        var newBody = Expression.Call(sentinel, selector.Body, Expression.Constant(sqlFunctionName), kArg);
+        var newSelector = Expression.Lambda(
+            typeof(Func<,>).MakeGenericType(sourceType, returnType),
+            newBody, selector.Parameters);
+
+        var maxMethod = FindMaxWithGenericReturn(sourceType, returnType);
+        return Expression.Call(null, maxMethod, groupingArg, newSelector);
+    }
+
+    private static Expression? RewriteTwoSelectorAggregate(MethodCallExpression call, string sqlFunctionName)
+    {
+        // Shape: ArgMax(grouping, Func<T, TArg>, Func<T, TVal>) → TArg
+        if (call.Arguments.Count != 3) return null;
+        var groupingArg = call.Arguments[0];
+        var argSelector = UnwrapLambda(call.Arguments[1]);
+        var valSelector = UnwrapLambda(call.Arguments[2]);
+        var sourceType = call.Method.GetGenericArguments()[0];
+        var argType = argSelector.Body.Type;
+        var valType = valSelector.Body.Type;
+        var returnType = call.Method.ReturnType;
+
+        // Build selector: s => AggregateSentinelTwoArg<TArg, TVal, TReturn, TReturn>(argSel(s), valSel(s), "argMax").
+        // We reuse the argSelector's parameter and rebuild the val-body against it.
+        var param = argSelector.Parameters[0];
+        var valBody = new ParameterReplacer(valSelector.Parameters[0], param).Visit(valSelector.Body);
+
+        var sentinel = typeof(ClickHouseFunctions)
+            .GetMethod(nameof(ClickHouseFunctions.AggregateSentinelTwoArg))!
+            .MakeGenericMethod(argType, valType, returnType, returnType);
+        var newBody = Expression.Call(sentinel, argSelector.Body, valBody!, Expression.Constant(sqlFunctionName));
+        var newSelector = Expression.Lambda(
+            typeof(Func<,>).MakeGenericType(sourceType, returnType),
+            newBody, argSelector.Parameters);
+
+        var maxMethod = FindMaxWithGenericReturn(sourceType, returnType);
+        return Expression.Call(null, maxMethod, groupingArg, newSelector);
+    }
+
+    // ─── Surrogate lookups ──────────────────────────────────────────────────
+
+    private static MethodInfo FindSumWithReturnType(Type sourceType, Type returnType)
+        => typeof(Enumerable).GetMethods()
+            .Where(m => m.Name == "Sum" && m.GetParameters().Length == 2 && m.IsGenericMethodDefinition)
+            .First(m => m.GetParameters()[1].ParameterType.GetGenericArguments().Last() == returnType)
+            .MakeGenericMethod(sourceType);
+
+    private static MethodInfo FindMaxWithGenericReturn(Type sourceType, Type returnType)
+        => typeof(Enumerable).GetMethods()
+            .Where(m => m.Name == "Max" && m.GetParameters().Length == 2 && m.IsGenericMethodDefinition)
+            .First(m => m.GetGenericArguments().Length == 2)
+            .MakeGenericMethod(sourceType, returnType);
 
     /// <summary>
     /// Rewrites ArrayJoin(source, arraySelector, resultSelector) → source.Select(modifiedResultSelector)

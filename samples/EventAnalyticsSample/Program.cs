@@ -473,21 +473,17 @@ public class AnalyticsDbContext(string connectionString) : DbContext
                 .OrderBy(x => x.Page)
                 .ThenBy(x => x.Date);
 
-            // Materialized view: count page views from raw events
-            // Cast count() to Int64 to match the C# long property type
-            entity.AsMaterializedViewRaw(
-                sourceTable: "raw_events",
-                selectSql: @"
-                    SELECT
-                        toDate(""Timestamp"") AS ""Date"",
-                        ""Page"",
-                        toInt64(count()) AS ""ViewCount"",
-                        toInt64(1) AS ""UniqueVisitors""
-                    FROM ""raw_events""
-                    WHERE ""EventType"" = 'page_view'
-                    GROUP BY ""Date"", ""Page""
-                ",
-                populate: false);
+            // Materialized view: count page views from raw events using typed LINQ.
+            entity.AsMaterializedView<PageViewSummary, RawEvent>(events => events
+                .Where(e => e.EventType == "page_view")
+                .GroupBy(e => new { Date = e.Timestamp.Date, e.Page })
+                .Select(g => new PageViewSummary
+                {
+                    Date = g.Key.Date,
+                    Page = g.Key.Page,
+                    ViewCount = g.Count(),
+                    UniqueVisitors = 1L,
+                }));
         });
 
         // ============================================================

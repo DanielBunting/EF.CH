@@ -1,5 +1,6 @@
 using EF.CH.Configuration;
 using EF.CH.Infrastructure;
+using EF.CH.Metadata;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.Configuration;
@@ -319,6 +320,14 @@ public class ClickHouseDbContextOptionsBuilder
         ((IDbContextOptionsBuilderInfrastructure)_optionsBuilder).AddOrUpdateExtension(extension);
         return this;
     }
+
+    /// <summary>
+    /// Sets the default cluster to the <c>{cluster}</c> server-side macro, so
+    /// DDL emits <c>ON CLUSTER '{cluster}'</c> and lets ClickHouse resolve the
+    /// cluster name from each node's <c>&lt;macros&gt;</c> config.
+    /// </summary>
+    public virtual ClickHouseDbContextOptionsBuilder UseCluster()
+        => UseCluster(ClickHouseClusterMacros.Cluster);
 
     /// <summary>
     /// Adds a named connection configuration using a fluent builder.
