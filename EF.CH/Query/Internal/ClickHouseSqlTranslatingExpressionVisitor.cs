@@ -91,6 +91,25 @@ public class ClickHouseSqlTranslatingExpressionVisitor : RelationalSqlTranslatin
             return TranslateWindowFunctionFromBuilder(unaryExpression.Operand);
         }
 
+        // arr.Length is emitted by the C# compiler as ArrayLength, not a member access.
+        // Translate to toInt32(length(arr)) — same shape the array member translator
+        // produces for its (now-unreachable) Array.Length branch.
+        if (unaryExpression.NodeType == ExpressionType.ArrayLength)
+        {
+            var operand = Visit(unaryExpression.Operand);
+            if (operand is SqlExpression sqlOperand)
+            {
+                return _sqlExpressionFactory.WrapWithClrCast(
+                    _sqlExpressionFactory.Function(
+                        "length",
+                        new[] { sqlOperand },
+                        nullable: true,
+                        argumentsPropagateNullability: new[] { true },
+                        typeof(ulong)),
+                    typeof(int));
+            }
+        }
+
         // Handle NOT operations
         if (unaryExpression.NodeType == ExpressionType.Not &&
             unaryExpression.Operand.Type == typeof(bool))

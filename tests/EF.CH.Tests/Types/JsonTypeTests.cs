@@ -333,19 +333,20 @@ public class JsonTypeTests
 
         Assert.Equal(typeof(JsonDocument), mapping.ClrType);
         Assert.IsType<ClickHouseJsonDocumentValueConverter>(mapping.Converter);
-        Assert.Equal(typeof(JsonElement), mapping.Converter!.ProviderClrType);
+        Assert.Equal(typeof(string), mapping.Converter!.ProviderClrType);
     }
 
     [Fact]
-    public void JsonDocumentValueConverter_RoundTripsThroughJsonElement()
+    public void JsonDocumentValueConverter_RoundTripsThroughRawJson()
     {
         var converter = new ClickHouseJsonDocumentValueConverter();
         using var doc = JsonDocument.Parse("""{"name":"alpha","score":42}""");
 
-        var element = (JsonElement)converter.ConvertToProvider(doc)!;
-        Assert.Equal("alpha", element.GetProperty("name").GetString());
+        var json = (string)converter.ConvertToProvider(doc)!;
+        using var parsed = JsonDocument.Parse(json);
+        Assert.Equal("alpha", parsed.RootElement.GetProperty("name").GetString());
 
-        var roundTripped = (JsonDocument)converter.ConvertFromProvider(element)!;
+        var roundTripped = (JsonDocument)converter.ConvertFromProvider(json)!;
         Assert.Equal(42, roundTripped.RootElement.GetProperty("score").GetInt32());
     }
 
