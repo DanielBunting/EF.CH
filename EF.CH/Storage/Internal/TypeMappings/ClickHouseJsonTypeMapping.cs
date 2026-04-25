@@ -2,6 +2,7 @@ using System.Data.Common;
 using System.Text;
 using System.Text.Json;
 using ClickHouse.Driver.ADO.Parameters;
+using EF.CH.Storage.Internal;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
@@ -41,7 +42,7 @@ public class ClickHouseJsonTypeMapping : RelationalTypeMapping
         int? maxDynamicPaths = null,
         int? maxDynamicTypes = null)
         : base(new RelationalTypeMappingParameters(
-            new CoreTypeMappingParameters(clrType),
+            BuildCoreParameters(clrType, converter: null),
             BuildStoreType(maxDynamicPaths, maxDynamicTypes),
             StoreTypePostfix.None,
             System.Data.DbType.String))
@@ -59,13 +60,25 @@ public class ClickHouseJsonTypeMapping : RelationalTypeMapping
         int? maxDynamicPaths = null,
         int? maxDynamicTypes = null)
         : base(new RelationalTypeMappingParameters(
-            new CoreTypeMappingParameters(clrType, converter),
+            BuildCoreParameters(clrType, converter),
             BuildStoreType(maxDynamicPaths, maxDynamicTypes),
             StoreTypePostfix.None,
             System.Data.DbType.String))
     {
         MaxDynamicPaths = maxDynamicPaths;
         MaxDynamicTypes = maxDynamicTypes;
+    }
+
+    private static CoreTypeMappingParameters BuildCoreParameters(Type clrType, ValueConverter? converter)
+    {
+        if (converter is null && clrType == typeof(JsonDocument))
+        {
+            return new CoreTypeMappingParameters(clrType, new ClickHouseJsonDocumentValueConverter());
+        }
+
+        return converter is null
+            ? new CoreTypeMappingParameters(clrType)
+            : new CoreTypeMappingParameters(clrType, converter);
     }
 
     /// <summary>

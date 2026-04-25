@@ -263,8 +263,24 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
             ClickHouseJsonPathExpression jsonPathExpression => VisitJsonPath(jsonPathExpression),
             ClickHouseCteReferenceExpression cteRef => VisitCteReference(cteRef),
             ClickHouseRawSqlExpression rawSql => VisitRawSql(rawSql),
+            ClickHouseLambdaExpression lambda => VisitLambda(lambda),
             _ => base.VisitExtension(extensionExpression)
         };
+    }
+
+    private Expression VisitLambda(ClickHouseLambdaExpression lambda)
+    {
+        if (lambda.ParameterNames.Count == 1)
+        {
+            Sql.Append(lambda.ParameterNames[0]);
+        }
+        else
+        {
+            Sql.Append("(").Append(string.Join(", ", lambda.ParameterNames)).Append(")");
+        }
+        Sql.Append(" -> ");
+        Visit(lambda.Body);
+        return lambda;
     }
 
     /// <summary>
@@ -764,13 +780,44 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     }
 
     /// <summary>
-    /// Generates the GROUP BY modifier (WITH ROLLUP/CUBE/TOTALS) if set.
+    /// Generates the GROUP BY clause, with handling for ROLLUP/CUBE/TOTALS modifiers.
+    /// <para>
+    /// TOTALS is rewritten to <c>GROUPING SETS ((keys...), ())</c> rather than emitted as
+    /// <c>WITH TOTALS</c>. Reason: ClickHouse only includes the WITH TOTALS extra row in
+    /// JSON*/TabSeparated*/Pretty* output formats; RowBinary (used by ClickHouse.Driver
+    /// and therefore EF Core here) silently drops it. GROUPING SETS produces the grand
+    /// total as an ordinary GROUP BY row that streams back over RowBinary.
+    /// </para>
     /// </summary>
-    private void GenerateGroupByModifier()
+    private void GenerateGroupByClause(SelectExpression selectExpression)
     {
-        // Capture and clear the modifier
+        if (selectExpression.GroupBy.Count == 0)
+        {
+            return;
+        }
+
         var modifier = _context?.GroupByModifier ?? GroupByModifier.None;
         if (_context != null) _context.GroupByModifier = GroupByModifier.None;
+
+        Sql.AppendLine().Append("GROUP BY ");
+
+        if (modifier == GroupByModifier.Totals)
+        {
+            Sql.Append("GROUPING SETS ((");
+            for (var i = 0; i < selectExpression.GroupBy.Count; i++)
+            {
+                if (i > 0) Sql.Append(", ");
+                Visit(selectExpression.GroupBy[i]);
+            }
+            Sql.Append("), ())");
+            return;
+        }
+
+        for (var i = 0; i < selectExpression.GroupBy.Count; i++)
+        {
+            if (i > 0) Sql.Append(", ");
+            Visit(selectExpression.GroupBy[i]);
+        }
 
         switch (modifier)
         {
@@ -779,9 +826,6 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
                 break;
             case GroupByModifier.Cube:
                 Sql.Append(" WITH CUBE");
-                break;
-            case GroupByModifier.Totals:
-                Sql.Append(" WITH TOTALS");
                 break;
         }
     }
@@ -858,6 +902,11 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
             {
                 _inDeleteContext = false;
             }
+        }
+        else
+        {
+            // ClickHouse mutations require a WHERE clause; emit WHERE 1 to match all rows.
+            Sql.AppendLine().Append("WHERE 1");
         }
 
         return deleteExpression;
@@ -1080,19 +1129,8 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
             Sql.Append(rawFilter);
         }
 
-        // Generate GROUP BY
-        if (selectExpression.GroupBy.Count > 0)
-        {
-            Sql.AppendLine().Append("GROUP BY ");
-            for (var i = 0; i < selectExpression.GroupBy.Count; i++)
-            {
-                if (i > 0) Sql.Append(", ");
-                Visit(selectExpression.GroupBy[i]);
-            }
-
-            // Append GROUP BY modifier if set
-            GenerateGroupByModifier();
-        }
+        // Generate GROUP BY (with ROLLUP / CUBE / GROUPING SETS-from-TOTALS handling)
+        GenerateGroupByClause(selectExpression);
 
         // Generate HAVING
         if (selectExpression.Having != null)
@@ -1177,19 +1215,8 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
             Visit(selectExpression.Predicate);
         }
 
-        // Generate GROUP BY with modifier
-        if (selectExpression.GroupBy.Count > 0)
-        {
-            Sql.AppendLine().Append("GROUP BY ");
-            for (var i = 0; i < selectExpression.GroupBy.Count; i++)
-            {
-                if (i > 0) Sql.Append(", ");
-                Visit(selectExpression.GroupBy[i]);
-            }
-
-            // Append GROUP BY modifier
-            GenerateGroupByModifier();
-        }
+        // Generate GROUP BY with modifier (ROLLUP / CUBE / TOTALS-as-GROUPING-SETS)
+        GenerateGroupByClause(selectExpression);
 
         // Generate HAVING
         if (selectExpression.Having != null)

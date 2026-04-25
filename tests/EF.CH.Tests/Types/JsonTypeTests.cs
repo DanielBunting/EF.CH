@@ -18,7 +18,7 @@ public class FluentJsonEntity
 {
     public Guid Id { get; set; }
     public JsonElement Metadata { get; set; }
-    public JsonElement? OptionalData { get; set; }  // Nullable JsonElement (not JsonDocument - avoids EF snapshot issues)
+    public JsonElement? OptionalData { get; set; }
 }
 
 /// <summary>
@@ -316,6 +316,59 @@ public class JsonTypeTests
         Assert.Equal("Jane Doe", poco.CustomerName);
         Assert.Equal("jane@example.com", poco.CustomerEmail);
         Assert.Contains("premium", poco.Tags);
+    }
+
+    #endregion
+
+    #region JsonDocument Mapping Tests
+
+    [Fact]
+    public void TypeMappingSource_JsonDocumentProperty_GetsJsonDocumentKeyedMapping()
+    {
+        using var context = CreateContext<JsonDocumentContext>();
+
+        var entityType = context.Model.FindEntityType(typeof(JsonDocumentEntity))!;
+        var property = entityType.FindProperty(nameof(JsonDocumentEntity.Data))!;
+        var mapping = property.GetTypeMapping();
+
+        Assert.Equal(typeof(JsonDocument), mapping.ClrType);
+        Assert.IsType<ClickHouseJsonDocumentValueConverter>(mapping.Converter);
+        Assert.Equal(typeof(JsonElement), mapping.Converter!.ProviderClrType);
+    }
+
+    [Fact]
+    public void JsonDocumentValueConverter_RoundTripsThroughJsonElement()
+    {
+        var converter = new ClickHouseJsonDocumentValueConverter();
+        using var doc = JsonDocument.Parse("""{"name":"alpha","score":42}""");
+
+        var element = (JsonElement)converter.ConvertToProvider(doc)!;
+        Assert.Equal("alpha", element.GetProperty("name").GetString());
+
+        var roundTripped = (JsonDocument)converter.ConvertFromProvider(element)!;
+        Assert.Equal(42, roundTripped.RootElement.GetProperty("score").GetInt32());
+    }
+
+    public class JsonDocumentEntity
+    {
+        public Guid Id { get; set; }
+        public JsonDocument Data { get; set; } = JsonDocument.Parse("{}");
+    }
+
+    public class JsonDocumentContext : DbContext
+    {
+        public JsonDocumentContext(DbContextOptions<JsonDocumentContext> options) : base(options) { }
+        public DbSet<JsonDocumentEntity> Entities => Set<JsonDocumentEntity>();
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<JsonDocumentEntity>(e =>
+            {
+                e.HasKey(x => x.Id);
+                e.ToTable("json_document_entities");
+                e.UseMergeTree(x => x.Id);
+                e.Property(x => x.Data).HasColumnType("JSON");
+            });
+        }
     }
 
     #endregion

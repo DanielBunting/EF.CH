@@ -7,7 +7,7 @@ public static class ClusterConfigTemplates
     // Pinned to a modern release that understands all settings the current
     // ClickHouse.Driver emits. Bump together with the driver package when
     // necessary — the fleet-wide integration tests track `:latest`.
-    public const string ClickHouseImage = "clickhouse/clickhouse-server:25.3";
+    public const string ClickHouseImage = "clickhouse/clickhouse-server:25.6";
 
     public const string ReplicatedClusterName = "repl_cluster";
     public const string ShardedClusterName = "shard_cluster";

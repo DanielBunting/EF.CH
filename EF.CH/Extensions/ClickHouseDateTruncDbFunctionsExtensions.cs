@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Query;
 
 namespace EF.CH.Extensions;
 
@@ -83,7 +84,7 @@ public static class ClickHouseDateTruncDbFunctionsExtensions
     /// Returns the difference between two dates in the specified unit.
     /// Unit is specified via <see cref="ClickHouseIntervalUnit"/>.
     /// </summary>
-    public static long DateDiff(this DbFunctions _, ClickHouseIntervalUnit unit, DateTime start, DateTime end)
+    public static long DateDiff(this DbFunctions _, [NotParameterized] ClickHouseIntervalUnit unit, DateTime start, DateTime end)
         => throw new InvalidOperationException("This method is for LINQ translation only.");
 
     /// <summary>
@@ -183,7 +184,7 @@ public static class ClickHouseDateTruncDbFunctionsExtensions
     /// Adds a specified number of units to a DateTime.
     /// Unit is specified via <see cref="ClickHouseIntervalUnit"/>.
     /// </summary>
-    public static DateTime DateAdd(this DbFunctions _, ClickHouseIntervalUnit unit, int value, DateTime dt)
+    public static DateTime DateAdd(this DbFunctions _, [NotParameterized] ClickHouseIntervalUnit unit, int value, DateTime dt)
         => throw new InvalidOperationException("This method is for LINQ translation only.");
 
     /// <summary>
@@ -191,7 +192,7 @@ public static class ClickHouseDateTruncDbFunctionsExtensions
     /// Subtracts a specified number of units from a DateTime.
     /// Unit is specified via <see cref="ClickHouseIntervalUnit"/>.
     /// </summary>
-    public static DateTime DateSub(this DbFunctions _, ClickHouseIntervalUnit unit, int value, DateTime dt)
+    public static DateTime DateSub(this DbFunctions _, [NotParameterized] ClickHouseIntervalUnit unit, int value, DateTime dt)
         => throw new InvalidOperationException("This method is for LINQ translation only.");
 
     /// <summary>
@@ -199,7 +200,7 @@ public static class ClickHouseDateTruncDbFunctionsExtensions
     /// Returns the difference between two dates in the specified unit, accounting for calendar boundaries.
     /// Unit is specified via <see cref="ClickHouseIntervalUnit"/>.
     /// </summary>
-    public static long Age(this DbFunctions _, ClickHouseIntervalUnit unit, DateTime start, DateTime end)
+    public static long Age(this DbFunctions _, [NotParameterized] ClickHouseIntervalUnit unit, DateTime start, DateTime end)
         => throw new InvalidOperationException("This method is for LINQ translation only.");
 
     /// <summary>
@@ -207,6 +208,6 @@ public static class ClickHouseDateTruncDbFunctionsExtensions
     /// Rounds down a DateTime to the start of the specified interval.
     /// Unit is specified via <see cref="ClickHouseIntervalUnit"/>.
     /// </summary>
-    public static DateTime ToStartOfInterval(this DbFunctions _, DateTime dt, int value, ClickHouseIntervalUnit unit)
+    public static DateTime ToStartOfInterval(this DbFunctions _, DateTime dt, int value, [NotParameterized] ClickHouseIntervalUnit unit)
         => throw new InvalidOperationException("This method is for LINQ translation only.");
 }

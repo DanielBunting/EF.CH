@@ -164,6 +164,15 @@ public class ClickHouseSqlNullabilityProcessor : SqlNullabilityProcessor
             return rawSqlExpression;
         }
 
+        if (sqlExpression is ClickHouseLambdaExpression lambdaExpression)
+        {
+            var visitedBody = Visit(lambdaExpression.Body, allowOptimizedExpansion: false, out var bodyNullable);
+            nullable = bodyNullable;
+            return visitedBody == lambdaExpression.Body
+                ? lambdaExpression
+                : new ClickHouseLambdaExpression(lambdaExpression.ParameterNames, visitedBody);
+        }
+
         if (sqlExpression is ClickHouseMergeSentinelExpression sentinel)
         {
             // Merge sentinels are pipeline markers; the aggregate translator unwraps

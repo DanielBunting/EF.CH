@@ -149,6 +149,36 @@ public class ClickHouseDate32TypeMapping : RelationalTypeMapping
 }
 
 /// <summary>
+/// Type mapping for ClickHouse Date / Date32 columns when the property is declared as DateTime.
+/// The driver materialises Date and Date32 columns as DateTime, so no value converter is needed.
+/// </summary>
+public class ClickHouseDateTimeAsDateTypeMapping : RelationalTypeMapping
+{
+    public ClickHouseDateTimeAsDateTypeMapping(string storeType = "Date32")
+        : base(new RelationalTypeMappingParameters(
+            new CoreTypeMappingParameters(typeof(DateTime)),
+            storeType,
+            StoreTypePostfix.None,
+            System.Data.DbType.Date))
+    {
+    }
+
+    protected ClickHouseDateTimeAsDateTypeMapping(RelationalTypeMappingParameters parameters)
+        : base(parameters)
+    {
+    }
+
+    protected override RelationalTypeMapping Clone(RelationalTypeMappingParameters parameters)
+        => new ClickHouseDateTimeAsDateTypeMapping(parameters);
+
+    protected override string GenerateNonNullSqlLiteral(object value)
+    {
+        var date = ((DateTime)value).Date;
+        return $"'{date:yyyy-MM-dd}'";
+    }
+}
+
+/// <summary>
 /// Type mapping for DateTimeOffset, stored as DateTime64 with configurable timezone.
 /// Converts DateTimeOffset to UTC DateTime on write, and applies the configured timezone on read.
 /// </summary>

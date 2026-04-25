@@ -158,13 +158,15 @@ public class ClickHouseArrayMethodTranslator : IMethodCallTranslator
                 argumentsPropagateNullability: new[] { true },
                 method.ReturnType),
 
-            // ArrayCount(array) → length(array)
-            // ArrayCount(array, predicate) → arrayCount(lambda, array) - predicate handling requires lambda support
-            "ArrayCount" when arguments.Count == 0 => _sqlExpressionFactory.Function(
-                "length",
-                new[] { instance },
-                nullable: true,
-                argumentsPropagateNullability: new[] { true },
+            // ArrayCount(array) → toInt32(length(array))
+            // length() returns UInt64; wrap to match the .NET int return type.
+            "ArrayCount" when arguments.Count == 0 => _sqlExpressionFactory.WrapWithClrCast(
+                _sqlExpressionFactory.Function(
+                    "length",
+                    new[] { instance },
+                    nullable: true,
+                    argumentsPropagateNullability: new[] { true },
+                    typeof(ulong)),
                 typeof(int)),
 
             _ => null
@@ -238,15 +240,18 @@ public class ClickHouseArrayMethodTranslator : IMethodCallTranslator
                 typeof(bool));
         }
 
-        // Enumerable.Count(source) → length(source)
+        // Enumerable.Count(source) → toInt32(length(source))
+        // length() returns UInt64; wrap so the row reader sees Int32 as Count() declares.
         if (method.IsGenericMethod &&
             method.GetGenericMethodDefinition() == EnumerableCountWithoutPredicateMethod)
         {
-            return _sqlExpressionFactory.Function(
-                "length",
-                new[] { source },
-                nullable: true,
-                argumentsPropagateNullability: new[] { true },
+            return _sqlExpressionFactory.WrapWithClrCast(
+                _sqlExpressionFactory.Function(
+                    "length",
+                    new[] { source },
+                    nullable: true,
+                    argumentsPropagateNullability: new[] { true },
+                    typeof(ulong)),
                 typeof(int));
         }
 
@@ -364,18 +369,21 @@ public class ClickHouseArrayMemberTranslator : IMemberTranslator
 
         var declaringType = member.DeclaringType;
 
-        // Array.Length → length(array)
+        // Array.Length → toInt32(length(array))
+        // length() returns UInt64; wrap to match the .NET int member.
         if (declaringType?.IsArray == true && member.Name == "Length")
         {
-            return _sqlExpressionFactory.Function(
-                "length",
-                new[] { instance },
-                nullable: true,
-                argumentsPropagateNullability: new[] { true },
+            return _sqlExpressionFactory.WrapWithClrCast(
+                _sqlExpressionFactory.Function(
+                    "length",
+                    new[] { instance },
+                    nullable: true,
+                    argumentsPropagateNullability: new[] { true },
+                    typeof(ulong)),
                 typeof(int));
         }
 
-        // List<T>.Count, ICollection<T>.Count, etc. → length(array)
+        // List<T>.Count, ICollection<T>.Count, etc. → toInt32(length(array))
         if (declaringType is not null && member.Name == "Count")
         {
             if (declaringType.IsGenericType)
@@ -387,11 +395,13 @@ public class ClickHouseArrayMemberTranslator : IMemberTranslator
                     genericDef == typeof(IReadOnlyCollection<>) ||
                     genericDef == typeof(IReadOnlyList<>))
                 {
-                    return _sqlExpressionFactory.Function(
-                        "length",
-                        new[] { instance },
-                        nullable: true,
-                        argumentsPropagateNullability: new[] { true },
+                    return _sqlExpressionFactory.WrapWithClrCast(
+                        _sqlExpressionFactory.Function(
+                            "length",
+                            new[] { instance },
+                            nullable: true,
+                            argumentsPropagateNullability: new[] { true },
+                            typeof(ulong)),
                         typeof(int));
                 }
             }

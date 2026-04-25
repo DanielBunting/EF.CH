@@ -83,31 +83,52 @@ public class ClickHouseDateTimeMemberTranslator : IMemberTranslator
                     _ => null
                 };
             }
-            // Standard date part extraction
+            // Standard date part extraction. ClickHouse's toYear/toMonth/etc.
+            // return UInt8/UInt16; the C# member result is Int32. Wrap with
+            // toInt32(...) so the column comes back at the expected width
+            // (otherwise the driver throws InvalidCastException reading UInt8
+            // as Int32 at projection time).
             if (DateTimeMemberMappings.TryGetValue(member.Name, out var clickHouseFunction))
             {
-                return _sqlExpressionFactory.Convert(
-                    _sqlExpressionFactory.Function(
-                        clickHouseFunction,
-                        new[] { instance },
-                        nullable: true,
-                        argumentsPropagateNullability: new[] { true },
-                        typeof(int)),
+                return _sqlExpressionFactory.Function(
+                    "toInt32",
+                    new[]
+                    {
+                        _sqlExpressionFactory.Function(
+                            clickHouseFunction,
+                            new[] { instance },
+                            nullable: true,
+                            argumentsPropagateNullability: new[] { true },
+                            typeof(int))
+                    },
+                    nullable: true,
+                    argumentsPropagateNullability: new[] { true },
                     typeof(int));
             }
 
             // DayOfWeek: Special handling to convert ClickHouse (Mon=1..Sun=7) to .NET (Sun=0..Sat=6)
             // Formula: toDayOfWeek(x) % 7 gives Mon=1..Sat=6, Sun=0
+            // Wrap the whole modulo in toInt32 — ClickHouse's modulo result-type
+            // inference returns the smallest type that fits, so `Int32 % 7`
+            // would come back as Int16 and break the driver's GetInt32.
             if (member.Name == nameof(DateTime.DayOfWeek))
             {
-                return _sqlExpressionFactory.Modulo(
-                    _sqlExpressionFactory.Function(
-                        "toDayOfWeek",
-                        new[] { instance },
-                        nullable: true,
-                        argumentsPropagateNullability: new[] { true },
-                        typeof(int)),
-                    _sqlExpressionFactory.Constant(7));
+                return _sqlExpressionFactory.Function(
+                    "toInt32",
+                    new[]
+                    {
+                        _sqlExpressionFactory.Modulo(
+                            _sqlExpressionFactory.Function(
+                                "toDayOfWeek",
+                                new[] { instance },
+                                nullable: true,
+                                argumentsPropagateNullability: new[] { true },
+                                typeof(int)),
+                            _sqlExpressionFactory.Constant(7))
+                    },
+                    nullable: true,
+                    argumentsPropagateNullability: new[] { true },
+                    typeof(int));
             }
 
             // Date property: toDate(instance)
@@ -238,6 +259,19 @@ public class ClickHouseDateTimeMethodTranslator : IMethodCallTranslator
         _sqlExpressionFactory = sqlExpressionFactory;
     }
 
+    // ClickHouseFunctions extension methods on DateTime that map to a single
+    // ClickHouse function call. The C# return type is wider than the CH native
+    // type (e.g. toYYYYMM is UInt32, ToDayOfWeek is UInt8), so we wrap with
+    // toInt32 to match what the driver reads.
+    private static readonly Dictionary<string, string> StaticDateFunctionMappings = new()
+    {
+        ["ToYYYYMM"] = "toYYYYMM",
+        ["ToYYYYMMDD"] = "toYYYYMMDD",
+        ["ToDayOfWeek"] = "toDayOfWeek",
+        ["ToDayOfYear"] = "toDayOfYear",
+        ["ToQuarter"] = "toQuarter",
+    };
+
     public SqlExpression? Translate(
         SqlExpression? instance,
         MethodInfo method,
@@ -245,6 +279,29 @@ public class ClickHouseDateTimeMethodTranslator : IMethodCallTranslator
         IDiagnosticsLogger<DbLoggerCategory.Query> logger)
     {
         var declaringType = method.DeclaringType;
+
+        // Handle the static ClickHouseFunctions.ToYYYYMM/ToQuarter/ToDayOfWeek/ToDayOfYear/ToYYYYMMDD
+        // extension family. These are extension methods (declaring type is
+        // ClickHouseFunctions, instance is null, the date is at arguments[0]).
+        if (declaringType?.FullName == "EF.CH.Extensions.ClickHouseFunctions"
+            && StaticDateFunctionMappings.TryGetValue(method.Name, out var ext)
+            && arguments.Count >= 1)
+        {
+            return _sqlExpressionFactory.Function(
+                "toInt32",
+                new[]
+                {
+                    _sqlExpressionFactory.Function(
+                        ext,
+                        new[] { arguments[0] },
+                        nullable: true,
+                        argumentsPropagateNullability: new[] { true },
+                        typeof(int))
+                },
+                nullable: true,
+                argumentsPropagateNullability: new[] { true },
+                method.ReturnType);
+        }
 
         if (declaringType != typeof(DateTime) &&
             declaringType != typeof(DateTimeOffset) &&

@@ -50,6 +50,26 @@ public class ClickHouseJsonValueConverter<T> : ValueConverter<T, string>
 }
 
 /// <summary>
+/// Bridges a property declared as <see cref="JsonDocument"/> to the driver's
+/// <see cref="JsonElement"/> provider value.
+/// </summary>
+/// <remarks>
+/// On write the document's <see cref="JsonDocument.RootElement"/> is handed to the parameter
+/// formatter immediately, so the document outlives that single use. On read the raw text is
+/// re-parsed into a fresh <see cref="JsonDocument"/> owned by EF's change tracker, avoiding
+/// any lifetime sharing with the driver-owned element.
+/// </remarks>
+public sealed class ClickHouseJsonDocumentValueConverter : ValueConverter<JsonDocument, JsonElement>
+{
+    public ClickHouseJsonDocumentValueConverter()
+        : base(
+            doc => doc.RootElement,
+            elem => JsonDocument.Parse(elem.GetRawText()))
+    {
+    }
+}
+
+/// <summary>
 /// Factory for creating ClickHouse JSON value converters.
 /// </summary>
 public static class ClickHouseJsonValueConverterFactory

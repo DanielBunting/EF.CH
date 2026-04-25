@@ -136,9 +136,10 @@ public static class ClickHouseQueryProfilingExtensions
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>Query results with execution statistics.</returns>
     /// <remarks>
-    /// Statistics are retrieved from system.query_log after query execution.
-    /// Due to ClickHouse's asynchronous logging, statistics may not be immediately
-    /// available and retrieval is best-effort.
+    /// Statistics are read from the X-ClickHouse-Summary HTTP response header captured
+    /// by the registered command interceptor. <see cref="QueryStatistics.MemoryUsage"/>
+    /// and <see cref="QueryStatistics.PeakMemoryUsage"/> are not carried by that header
+    /// and remain at their default value.
     /// </remarks>
     public static Task<QueryResultWithStats<T>> ToListWithStatsAsync<T>(
         this IQueryable<T> query,

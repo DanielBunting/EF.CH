@@ -115,5 +115,40 @@ public static class RawClickHouse
         await WaitForMutationsAsync(connectionString, mvTargetTable, timeout);
     }
 
+    /// <summary>
+    /// Returns the rendered ClickHouse type for a column from <c>system.columns</c> (e.g. "LowCardinality(String)",
+    /// "Decimal(18, 4)", "Map(String, Int32)"). Useful for asserting that the EF type-mapping produced the right CH type.
+    /// </summary>
+    public static Task<string> ColumnTypeAsync(string connectionString, string table, string column)
+        => ScalarAsync<string>(connectionString,
+            $"SELECT type FROM system.columns WHERE database = currentDatabase() AND table = '{Esc(table)}' AND name = '{Esc(column)}'");
+
+    /// <summary>
+    /// Returns rows from <c>system.data_skipping_indices</c> for the given table. Each row carries
+    /// <c>name</c>, <c>type</c>, <c>expr</c>, <c>granularity</c> — the columns relevant to skip-index assertions.
+    /// </summary>
+    public static Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> SkipIndicesAsync(
+        string connectionString, string table)
+        => RowsAsync(connectionString,
+            $"SELECT name, type, expr, granularity FROM system.data_skipping_indices WHERE database = currentDatabase() AND table = '{Esc(table)}'");
+
+    /// <summary>
+    /// Issues a query with a <c>SETTINGS</c> clause appended. Used for surfaces that require non-default
+    /// ClickHouse settings (e.g. <c>allow_experimental_json_type=1</c>, <c>allow_suspicious_low_cardinality_types=1</c>).
+    /// </summary>
+    public static async Task ExecuteWithSettingsAsync(
+        string connectionString, string sql, IReadOnlyDictionary<string, object> settings)
+    {
+        var clause = string.Join(", ", settings.Select(kv => $"{kv.Key} = {FormatSettingValue(kv.Value)}"));
+        await ExecuteAsync(connectionString, $"{sql} SETTINGS {clause}");
+    }
+
+    private static string FormatSettingValue(object value) => value switch
+    {
+        bool b => b ? "1" : "0",
+        string s => $"'{Esc(s)}'",
+        _ => Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
+    };
+
     public static string Esc(string raw) => raw.Replace("'", "''");
 }

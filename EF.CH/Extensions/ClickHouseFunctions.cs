@@ -233,4 +233,16 @@ public static class ClickHouseFunctions
     public static TSurrogate AggregateSentinelTwoArgIntParam<TArg, TVal, TSurrogate, TReal>(TArg arg, TVal val, string functionName, int parameter) => Throw<TSurrogate>();
 
     #endregion
+
+    #region PREWHERE marker (internal)
+
+    // Routes a PreWhere predicate through Where so the NavigationExpandingExpressionVisitor
+    // accepts it. ClickHouseQueryTranslationPreprocessor rewrites
+    // `source.PreWhere(x => p)` into `source.Where(x => PreWhereMarker(p))`.
+    // ClickHouseSqlTranslatingExpressionVisitor detects this call, lifts the inner SQL
+    // into ClickHouseQueryCompilationContextOptions.PreWhereExpression, and substitutes
+    // a constant true so the WHERE clause is a no-op.
+    internal static bool PreWhereMarker(bool predicate) => Throw<bool>();
+
+    #endregion
 }

@@ -156,4 +156,46 @@ public class ClickHouseSqlExpressionFactory : SqlExpressionFactory
             returnType,
             _typeMappingSource.FindMapping(returnType));
     }
+
+    /// <summary>
+    /// Wraps <paramref name="inner"/> in a ClickHouse cast (toInt32, toUInt32, toFloat64, …)
+    /// matching <paramref name="clrType"/>. Use when the underlying CH function returns
+    /// a different width / signedness than the .NET method declares — without the wrapper
+    /// the row reader receives the raw CH type and throws InvalidCastException.
+    /// </summary>
+    public SqlExpression WrapWithClrCast(SqlExpression inner, Type clrType, bool nullable = true)
+    {
+        var castFn = ChCastForClrType(clrType);
+        if (castFn is null)
+        {
+            return inner;
+        }
+
+        return Function(
+            castFn,
+            new[] { inner },
+            nullable: nullable,
+            argumentsPropagateNullability: new[] { true },
+            clrType,
+            _typeMappingSource.FindMapping(clrType));
+    }
+
+    private static string? ChCastForClrType(Type clrType)
+    {
+        var t = Nullable.GetUnderlyingType(clrType) ?? clrType;
+        return t.Name switch
+        {
+            "Int64" => "toInt64",
+            "Int32" => "toInt32",
+            "Int16" => "toInt16",
+            "SByte" => "toInt8",
+            "UInt64" => "toUInt64",
+            "UInt32" => "toUInt32",
+            "UInt16" => "toUInt16",
+            "Byte" => "toUInt8",
+            "Single" => "toFloat32",
+            "Double" => "toFloat64",
+            _ => null,
+        };
+    }
 }

@@ -1,17 +1,23 @@
 using System.Globalization;
 using System.Numerics;
 using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 namespace EF.CH.Storage.Internal.TypeMappings;
 
 /// <summary>
 /// Type mapping for ClickHouse Int128 type.
-/// Maps to .NET Int128 (available in .NET 7+).
+/// Maps to .NET Int128 (available in .NET 7+). The driver materialises Int128 columns as
+/// BigInteger, so a converter bridges Int128 ↔ BigInteger.
 /// </summary>
 public class ClickHouseInt128TypeMapping : ClickHouseTypeMapping
 {
+    private static readonly Int128BigIntegerConverter BigIntegerConverter = new();
+
     public ClickHouseInt128TypeMapping()
-        : base("Int128", typeof(Int128))
+        : base(new RelationalTypeMappingParameters(
+            new CoreTypeMappingParameters(typeof(Int128), BigIntegerConverter),
+            "Int128"))
     {
     }
 
@@ -24,17 +30,27 @@ public class ClickHouseInt128TypeMapping : ClickHouseTypeMapping
         => new ClickHouseInt128TypeMapping(parameters);
 
     protected override string GenerateNonNullSqlLiteral(object value)
-        => ((Int128)value).ToString(CultureInfo.InvariantCulture);
+        => value switch
+        {
+            Int128 i => i.ToString(CultureInfo.InvariantCulture),
+            BigInteger b => b.ToString(CultureInfo.InvariantCulture),
+            _ => throw new InvalidOperationException($"Unexpected value type for Int128: {value.GetType()}")
+        };
 }
 
 /// <summary>
 /// Type mapping for ClickHouse UInt128 type.
-/// Maps to .NET UInt128 (available in .NET 7+).
+/// Maps to .NET UInt128 (available in .NET 7+). The driver materialises UInt128 columns as
+/// BigInteger, so a converter bridges UInt128 ↔ BigInteger.
 /// </summary>
 public class ClickHouseUInt128TypeMapping : ClickHouseTypeMapping
 {
+    private static readonly UInt128BigIntegerConverter BigIntegerConverter = new();
+
     public ClickHouseUInt128TypeMapping()
-        : base("UInt128", typeof(UInt128))
+        : base(new RelationalTypeMappingParameters(
+            new CoreTypeMappingParameters(typeof(UInt128), BigIntegerConverter),
+            "UInt128"))
     {
     }
 
@@ -47,7 +63,28 @@ public class ClickHouseUInt128TypeMapping : ClickHouseTypeMapping
         => new ClickHouseUInt128TypeMapping(parameters);
 
     protected override string GenerateNonNullSqlLiteral(object value)
-        => ((UInt128)value).ToString(CultureInfo.InvariantCulture);
+        => value switch
+        {
+            UInt128 u => u.ToString(CultureInfo.InvariantCulture),
+            BigInteger b => b.ToString(CultureInfo.InvariantCulture),
+            _ => throw new InvalidOperationException($"Unexpected value type for UInt128: {value.GetType()}")
+        };
+}
+
+internal class Int128BigIntegerConverter : ValueConverter<Int128, BigInteger>
+{
+    public Int128BigIntegerConverter()
+        : base(v => (BigInteger)v, v => (Int128)v)
+    {
+    }
+}
+
+internal class UInt128BigIntegerConverter : ValueConverter<UInt128, BigInteger>
+{
+    public UInt128BigIntegerConverter()
+        : base(v => (BigInteger)v, v => (UInt128)v)
+    {
+    }
 }
 
 /// <summary>

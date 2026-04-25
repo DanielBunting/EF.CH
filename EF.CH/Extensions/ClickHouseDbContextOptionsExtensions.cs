@@ -1,6 +1,7 @@
 using EF.CH.Configuration;
 using EF.CH.Infrastructure;
 using EF.CH.Metadata;
+using EF.CH.QueryProfiling;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.Configuration;
@@ -38,6 +39,7 @@ public static class ClickHouseDbContextOptionsExtensions
         ((IDbContextOptionsBuilderInfrastructure)optionsBuilder).AddOrUpdateExtension(extension);
 
         ConfigureWarnings(optionsBuilder);
+        AddProviderInterceptors(optionsBuilder);
 
         clickHouseOptionsAction?.Invoke(new ClickHouseDbContextOptionsBuilder(optionsBuilder));
 
@@ -65,6 +67,7 @@ public static class ClickHouseDbContextOptionsExtensions
         ((IDbContextOptionsBuilderInfrastructure)optionsBuilder).AddOrUpdateExtension(extension);
 
         ConfigureWarnings(optionsBuilder);
+        AddProviderInterceptors(optionsBuilder);
 
         clickHouseOptionsAction?.Invoke(new ClickHouseDbContextOptionsBuilder(optionsBuilder));
 
@@ -102,6 +105,15 @@ public static class ClickHouseDbContextOptionsExtensions
     private static void ConfigureWarnings(DbContextOptionsBuilder optionsBuilder)
     {
         // Future: Configure ClickHouse-specific warnings here
+    }
+
+    /// <summary>
+    /// Registers the provider's always-on interceptors (currently the QueryStats capture
+    /// used by <c>ToListWithStatsAsync</c>) onto the options builder.
+    /// </summary>
+    private static void AddProviderInterceptors(DbContextOptionsBuilder optionsBuilder)
+    {
+        optionsBuilder.AddInterceptors(new ClickHouseQueryStatsInterceptor());
     }
 }
 

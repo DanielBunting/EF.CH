@@ -74,6 +74,13 @@ internal class ClickHouseMethodRewritingVisitor : ExpressionVisitor
         // Visit arguments first (handles nested calls like .Final().ArrayJoin(...))
         var visited = (MethodCallExpression)base.VisitMethodCall(node);
 
+        // Force ClickHouseIntervalUnit args to be ConstantExpressions before EF
+        // parameterizes them. The translator needs the actual enum value to
+        // pick the right toIntervalX function — a SqlParameterExpression at
+        // translation time is too late, since the parameter value isn't bound
+        // until execution.
+        visited = ConstFoldIntervalUnitArgs(visited);
+
         if (!visited.Method.IsGenericMethod)
             return visited;
 
@@ -94,6 +101,9 @@ internal class ClickHouseMethodRewritingVisitor : ExpressionVisitor
         if (genericDef == ClickHouseQueryableExtensions.AsofLeftJoinMethodInfo)
             return RewriteAsofJoin(visited, isLeft: true);
 
+        if (genericDef == ClickHouseQueryableExtensions.PreWhereMethodInfo)
+            return RewritePreWhere(visited);
+
         // ClickHouseAggregates.XxxMerge on a grouping — rewrite into Enumerable.Sum/Count/…
         // with a MergeSentinel selector so EF's navigation expander accepts it.
         if (visited.Method.DeclaringType == typeof(ClickHouseAggregates)
@@ -104,6 +114,66 @@ internal class ClickHouseMethodRewritingVisitor : ExpressionVisitor
         }
 
         return visited;
+    }
+
+    private static bool TryEvaluateConstant(Expression expr, out object? value)
+    {
+        value = null;
+        if (expr is ConstantExpression c) { value = c.Value; return true; }
+        if (expr is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked or ExpressionType.Quote } u)
+            return TryEvaluateConstant(u.Operand, out value);
+        if (expr is MemberExpression m && TryEvaluateConstant(m.Expression!, out var holder))
+        {
+            try
+            {
+                value = m.Member switch
+                {
+                    System.Reflection.FieldInfo f => f.GetValue(holder),
+                    System.Reflection.PropertyInfo p => p.GetValue(holder),
+                    _ => null,
+                };
+                return true;
+            }
+            catch { return false; }
+        }
+        // Last resort: try compiling. Works for pure expressions (e.g. enum literals
+        // wrapped in Convert) but fails for queryable shaper / parameter extensions.
+        try
+        {
+            value = Expression.Lambda(expr).Compile().DynamicInvoke();
+            return true;
+        }
+        catch { return false; }
+    }
+
+    private static MethodCallExpression ConstFoldIntervalUnitArgs(MethodCallExpression node)
+    {
+        if (node.Method.DeclaringType != typeof(EF.CH.Extensions.ClickHouseDateTruncDbFunctionsExtensions))
+            return node;
+
+        Expression[]? newArgs = null;
+        var prms = node.Method.GetParameters();
+        for (var i = 0; i < node.Arguments.Count; i++)
+        {
+            if (i >= prms.Length) break;
+            var pType = prms[i].ParameterType;
+            var underlying = Nullable.GetUnderlyingType(pType) ?? pType;
+            if (underlying != typeof(EF.CH.ClickHouseIntervalUnit))
+                continue;
+            var arg = node.Arguments[i];
+            if (arg is ConstantExpression) continue;
+            // Compile the closure-captured / convert-wrapped expression to fold it.
+            // Try to extract a constant by walking through Convert/quote layers
+            // (the captured-variable expression EF Core has materialised into
+            // a closure-member-access chain by this point in the pipeline).
+            object? folded = null;
+            if (TryEvaluateConstant(arg, out folded))
+            {
+                newArgs ??= node.Arguments.ToArray();
+                newArgs[i] = Expression.Constant(folded, pType);
+            }
+        }
+        return newArgs is null ? node : node.Update(node.Object, newArgs);
     }
 
     private static readonly Dictionary<string, Func<MethodCallExpression, Expression?>> MergeRewrites = new()
@@ -239,35 +309,54 @@ internal class ClickHouseMethodRewritingVisitor : ExpressionVisitor
         var sourceType = call.Method.GetGenericArguments()[0];
         var userReturnType = call.Method.ReturnType;
 
-        // Sentinel always returns long, so we can always hit Enumerable.Sum<TSource>(…, Func<TSource,long>).
+        // Numerics ride through Enumerable.Sum<TSource> (which is in EF Core's
+        // aggregate whitelist). For non-numeric types like string, Sum has no
+        // matching overload and Convert(long, string) isn't a valid coercion —
+        // use Enumerable.Max<TSource, TResult> instead, which accepts any
+        // result type and is also recognised by the aggregate translator.
+        var useSumSurrogate = IsSummableType(userReturnType);
+        var surrogateType = useSumSurrogate ? typeof(long) : userReturnType;
+
         var sentinelMethod = typeof(ClickHouseFunctions)
             .GetMethod(nameof(ClickHouseFunctions.MergeSentinel))!
-            .MakeGenericMethod(typeof(long), userReturnType);
+            .MakeGenericMethod(surrogateType, userReturnType);
 
         var newBody = Expression.Call(
             sentinelMethod,
             selector.Body,
             Expression.Constant(sqlFunctionName));
         var newSelector = Expression.Lambda(
-            typeof(Func<,>).MakeGenericType(sourceType, typeof(long)),
+            typeof(Func<,>).MakeGenericType(sourceType, surrogateType),
             newBody,
             selector.Parameters);
 
-        var sumLong = typeof(Enumerable).GetMethods()
-            .Where(m => m.Name == "Sum" && m.GetParameters().Length == 2 && m.IsGenericMethodDefinition)
-            .First(m => m.GetParameters()[1].ParameterType.GetGenericArguments().Last() == typeof(long))
-            .MakeGenericMethod(sourceType);
-
-        Expression aggregate = Expression.Call(null, sumLong, groupingArg, newSelector);
-
-        // If the user's declared return type isn't long, add an unchecked cast. The SQL
-        // translator ignores the Convert because the sentinel produces the final value.
-        if (userReturnType != typeof(long))
+        Expression aggregate;
+        if (useSumSurrogate)
         {
-            aggregate = Expression.Convert(aggregate, userReturnType);
+            var sumLong = typeof(Enumerable).GetMethods()
+                .Where(m => m.Name == "Sum" && m.GetParameters().Length == 2 && m.IsGenericMethodDefinition)
+                .First(m => m.GetParameters()[1].ParameterType.GetGenericArguments().Last() == typeof(long))
+                .MakeGenericMethod(sourceType);
+            aggregate = Expression.Call(null, sumLong, groupingArg, newSelector);
+            if (userReturnType != typeof(long))
+                aggregate = Expression.Convert(aggregate, userReturnType);
+        }
+        else
+        {
+            var maxMethod = FindMaxWithGenericReturn(sourceType, userReturnType);
+            aggregate = Expression.Call(null, maxMethod, groupingArg, newSelector);
         }
 
         return aggregate;
+    }
+
+    private static bool IsSummableType(Type t)
+    {
+        var u = Nullable.GetUnderlyingType(t) ?? t;
+        return u == typeof(long) || u == typeof(int) || u == typeof(short)
+            || u == typeof(sbyte) || u == typeof(ulong) || u == typeof(uint)
+            || u == typeof(ushort) || u == typeof(byte) || u == typeof(double)
+            || u == typeof(float) || u == typeof(decimal);
     }
 
     private static Expression? RewriteParametricMerge(
@@ -581,6 +670,39 @@ internal class ClickHouseMethodRewritingVisitor : ExpressionVisitor
         var selectMethod = GetQueryableSelectMethod().MakeGenericMethod(entityClrType, resultType);
 
         return Expression.Call(null, selectMethod, source, Expression.Quote(selectLambda));
+    }
+
+    /// <summary>
+    /// Rewrites <c>source.PreWhere(predicate)</c> into
+    /// <c>source.Where(x => ClickHouseFunctions.PreWhereMarker(predicate(x)))</c>.
+    /// The Where call is recognised by the navigation expander; the marker is later
+    /// detected in the SQL translator, which lifts the inner predicate into
+    /// <see cref="ClickHouseQueryCompilationContextOptions.PreWhereExpression"/> and
+    /// returns a constant true so the WHERE clause becomes a no-op.
+    /// </summary>
+    private static Expression RewritePreWhere(MethodCallExpression call)
+    {
+        var source = call.Arguments[0];
+        var predicate = UnwrapLambda(call.Arguments[1]);
+        var entityType = call.Method.GetGenericArguments()[0];
+
+        var markerMethod = typeof(ClickHouseFunctions).GetMethod(
+            nameof(ClickHouseFunctions.PreWhereMarker),
+            BindingFlags.NonPublic | BindingFlags.Static)!;
+        var markedBody = Expression.Call(markerMethod, predicate.Body);
+        var newPredicate = Expression.Lambda(
+            typeof(Func<,>).MakeGenericType(entityType, typeof(bool)),
+            markedBody,
+            predicate.Parameters);
+
+        var whereMethod = typeof(Queryable).GetMethods()
+            .Where(m => m.Name == nameof(Queryable.Where) && m.GetParameters().Length == 2)
+            .First(m => m.GetParameters()[1].ParameterType
+                .GetGenericArguments()[0]
+                .GetGenericArguments().Length == 2)
+            .MakeGenericMethod(entityType);
+
+        return Expression.Call(null, whereMethod, source, Expression.Quote(newPredicate));
     }
 
     /// <summary>
