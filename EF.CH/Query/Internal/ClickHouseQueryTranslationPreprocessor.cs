@@ -147,9 +147,76 @@ internal class ClickHouseMethodRewritingVisitor : ExpressionVisitor
         ["Quantiles"] = e => RewriteMultiQuantileAggregate(e, "quantiles"),
         ["QuantilesTDigest"] = e => RewriteMultiQuantileAggregate(e, "quantilesTDigest"),
         ["TopK"] = e => RewriteTopK(e, "topK"),
+        ["TopKWeighted"] = e => RewriteTopKWeighted(e, "topKWeighted"),
         ["ArgMax"] = e => RewriteTwoSelectorAggregate(e, "argMax"),
         ["ArgMin"] = e => RewriteTwoSelectorAggregate(e, "argMin"),
+        ["QuantileDD"] = e => RewriteTwoParamQuantile(e, "quantileDD"),
     };
+
+    private static Expression? RewriteTwoParamQuantile(MethodCallExpression call, string sqlFunctionName)
+    {
+        // Shape: X(grouping, double p1, double p2, Func<T, double>) → double
+        if (call.Arguments.Count != 4) return null;
+        var groupingArg = call.Arguments[0];
+        var p1 = call.Arguments[1];
+        var p2 = call.Arguments[2];
+        var selector = UnwrapLambda(call.Arguments[3]);
+        var sourceType = call.Method.GetGenericArguments()[0];
+        var inputType = selector.Body.Type;
+        var returnType = call.Method.ReturnType;
+
+        var paramsArr = Expression.NewArrayInit(typeof(double), p1, p2);
+        var sentinel = typeof(ClickHouseFunctions)
+            .GetMethod(nameof(ClickHouseFunctions.AggregateSentinelMultiParam))!
+            .MakeGenericMethod(inputType, typeof(double), returnType);
+        var newBody = Expression.Call(sentinel, selector.Body, Expression.Constant(sqlFunctionName), paramsArr);
+        var newSelector = Expression.Lambda(
+            typeof(Func<,>).MakeGenericType(sourceType, typeof(double)),
+            newBody, selector.Parameters);
+
+        var sumDouble = FindSumWithReturnType(sourceType, typeof(double));
+        Expression agg = Expression.Call(null, sumDouble, groupingArg, newSelector);
+        if (returnType != typeof(double)) agg = Expression.Convert(agg, returnType);
+        return agg;
+    }
+
+    private static Expression? RewriteTopKWeighted(MethodCallExpression call, string sqlFunctionName)
+    {
+        // Shape: X(grouping, int k, Func<T, TValue> valueSelector, Func<T, TWeight> weightSelector)
+        // → topKWeighted(k)(value, weight) returning TValue[]
+        if (call.Arguments.Count != 4) return null;
+        var groupingArg = call.Arguments[0];
+        var kArg = call.Arguments[1];
+        var valueSel = UnwrapLambda(call.Arguments[2]);
+        var weightSel = UnwrapLambda(call.Arguments[3]);
+        var sourceType = call.Method.GetGenericArguments()[0];
+        var valueType = valueSel.Body.Type;
+        var weightType = weightSel.Body.Type;
+        var returnType = call.Method.ReturnType;
+
+        // Both selector lambdas have their own ParameterExpression instances —
+        // unify them under valueSel's parameter so the resulting body references
+        // a single free parameter.
+        var weightBody = new ParameterReplacer(weightSel.Parameters[0], valueSel.Parameters[0])
+            .Visit(weightSel.Body)!;
+
+        var sentinel = typeof(ClickHouseFunctions)
+            .GetMethod(nameof(ClickHouseFunctions.AggregateSentinelTwoArgIntParam))!
+            .MakeGenericMethod(valueType, weightType, returnType, returnType);
+        var newBody = Expression.Call(sentinel,
+            valueSel.Body,
+            weightBody,
+            Expression.Constant(sqlFunctionName),
+            kArg);
+        var newSelector = Expression.Lambda(
+            typeof(Func<,>).MakeGenericType(sourceType, returnType),
+            newBody,
+            valueSel.Parameters);
+
+        var maxMethod = FindMaxWithGenericReturn(sourceType, returnType);
+        return Expression.Call(null, maxMethod, groupingArg, newSelector);
+    }
+
 
     /// <summary>
     /// Rewrites <c>ClickHouseAggregates.XxxMerge(grouping, sel)</c> into

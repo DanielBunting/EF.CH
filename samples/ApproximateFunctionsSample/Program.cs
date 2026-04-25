@@ -244,7 +244,7 @@ public class AnalyticsDbContext : DbContext
 
     protected override void OnConfiguring(DbContextOptionsBuilder options)
     {
-        options.UseClickHouse("Host=localhost;Password=default;Database=approx_functions_sample");
+        options.UseClickHouse("Host=localhost;Database=approx_functions_sample");
     }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)

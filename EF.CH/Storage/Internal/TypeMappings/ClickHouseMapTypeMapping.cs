@@ -60,8 +60,14 @@ public class ClickHouseMapTypeMapping : RelationalTypeMapping
     /// </summary>
     protected override string GenerateNonNullSqlLiteral(object value)
     {
+        // Emit map literals as map(k1, v1, k2, v2, ...) rather than the
+        // {k1: v1, k2: v2} braced form. ClickHouse accepts both, but the
+        // driver (ClickHouse.Driver) scans every outgoing query for
+        // {name:Type} parameter type hints — and a braced map literal with
+        // string keys is structurally identical to a malformed type hint,
+        // causing "conflicting type hints" errors during bulk insert.
         var builder = new StringBuilder();
-        builder.Append('{');
+        builder.Append("map(");
 
         var first = true;
 
@@ -75,16 +81,14 @@ public class ClickHouseMapTypeMapping : RelationalTypeMapping
                 }
                 first = false;
 
-                // Generate key literal
                 if (entry.Key is null)
                 {
                     throw new InvalidOperationException("Map keys cannot be null in ClickHouse.");
                 }
                 builder.Append(KeyMapping.GenerateSqlLiteral(entry.Key));
 
-                builder.Append(": ");
+                builder.Append(", ");
 
-                // Generate value literal
                 if (entry.Value is null)
                 {
                     builder.Append("NULL");
@@ -96,7 +100,7 @@ public class ClickHouseMapTypeMapping : RelationalTypeMapping
             }
         }
 
-        builder.Append('}');
+        builder.Append(')');
         return builder.ToString();
     }
 }

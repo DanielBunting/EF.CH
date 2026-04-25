@@ -241,6 +241,9 @@ internal class MaterializedViewExpressionVisitor<TSource> : ExpressionVisitor
                 {
                     var columnSql = TranslateExpression(assignment.Expression);
                     var alias = assignment.Member.Name;
+                    var memberType = (assignment.Member as System.Reflection.PropertyInfo)?.PropertyType
+                                  ?? (assignment.Member as System.Reflection.FieldInfo)?.FieldType;
+                    columnSql = WrapWithClrTypeCast(columnSql, memberType, assignment.Expression.Type);
                     _selectColumns.Add($"{columnSql} AS {QuoteIdentifier(alias)}");
                 }
             }
@@ -252,10 +255,74 @@ internal class MaterializedViewExpressionVisitor<TSource> : ExpressionVisitor
             {
                 var memberName = newExpr.Members?[i].Name ?? $"Column{i}";
                 var columnSql = TranslateExpression(newExpr.Arguments[i]);
+                var memberType = (newExpr.Members?[i] as System.Reflection.PropertyInfo)?.PropertyType
+                              ?? (newExpr.Members?[i] as System.Reflection.FieldInfo)?.FieldType;
+                columnSql = WrapWithClrTypeCast(columnSql, memberType, newExpr.Arguments[i].Type);
                 _selectColumns.Add($"{columnSql} AS {QuoteIdentifier(memberName)}");
             }
         }
     }
+
+    /// <summary>
+    /// Wraps <paramref name="columnSql"/> with a ClickHouse <c>toX(...)</c> cast
+    /// when the projected expression's natural type would differ from the
+    /// declared MV-target CLR type. Required because <c>CREATE MATERIALIZED
+    /// VIEW … ENGINE = … AS SELECT</c> infers column types from the SELECT
+    /// rather than the entity properties — e.g. a <c>long</c> property fed by
+    /// <c>g.Count()</c> would otherwise materialise as <c>UInt64</c>, and
+    /// <c>1L</c> as <c>UInt8</c>.
+    /// </summary>
+    private static string WrapWithClrTypeCast(string columnSql, Type? targetClrType, Type sourceExprType)
+    {
+        if (targetClrType is null) return columnSql;
+        var nonNullable = Nullable.GetUnderlyingType(targetClrType) ?? targetClrType;
+
+        // Primitive arrays — e.g. double[], long[]. ClickHouse aggregates like
+        // quantilesTDigest return Array(Float32) by design, but the user's
+        // declared property is Array(Float64). CAST handles both Array element
+        // promotion and outer wrapping.
+        if (nonNullable.IsArray && nonNullable != typeof(byte[]))
+        {
+            var elementChType = ClickHouseElementType(nonNullable.GetElementType());
+            if (elementChType is null) return columnSql;
+            return $"CAST({columnSql} AS Array({elementChType}))";
+        }
+
+        var cast = nonNullable.Name switch
+        {
+            "Int64" => "toInt64",
+            "Int32" => "toInt32",
+            "Int16" => "toInt16",
+            "SByte" => "toInt8",
+            "UInt64" => "toUInt64",
+            "UInt32" => "toUInt32",
+            "UInt16" => "toUInt16",
+            "Byte" => "toUInt8",
+            "Single" => "toFloat32",
+            "Double" => "toFloat64",
+            "Boolean" => "toUInt8",
+            _ => null,
+        };
+        if (cast is null) return columnSql;
+        return $"{cast}({columnSql})";
+    }
+
+    private static string? ClickHouseElementType(Type? clrElement) => clrElement?.Name switch
+    {
+        "Int64" => "Int64",
+        "Int32" => "Int32",
+        "Int16" => "Int16",
+        "SByte" => "Int8",
+        "UInt64" => "UInt64",
+        "UInt32" => "UInt32",
+        "UInt16" => "UInt16",
+        "Byte" => "UInt8",
+        "Single" => "Float32",
+        "Double" => "Float64",
+        "Boolean" => "UInt8",
+        "String" => "String",
+        _ => null,
+    };
 
     private string TranslateExpression(Expression expr)
     {

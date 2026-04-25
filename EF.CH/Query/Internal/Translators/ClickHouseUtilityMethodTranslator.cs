@@ -1,3 +1,4 @@
+using System.Linq.Expressions;
 using System.Reflection;
 using EF.CH.Extensions;
 using Microsoft.EntityFrameworkCore;
@@ -183,6 +184,30 @@ public class ClickHouseUtilityMethodTranslator : IMethodCallTranslator
                 typeof(string));
         }
 
+        // DateAdd / DateSub: ClickHouse 24+ no longer accepts the dynamic-unit
+        // form `date_add(unit, n, dt)` — the parser rewrites it to `plus(...)`
+        // which only takes 2 args. Emit `dt ± toIntervalUnit(n)` instead.
+        if (method.DeclaringType == typeof(ClickHouseDateTruncDbFunctionsExtensions)
+            && (method.Name == nameof(ClickHouseDateTruncDbFunctionsExtensions.DateAdd)
+             || method.Name == nameof(ClickHouseDateTruncDbFunctionsExtensions.DateSub))
+            && functionArguments.Length == 3
+            && functionArguments[0] is SqlConstantExpression { Value: ClickHouseIntervalUnit unitArg })
+        {
+            var op = method.Name == nameof(ClickHouseDateTruncDbFunctionsExtensions.DateAdd) ? "+" : "-";
+            var intervalFn = "toInterval" + char.ToUpperInvariant(unitArg.ToString()[0]) + unitArg.ToString().Substring(1);
+            var interval = _sqlExpressionFactory.Function(
+                intervalFn,
+                new[] { functionArguments[1] },
+                nullable: true,
+                argumentsPropagateNullability: new[] { true },
+                typeof(object));
+            return _sqlExpressionFactory.MakeBinary(
+                op == "+" ? ExpressionType.Add : ExpressionType.Subtract,
+                functionArguments[2],
+                interval,
+                typeMapping: null)!;
+        }
+
         // Convert ClickHouseIntervalUnit enum args to lowercase string constants for SQL
         if (method.DeclaringType == typeof(ClickHouseDateTruncDbFunctionsExtensions))
         {
@@ -194,12 +219,68 @@ public class ClickHouseUtilityMethodTranslator : IMethodCallTranslator
             return null;
         }
 
-        return _sqlExpressionFactory.Function(
+        var call = _sqlExpressionFactory.Function(
             clickHouseFunction,
             functionArguments,
             nullable: true,
             argumentsPropagateNullability: nullability,
             method.ReturnType);
+
+        // Some ClickHouse functions return a narrower type than the C# method's
+        // declared return type (e.g. toUnixTimestamp / toRelativeMonthNum return
+        // UInt32 / Int32, but the C# methods are declared as `long`). Without
+        // a wrapping cast the driver tries to read a UInt32 / Int32 column as
+        // Int64 and throws InvalidCastException at projection time.
+        if (NarrowingFunctions.Contains(clickHouseFunction))
+        {
+            var castFn = ChCastForClrType(method.ReturnType);
+            if (castFn is not null)
+            {
+                return _sqlExpressionFactory.Function(
+                    castFn,
+                    new[] { call },
+                    nullable: true,
+                    argumentsPropagateNullability: new[] { true },
+                    method.ReturnType);
+            }
+        }
+
+        return call;
+    }
+
+    /// <summary>
+    /// ClickHouse functions known to return a type narrower than the C# method
+    /// signature declares. The wrapper cast chosen matches <c>method.ReturnType</c>.
+    /// </summary>
+    private static readonly HashSet<string> NarrowingFunctions = new(StringComparer.Ordinal)
+    {
+        "toUnixTimestamp",
+        "toRelativeYearNum",
+        "toRelativeMonthNum",
+        "toRelativeWeekNum",
+        "toRelativeDayNum",
+        "toRelativeHourNum",
+        "toRelativeMinuteNum",
+        "toRelativeSecondNum",
+    };
+
+    private static string? ChCastForClrType(Type clrType)
+    {
+        var t = Nullable.GetUnderlyingType(clrType) ?? clrType;
+        return t.Name switch
+        {
+            "Int64" => "toInt64",
+            "Int32" => "toInt32",
+            "Int16" => "toInt16",
+            "SByte" => "toInt8",
+            "UInt64" => "toUInt64",
+            "UInt32" => "toUInt32",
+            "UInt16" => "toUInt16",
+            "Byte" => "toUInt8",
+            "Single" => "toFloat32",
+            "Double" => "toFloat64",
+            _ => null,
+        };
     }
 
     private SqlExpression[] ConvertIntervalUnitArgs(SqlExpression[] args)

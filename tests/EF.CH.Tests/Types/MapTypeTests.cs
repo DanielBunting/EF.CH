@@ -70,10 +70,10 @@ public class MapTypeTests : IAsyncLifetime
 
         var literal = mapping.GenerateSqlLiteral(dict);
 
-        Assert.Contains("'key1': 100", literal);
-        Assert.Contains("'key2': 200", literal);
-        Assert.StartsWith("{", literal);
-        Assert.EndsWith("}", literal);
+        Assert.Contains("'key1', 100", literal);
+        Assert.Contains("'key2', 200", literal);
+        Assert.StartsWith("map(", literal);
+        Assert.EndsWith(")", literal);
     }
 
     [Fact]
@@ -90,7 +90,7 @@ public class MapTypeTests : IAsyncLifetime
 
         var literal = mapping.GenerateSqlLiteral(dict);
 
-        Assert.Equal("{}", literal);
+        Assert.Equal("map()", literal);
     }
 
     [Fact]
@@ -111,8 +111,8 @@ public class MapTypeTests : IAsyncLifetime
 
         var literal = mapping.GenerateSqlLiteral(dict);
 
-        Assert.Contains("1: 'one'", literal);
-        Assert.Contains("2: 'two'", literal);
+        Assert.Contains("1, 'one'", literal);
+        Assert.Contains("2, 'two'", literal);
     }
 
     #endregion
