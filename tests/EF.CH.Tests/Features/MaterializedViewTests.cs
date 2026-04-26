@@ -349,6 +349,256 @@ public class MaterializedViewTests : IAsyncLifetime
         Assert.Contains("GROUP BY toStartOfHour(\"OrderDate\")", query);
     }
 
+    [Fact]
+    public void AsMaterializedView_AnyJoin_EmitsAnyInnerJoin()
+    {
+        using var context = CreateContext<AnyInnerJoinContext>();
+        var entityType = context.Model.FindEntityType(typeof(JoinedRevenue));
+        Assert.NotNull(entityType);
+        var query = entityType.FindAnnotation("ClickHouse:MaterializedViewQuery")?.Value as string;
+        Assert.NotNull(query);
+        Assert.Contains("ANY INNER JOIN \"AnyJoinCustomers\" AS t1 ON t0.\"CustomerId\" = t1.\"Id\"", query);
+    }
+
+    [Fact]
+    public void AsMaterializedView_AnyLeftJoin_EmitsAnyLeftJoin()
+    {
+        using var context = CreateContext<AnyLeftJoinContext>();
+        var entityType = context.Model.FindEntityType(typeof(JoinedRevenue));
+        Assert.NotNull(entityType);
+        var query = entityType.FindAnnotation("ClickHouse:MaterializedViewQuery")?.Value as string;
+        Assert.NotNull(query);
+        Assert.Contains("ANY LEFT JOIN \"AnyLeftJoinCustomers\" AS t1 ON t0.\"CustomerId\" = t1.\"Id\"", query);
+    }
+
+    [Fact]
+    public void AsMaterializedView_AnyRightJoin_EmitsAnyRightJoin()
+    {
+        using var context = CreateContext<AnyRightJoinContext>();
+        var entityType = context.Model.FindEntityType(typeof(JoinedRevenue));
+        Assert.NotNull(entityType);
+        var query = entityType.FindAnnotation("ClickHouse:MaterializedViewQuery")?.Value as string;
+        Assert.NotNull(query);
+        Assert.Contains("ANY RIGHT JOIN \"AnyRightJoinCustomers\" AS t1 ON t0.\"CustomerId\" = t1.\"Id\"", query);
+    }
+
+    [Fact]
+    public void AsMaterializedView_RightJoin_EmitsRightJoin()
+    {
+        using var context = CreateContext<RightJoinContext>();
+        var entityType = context.Model.FindEntityType(typeof(JoinedRevenue));
+        Assert.NotNull(entityType);
+        var query = entityType.FindAnnotation("ClickHouse:MaterializedViewQuery")?.Value as string;
+        Assert.NotNull(query);
+        Assert.Contains("RIGHT JOIN \"RightJoinCustomers\" AS t1 ON t0.\"CustomerId\" = t1.\"Id\"", query);
+    }
+
+    [Fact]
+    public void AsMaterializedView_FullOuterJoin_EmitsFullOuterJoin()
+    {
+        using var context = CreateContext<FullOuterJoinContext>();
+        var entityType = context.Model.FindEntityType(typeof(JoinedRevenue));
+        Assert.NotNull(entityType);
+        var query = entityType.FindAnnotation("ClickHouse:MaterializedViewQuery")?.Value as string;
+        Assert.NotNull(query);
+        Assert.Contains("FULL OUTER JOIN \"FullOuterCustomers\" AS t1 ON t0.\"CustomerId\" = t1.\"Id\"", query);
+    }
+
+    [Fact]
+    public void AsMaterializedView_LeftSemiJoin_EmitsLeftSemiJoin()
+    {
+        using var context = CreateContext<LeftSemiJoinContext>();
+        var entityType = context.Model.FindEntityType(typeof(SingleSideOrder));
+        Assert.NotNull(entityType);
+        var query = entityType.FindAnnotation("ClickHouse:MaterializedViewQuery")?.Value as string;
+        Assert.NotNull(query);
+        Assert.Contains("LEFT SEMI JOIN \"LeftSemiCustomers\" AS t1 ON t0.\"CustomerId\" = t1.\"Id\"", query);
+        Assert.Contains("t0.\"Id\"", query);
+        // Inner side must NOT appear in the projection.
+        Assert.DoesNotContain("t1.\"Region\"", query);
+    }
+
+    [Fact]
+    public void AsMaterializedView_LeftAntiJoin_EmitsLeftAntiJoin()
+    {
+        using var context = CreateContext<LeftAntiJoinContext>();
+        var entityType = context.Model.FindEntityType(typeof(SingleSideOrder));
+        Assert.NotNull(entityType);
+        var query = entityType.FindAnnotation("ClickHouse:MaterializedViewQuery")?.Value as string;
+        Assert.NotNull(query);
+        Assert.Contains("LEFT ANTI JOIN \"LeftAntiCustomers\" AS t1 ON t0.\"CustomerId\" = t1.\"Id\"", query);
+    }
+
+    [Fact]
+    public void AsMaterializedView_RightSemiJoin_EmitsRightSemiJoin()
+    {
+        using var context = CreateContext<RightSemiJoinContext>();
+        var entityType = context.Model.FindEntityType(typeof(SingleSideCustomer));
+        Assert.NotNull(entityType);
+        var query = entityType.FindAnnotation("ClickHouse:MaterializedViewQuery")?.Value as string;
+        Assert.NotNull(query);
+        Assert.Contains("RIGHT SEMI JOIN \"RightSemiCustomers\" AS t1 ON t0.\"CustomerId\" = t1.\"Id\"", query);
+        // Result selector projects t1 columns (the preserved inner side).
+        Assert.Contains("t1.\"Region\"", query);
+    }
+
+    [Fact]
+    public void AsMaterializedView_RightAntiJoin_EmitsRightAntiJoin()
+    {
+        using var context = CreateContext<RightAntiJoinContext>();
+        var entityType = context.Model.FindEntityType(typeof(SingleSideCustomer));
+        Assert.NotNull(entityType);
+        var query = entityType.FindAnnotation("ClickHouse:MaterializedViewQuery")?.Value as string;
+        Assert.NotNull(query);
+        Assert.Contains("RIGHT ANTI JOIN \"RightAntiCustomers\" AS t1 ON t0.\"CustomerId\" = t1.\"Id\"", query);
+    }
+
+    [Fact]
+    public void AsMaterializedView_ArrayJoin_EmitsArrayJoinClause()
+    {
+        using var context = CreateContext<ArrayJoinContext>();
+        var entityType = context.Model.FindEntityType(typeof(ArrayJoinedRow));
+        Assert.NotNull(entityType);
+        var query = entityType.FindAnnotation("ClickHouse:MaterializedViewQuery")?.Value as string;
+        Assert.NotNull(query);
+        Assert.Contains("FROM \"MvArrayJoinEvents\" AS t0", query);
+        Assert.Contains("ARRAY JOIN t0.\"Tags\" AS \"tag\"", query);
+        // Element ref in projection resolves to the bare alias.
+        Assert.Contains("\"tag\" AS \"Tag\"", query);
+    }
+
+    [Fact]
+    public void AsMaterializedView_LeftArrayJoin_EmitsLeftArrayJoinClause()
+    {
+        using var context = CreateContext<LeftArrayJoinContext>();
+        var entityType = context.Model.FindEntityType(typeof(ArrayJoinedRow));
+        Assert.NotNull(entityType);
+        var query = entityType.FindAnnotation("ClickHouse:MaterializedViewQuery")?.Value as string;
+        Assert.NotNull(query);
+        Assert.Contains("LEFT ARRAY JOIN t0.\"Tags\" AS \"tag\"", query);
+    }
+
+    [Fact]
+    public void AsMaterializedView_CrossJoin_EmitsCrossJoinNoOnClause()
+    {
+        using var context = CreateContext<CrossJoinContext>();
+        var entityType = context.Model.FindEntityType(typeof(CrossJoinedRow));
+        Assert.NotNull(entityType);
+        var query = entityType.FindAnnotation("ClickHouse:MaterializedViewQuery")?.Value as string;
+        Assert.NotNull(query);
+        Assert.Contains("CROSS JOIN \"CrossJoinTags\" AS t1", query);
+        // Verify there's no ON clause attached to the CROSS JOIN line.
+        Assert.DoesNotContain("CROSS JOIN \"CrossJoinTags\" AS t1 ON", query);
+    }
+
+    [Fact]
+    public void AsMaterializedView_LinqAsofJoin_EmitsAsofInnerJoinWithInequality()
+    {
+        using var context = CreateContext<LinqAsofInnerJoinContext>();
+        var entityType = context.Model.FindEntityType(typeof(AsofTradeWithQuote));
+
+        Assert.NotNull(entityType);
+        var query = entityType.FindAnnotation("ClickHouse:MaterializedViewQuery")?.Value as string;
+        Assert.NotNull(query);
+
+        Assert.Contains("FROM \"AsofTrades\" AS t0", query);
+        Assert.Contains("ASOF INNER JOIN \"AsofQuotes\" AS t1 ON t0.\"Symbol\" = t1.\"Symbol\" AND t0.\"T\" >= t1.\"T\"", query);
+        // Result projection columns under correct aliases
+        Assert.Contains("t0.\"Id\"", query);
+        Assert.Contains("t1.\"Price\"", query);
+    }
+
+    [Fact]
+    public void AsMaterializedView_LinqAsofLeftJoin_EmitsAsofLeftJoinWithInequality()
+    {
+        using var context = CreateContext<LinqAsofLeftJoinContext>();
+        var entityType = context.Model.FindEntityType(typeof(AsofTradeWithQuote));
+
+        Assert.NotNull(entityType);
+        var query = entityType.FindAnnotation("ClickHouse:MaterializedViewQuery")?.Value as string;
+        Assert.NotNull(query);
+
+        Assert.Contains("FROM \"AsofLeftTrades\" AS t0", query);
+        Assert.Contains("ASOF LEFT JOIN \"AsofLeftQuotes\" AS t1 ON t0.\"Symbol\" = t1.\"Symbol\" AND t0.\"T\" >= t1.\"T\"", query);
+    }
+
+    [Fact]
+    public void AsMaterializedView_LinqJoin_EmitsInnerJoinAndAliasedColumns()
+    {
+        using var context = CreateContext<LinqInnerJoinContext>();
+        var entityType = context.Model.FindEntityType(typeof(JoinedRevenue));
+
+        Assert.NotNull(entityType);
+        var query = entityType.FindAnnotation("ClickHouse:MaterializedViewQuery")?.Value as string;
+        Assert.NotNull(query);
+
+        // Aliased FROM and INNER JOIN with ON predicate
+        Assert.Contains("FROM \"JoinOrderSrc\" AS t0", query);
+        Assert.Contains("INNER JOIN \"JoinCustomerSrc\" AS t1 ON t0.\"CustomerId\" = t1.\"Id\"", query);
+
+        // Aggregate over outer-source column resolves to the outer alias
+        Assert.Contains("sum(t0.\"Amount\")", query);
+
+        // GROUP BY references the inner-source alias (came from the join's result selector)
+        Assert.Contains("GROUP BY t1.\"Region\"", query);
+    }
+
+    [Fact]
+    public void AsMaterializedView_LinqJoin_OnDictionaryEntity_EmitsDictionaryTableFunction()
+    {
+        using var context = CreateContext<LinqJoinDictionaryContext>();
+        var entityType = context.Model.FindEntityType(typeof(JoinedRevenue));
+
+        Assert.NotNull(entityType);
+        var query = entityType.FindAnnotation("ClickHouse:MaterializedViewQuery")?.Value as string;
+        Assert.NotNull(query);
+
+        // Dictionary-flagged entity emits dictionary('name') instead of a quoted table.
+        Assert.Contains("INNER JOIN dictionary('CustomerLookup') AS t1", query);
+        Assert.Contains("ON t0.\"CustomerId\" = t1.\"Id\"", query);
+    }
+
+    [Fact]
+    public void AsMaterializedView_LinqGroupJoin_EmitsLeftJoinAndCoalesceFirstOrDefault()
+    {
+        using var context = CreateContext<LinqGroupJoinContext>();
+        var entityType = context.Model.FindEntityType(typeof(GroupJoinedOrderRegion));
+
+        Assert.NotNull(entityType);
+        var query = entityType.FindAnnotation("ClickHouse:MaterializedViewQuery")?.Value as string;
+        Assert.NotNull(query);
+
+        Assert.Contains("FROM \"GjOrderSrc\" AS t0", query);
+        Assert.Contains("LEFT JOIN \"GjCustomerSrc\" AS t1 ON t0.\"CustomerId\" = t1.\"Id\"", query);
+        // FirstOrDefault() ?? "" should collapse to coalesce(alias.col, '').
+        Assert.Contains("coalesce(t1.\"Region\", '')", query);
+        // Outer-source columns flow through to the projection under the outer alias.
+        Assert.Contains("t0.\"Id\"", query);
+        Assert.Contains("t0.\"Amount\"", query);
+    }
+
+    [Fact]
+    public void AsMaterializedView_MergeStateAggregates_TranslatesAllTenCombinators()
+    {
+        using var context = CreateContext<MergeStateAggregatesContext>();
+        var entityType = context.Model.FindEntityType(typeof(MvMergeStateRollup));
+
+        Assert.NotNull(entityType);
+        var query = entityType.FindAnnotation("ClickHouse:MaterializedViewQuery")?.Value as string;
+        Assert.NotNull(query);
+
+        Assert.Contains("countMergeState(\"C\")", query);
+        Assert.Contains("sumMergeState(\"S\")", query);
+        Assert.Contains("avgMergeState(\"Av\")", query);
+        Assert.Contains("minMergeState(\"Mn\")", query);
+        Assert.Contains("maxMergeState(\"Mx\")", query);
+        Assert.Contains("uniqMergeState(\"U\")", query);
+        Assert.Contains("uniqExactMergeState(\"Ue\")", query);
+        Assert.Contains("anyMergeState(\"An\")", query);
+        Assert.Contains("anyLastMergeState(\"Al\")", query);
+        Assert.Contains("quantileMergeState(0.5)(\"Q\")", query);
+    }
+
     #endregion
 
     #region Integration Tests
@@ -1242,6 +1492,661 @@ public class MvHourlyByStartOfHour
     public DateTime Hour { get; set; }
     public int TotalOrders { get; set; }
     public decimal TotalRevenue { get; set; }
+}
+
+// ============================================================================
+//   Phase F/G/H/I/J join-coverage contexts
+// ============================================================================
+//
+// All re-use the JoinOrder/JoinCustomer/JoinedRevenue entities defined below for
+// strictness/RIGHT/FULL OUTER coverage; SEMI/ANTI use single-side row types
+// because their result selectors are single-arg.
+
+public class SingleSideOrder
+{
+    public long OrderId { get; set; }
+    public long Amount { get; set; }
+}
+
+public class SingleSideCustomer
+{
+    public long CustomerId { get; set; }
+    public string Region { get; set; } = string.Empty;
+}
+
+public class CrossJoinTag
+{
+    public long Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+}
+
+public class CrossJoinedRow
+{
+    public long OrderId { get; set; }
+    public string Tag { get; set; } = string.Empty;
+}
+
+public class AnyInnerJoinContext : DbContext
+{
+    public AnyInnerJoinContext(DbContextOptions<AnyInnerJoinContext> options) : base(options) { }
+    public DbSet<JoinOrder> Orders => Set<JoinOrder>();
+    public DbSet<JoinCustomer> Customers => Set<JoinCustomer>();
+    public DbSet<JoinedRevenue> Revenue => Set<JoinedRevenue>();
+    private static readonly IQueryable<JoinCustomer> _stub = Enumerable.Empty<JoinCustomer>().AsQueryable();
+    protected override void OnModelCreating(ModelBuilder mb)
+    {
+        mb.Entity<JoinOrder>(e => { e.ToTable("AnyJoinOrders"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id); });
+        mb.Entity<JoinCustomer>(e => { e.ToTable("AnyJoinCustomers"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id); });
+        mb.Entity<JoinedRevenue>(e =>
+        {
+            e.ToTable("AnyInnerRevenue_MV"); e.HasNoKey();
+            e.UseSummingMergeTree(x => x.Region);
+            e.AsMaterializedView<JoinedRevenue, JoinOrder>(orders => orders
+                .AnyJoin(_stub, o => o.CustomerId, c => c.Id, (o, c) => new { o.Amount, c.Region })
+                .GroupBy(x => x.Region)
+                .Select(g => new JoinedRevenue { Region = g.Key, Total = g.Sum(x => x.Amount) }));
+        });
+    }
+}
+
+public class AnyLeftJoinContext : DbContext
+{
+    public AnyLeftJoinContext(DbContextOptions<AnyLeftJoinContext> options) : base(options) { }
+    public DbSet<JoinOrder> Orders => Set<JoinOrder>();
+    public DbSet<JoinCustomer> Customers => Set<JoinCustomer>();
+    public DbSet<JoinedRevenue> Revenue => Set<JoinedRevenue>();
+    private static readonly IQueryable<JoinCustomer> _stub = Enumerable.Empty<JoinCustomer>().AsQueryable();
+    protected override void OnModelCreating(ModelBuilder mb)
+    {
+        mb.Entity<JoinOrder>(e => { e.ToTable("AnyLeftJoinOrders"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id); });
+        mb.Entity<JoinCustomer>(e => { e.ToTable("AnyLeftJoinCustomers"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id); });
+        mb.Entity<JoinedRevenue>(e =>
+        {
+            e.ToTable("AnyLeftRevenue_MV"); e.HasNoKey();
+            e.UseSummingMergeTree(x => x.Region);
+            e.AsMaterializedView<JoinedRevenue, JoinOrder>(orders => orders
+                .AnyLeftJoin(_stub, o => o.CustomerId, c => c.Id, (o, c) => new { o.Amount, c.Region })
+                .GroupBy(x => x.Region)
+                .Select(g => new JoinedRevenue { Region = g.Key, Total = g.Sum(x => x.Amount) }));
+        });
+    }
+}
+
+public class AnyRightJoinContext : DbContext
+{
+    public AnyRightJoinContext(DbContextOptions<AnyRightJoinContext> options) : base(options) { }
+    public DbSet<JoinOrder> Orders => Set<JoinOrder>();
+    public DbSet<JoinCustomer> Customers => Set<JoinCustomer>();
+    public DbSet<JoinedRevenue> Revenue => Set<JoinedRevenue>();
+    private static readonly IQueryable<JoinCustomer> _stub = Enumerable.Empty<JoinCustomer>().AsQueryable();
+    protected override void OnModelCreating(ModelBuilder mb)
+    {
+        mb.Entity<JoinOrder>(e => { e.ToTable("AnyRightJoinOrders"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id); });
+        mb.Entity<JoinCustomer>(e => { e.ToTable("AnyRightJoinCustomers"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id); });
+        mb.Entity<JoinedRevenue>(e =>
+        {
+            e.ToTable("AnyRightRevenue_MV"); e.HasNoKey();
+            e.UseSummingMergeTree(x => x.Region);
+            e.AsMaterializedView<JoinedRevenue, JoinOrder>(orders => orders
+                .AnyRightJoin(_stub, o => o.CustomerId, c => c.Id, (o, c) => new { o.Amount, c.Region })
+                .GroupBy(x => x.Region)
+                .Select(g => new JoinedRevenue { Region = g.Key, Total = g.Sum(x => x.Amount) }));
+        });
+    }
+}
+
+public class RightJoinContext : DbContext
+{
+    public RightJoinContext(DbContextOptions<RightJoinContext> options) : base(options) { }
+    public DbSet<JoinOrder> Orders => Set<JoinOrder>();
+    public DbSet<JoinCustomer> Customers => Set<JoinCustomer>();
+    public DbSet<JoinedRevenue> Revenue => Set<JoinedRevenue>();
+    private static readonly IQueryable<JoinCustomer> _stub = Enumerable.Empty<JoinCustomer>().AsQueryable();
+    protected override void OnModelCreating(ModelBuilder mb)
+    {
+        mb.Entity<JoinOrder>(e => { e.ToTable("RightJoinOrders"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id); });
+        mb.Entity<JoinCustomer>(e => { e.ToTable("RightJoinCustomers"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id); });
+        mb.Entity<JoinedRevenue>(e =>
+        {
+            e.ToTable("RightJoinRevenue_MV"); e.HasNoKey();
+            e.UseSummingMergeTree(x => x.Region);
+            e.AsMaterializedView<JoinedRevenue, JoinOrder>(orders => orders
+                .RightJoin(_stub, o => o.CustomerId, c => c.Id, (o, c) => new { o.Amount, c.Region })
+                .GroupBy(x => x.Region)
+                .Select(g => new JoinedRevenue { Region = g.Key, Total = g.Sum(x => x.Amount) }));
+        });
+    }
+}
+
+public class FullOuterJoinContext : DbContext
+{
+    public FullOuterJoinContext(DbContextOptions<FullOuterJoinContext> options) : base(options) { }
+    public DbSet<JoinOrder> Orders => Set<JoinOrder>();
+    public DbSet<JoinCustomer> Customers => Set<JoinCustomer>();
+    public DbSet<JoinedRevenue> Revenue => Set<JoinedRevenue>();
+    private static readonly IQueryable<JoinCustomer> _stub = Enumerable.Empty<JoinCustomer>().AsQueryable();
+    protected override void OnModelCreating(ModelBuilder mb)
+    {
+        mb.Entity<JoinOrder>(e => { e.ToTable("FullOuterOrders"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id); });
+        mb.Entity<JoinCustomer>(e => { e.ToTable("FullOuterCustomers"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id); });
+        mb.Entity<JoinedRevenue>(e =>
+        {
+            e.ToTable("FullOuterRevenue_MV"); e.HasNoKey();
+            e.UseSummingMergeTree(x => x.Region);
+            e.AsMaterializedView<JoinedRevenue, JoinOrder>(orders => orders
+                .FullOuterJoin(_stub, o => o.CustomerId, c => c.Id, (o, c) => new { o.Amount, c.Region })
+                .GroupBy(x => x.Region)
+                .Select(g => new JoinedRevenue { Region = g.Key, Total = g.Sum(x => x.Amount) }));
+        });
+    }
+}
+
+public class LeftSemiJoinContext : DbContext
+{
+    public LeftSemiJoinContext(DbContextOptions<LeftSemiJoinContext> options) : base(options) { }
+    public DbSet<JoinOrder> Orders => Set<JoinOrder>();
+    public DbSet<JoinCustomer> Customers => Set<JoinCustomer>();
+    public DbSet<SingleSideOrder> Result => Set<SingleSideOrder>();
+    private static readonly IQueryable<JoinCustomer> _stub = Enumerable.Empty<JoinCustomer>().AsQueryable();
+    protected override void OnModelCreating(ModelBuilder mb)
+    {
+        mb.Entity<JoinOrder>(e => { e.ToTable("LeftSemiOrders"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id); });
+        mb.Entity<JoinCustomer>(e => { e.ToTable("LeftSemiCustomers"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id); });
+        mb.Entity<SingleSideOrder>(e =>
+        {
+            e.ToTable("LeftSemi_MV"); e.HasNoKey();
+            e.UseMergeTree(x => x.OrderId);
+            e.AsMaterializedView<SingleSideOrder, JoinOrder>(orders => orders
+                .LeftSemiJoin(_stub, o => o.CustomerId, c => c.Id,
+                    o => new SingleSideOrder { OrderId = o.Id, Amount = o.Amount }));
+        });
+    }
+}
+
+public class LeftAntiJoinContext : DbContext
+{
+    public LeftAntiJoinContext(DbContextOptions<LeftAntiJoinContext> options) : base(options) { }
+    public DbSet<JoinOrder> Orders => Set<JoinOrder>();
+    public DbSet<JoinCustomer> Customers => Set<JoinCustomer>();
+    public DbSet<SingleSideOrder> Result => Set<SingleSideOrder>();
+    private static readonly IQueryable<JoinCustomer> _stub = Enumerable.Empty<JoinCustomer>().AsQueryable();
+    protected override void OnModelCreating(ModelBuilder mb)
+    {
+        mb.Entity<JoinOrder>(e => { e.ToTable("LeftAntiOrders"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id); });
+        mb.Entity<JoinCustomer>(e => { e.ToTable("LeftAntiCustomers"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id); });
+        mb.Entity<SingleSideOrder>(e =>
+        {
+            e.ToTable("LeftAnti_MV"); e.HasNoKey();
+            e.UseMergeTree(x => x.OrderId);
+            e.AsMaterializedView<SingleSideOrder, JoinOrder>(orders => orders
+                .LeftAntiJoin(_stub, o => o.CustomerId, c => c.Id,
+                    o => new SingleSideOrder { OrderId = o.Id, Amount = o.Amount }));
+        });
+    }
+}
+
+public class RightSemiJoinContext : DbContext
+{
+    public RightSemiJoinContext(DbContextOptions<RightSemiJoinContext> options) : base(options) { }
+    public DbSet<JoinOrder> Orders => Set<JoinOrder>();
+    public DbSet<JoinCustomer> Customers => Set<JoinCustomer>();
+    public DbSet<SingleSideCustomer> Result => Set<SingleSideCustomer>();
+    private static readonly IQueryable<JoinCustomer> _stub = Enumerable.Empty<JoinCustomer>().AsQueryable();
+    protected override void OnModelCreating(ModelBuilder mb)
+    {
+        mb.Entity<JoinOrder>(e => { e.ToTable("RightSemiOrders"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id); });
+        mb.Entity<JoinCustomer>(e => { e.ToTable("RightSemiCustomers"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id); });
+        mb.Entity<SingleSideCustomer>(e =>
+        {
+            e.ToTable("RightSemi_MV"); e.HasNoKey();
+            e.UseMergeTree(x => x.CustomerId);
+            e.AsMaterializedView<SingleSideCustomer, JoinOrder>(orders => orders
+                .RightSemiJoin(_stub, o => o.CustomerId, c => c.Id,
+                    c => new SingleSideCustomer { CustomerId = c.Id, Region = c.Region }));
+        });
+    }
+}
+
+public class RightAntiJoinContext : DbContext
+{
+    public RightAntiJoinContext(DbContextOptions<RightAntiJoinContext> options) : base(options) { }
+    public DbSet<JoinOrder> Orders => Set<JoinOrder>();
+    public DbSet<JoinCustomer> Customers => Set<JoinCustomer>();
+    public DbSet<SingleSideCustomer> Result => Set<SingleSideCustomer>();
+    private static readonly IQueryable<JoinCustomer> _stub = Enumerable.Empty<JoinCustomer>().AsQueryable();
+    protected override void OnModelCreating(ModelBuilder mb)
+    {
+        mb.Entity<JoinOrder>(e => { e.ToTable("RightAntiOrders"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id); });
+        mb.Entity<JoinCustomer>(e => { e.ToTable("RightAntiCustomers"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id); });
+        mb.Entity<SingleSideCustomer>(e =>
+        {
+            e.ToTable("RightAnti_MV"); e.HasNoKey();
+            e.UseMergeTree(x => x.CustomerId);
+            e.AsMaterializedView<SingleSideCustomer, JoinOrder>(orders => orders
+                .RightAntiJoin(_stub, o => o.CustomerId, c => c.Id,
+                    c => new SingleSideCustomer { CustomerId = c.Id, Region = c.Region }));
+        });
+    }
+}
+
+public class CrossJoinContext : DbContext
+{
+    public CrossJoinContext(DbContextOptions<CrossJoinContext> options) : base(options) { }
+    public DbSet<JoinOrder> Orders => Set<JoinOrder>();
+    public DbSet<CrossJoinTag> Tags => Set<CrossJoinTag>();
+    public DbSet<CrossJoinedRow> Result => Set<CrossJoinedRow>();
+    private static readonly IQueryable<CrossJoinTag> _stub = Enumerable.Empty<CrossJoinTag>().AsQueryable();
+    protected override void OnModelCreating(ModelBuilder mb)
+    {
+        mb.Entity<JoinOrder>(e => { e.ToTable("CrossJoinOrders"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id); });
+        mb.Entity<CrossJoinTag>(e => { e.ToTable("CrossJoinTags"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id); });
+        mb.Entity<CrossJoinedRow>(e =>
+        {
+            e.ToTable("CrossJoin_MV"); e.HasNoKey();
+            e.UseMergeTree(x => x.OrderId);
+            e.AsMaterializedView<CrossJoinedRow, JoinOrder>(orders => orders
+                .CrossJoin(_stub, (o, t) => new CrossJoinedRow { OrderId = o.Id, Tag = t.Name }));
+        });
+    }
+}
+
+// ============================================================================
+//   Phase K — ARRAY JOIN / LEFT ARRAY JOIN MV translation tests
+// ============================================================================
+
+public class MvArrayJoinEvent
+{
+    public long Id { get; set; }
+    public List<string> Tags { get; set; } = new();
+}
+
+public class ArrayJoinedRow
+{
+    public long EventId { get; set; }
+    public string Tag { get; set; } = string.Empty;
+}
+
+public class ArrayJoinContext : DbContext
+{
+    public ArrayJoinContext(DbContextOptions<ArrayJoinContext> options) : base(options) { }
+    public DbSet<MvArrayJoinEvent> Events => Set<MvArrayJoinEvent>();
+    public DbSet<ArrayJoinedRow> Result => Set<ArrayJoinedRow>();
+    protected override void OnModelCreating(ModelBuilder mb)
+    {
+        mb.Entity<MvArrayJoinEvent>(e => { e.ToTable("MvArrayJoinEvents"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id); });
+        mb.Entity<ArrayJoinedRow>(e =>
+        {
+            e.ToTable("ArrayJoin_MV"); e.HasNoKey();
+            e.UseMergeTree(x => x.EventId);
+            e.AsMaterializedView<ArrayJoinedRow, MvArrayJoinEvent>(events => events
+                .ArrayJoin(x => x.Tags, (x, tag) => new ArrayJoinedRow { EventId = x.Id, Tag = tag }));
+        });
+    }
+}
+
+public class LeftArrayJoinContext : DbContext
+{
+    public LeftArrayJoinContext(DbContextOptions<LeftArrayJoinContext> options) : base(options) { }
+    public DbSet<MvArrayJoinEvent> Events => Set<MvArrayJoinEvent>();
+    public DbSet<ArrayJoinedRow> Result => Set<ArrayJoinedRow>();
+    protected override void OnModelCreating(ModelBuilder mb)
+    {
+        mb.Entity<MvArrayJoinEvent>(e => { e.ToTable("LeftMvArrayJoinEvents"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id); });
+        mb.Entity<ArrayJoinedRow>(e =>
+        {
+            e.ToTable("LeftArrayJoin_MV"); e.HasNoKey();
+            e.UseMergeTree(x => x.EventId);
+            e.AsMaterializedView<ArrayJoinedRow, MvArrayJoinEvent>(events => events
+                .LeftArrayJoin(x => x.Tags, (x, tag) => new ArrayJoinedRow { EventId = x.Id, Tag = tag }));
+        });
+    }
+}
+
+/// <summary>
+/// Source entities for ASOF JOIN MV translation tests. Trades stream is the
+/// outer (trigger) source; quotes is the lookup right-side. Equi-key on Symbol,
+/// inequality on T (timestamp) — typical time-series ASOF pattern.
+/// </summary>
+public class AsofTrade
+{
+    public uint Id { get; set; }
+    public string Symbol { get; set; } = string.Empty;
+    public DateTime T { get; set; }
+}
+
+public class AsofQuote
+{
+    public uint Id { get; set; }
+    public string Symbol { get; set; } = string.Empty;
+    public DateTime T { get; set; }
+    public decimal Price { get; set; }
+}
+
+public class AsofTradeWithQuote
+{
+    public uint Id { get; set; }
+    public DateTime T { get; set; }
+    public decimal Price { get; set; }
+}
+
+public class LinqAsofInnerJoinContext : DbContext
+{
+    public LinqAsofInnerJoinContext(DbContextOptions<LinqAsofInnerJoinContext> options) : base(options) { }
+    public DbSet<AsofTrade> Trades => Set<AsofTrade>();
+    public DbSet<AsofQuote> Quotes => Set<AsofQuote>();
+    public DbSet<AsofTradeWithQuote> Result => Set<AsofTradeWithQuote>();
+
+    private static readonly IQueryable<AsofQuote> _quotesStub = Enumerable.Empty<AsofQuote>().AsQueryable();
+
+    protected override void OnModelCreating(ModelBuilder mb)
+    {
+        mb.Entity<AsofTrade>(e => { e.ToTable("AsofTrades"); e.HasKey(x => x.Id); e.UseMergeTree(x => new { x.Symbol, x.T }); });
+        mb.Entity<AsofQuote>(e => { e.ToTable("AsofQuotes"); e.HasKey(x => x.Id); e.UseMergeTree(x => new { x.Symbol, x.T }); });
+        mb.Entity<AsofTradeWithQuote>(e =>
+        {
+            e.ToTable("AsofTradeWithQuote_MV"); e.HasNoKey();
+            e.UseMergeTree(x => x.Id);
+            e.AsMaterializedView<AsofTradeWithQuote, AsofTrade>(trades => trades
+                .AsofJoin(_quotesStub,
+                    t => t.Symbol,
+                    q => q.Symbol,
+                    (t, q) => t.T >= q.T,
+                    (t, q) => new AsofTradeWithQuote { Id = t.Id, T = t.T, Price = q.Price }));
+        });
+    }
+}
+
+public class LinqAsofLeftJoinContext : DbContext
+{
+    public LinqAsofLeftJoinContext(DbContextOptions<LinqAsofLeftJoinContext> options) : base(options) { }
+    public DbSet<AsofTrade> Trades => Set<AsofTrade>();
+    public DbSet<AsofQuote> Quotes => Set<AsofQuote>();
+    public DbSet<AsofTradeWithQuote> Result => Set<AsofTradeWithQuote>();
+
+    private static readonly IQueryable<AsofQuote> _quotesStub = Enumerable.Empty<AsofQuote>().AsQueryable();
+
+    protected override void OnModelCreating(ModelBuilder mb)
+    {
+        mb.Entity<AsofTrade>(e => { e.ToTable("AsofLeftTrades"); e.HasKey(x => x.Id); e.UseMergeTree(x => new { x.Symbol, x.T }); });
+        mb.Entity<AsofQuote>(e => { e.ToTable("AsofLeftQuotes"); e.HasKey(x => x.Id); e.UseMergeTree(x => new { x.Symbol, x.T }); });
+        mb.Entity<AsofTradeWithQuote>(e =>
+        {
+            e.ToTable("AsofLeftTradeWithQuote_MV"); e.HasNoKey();
+            e.UseMergeTree(x => x.Id);
+            e.AsMaterializedView<AsofTradeWithQuote, AsofTrade>(trades => trades
+                .AsofLeftJoin(_quotesStub,
+                    t => t.Symbol,
+                    q => q.Symbol,
+                    (t, q) => t.T >= q.T,
+                    (t, q) => new AsofTradeWithQuote { Id = t.Id, T = t.T, Price = q.Price }));
+        });
+    }
+}
+
+/// <summary>
+/// Source entities for the LINQ Join MV translation tests.
+/// </summary>
+public class JoinCustomer
+{
+    public long Id { get; set; }
+    public string Region { get; set; } = string.Empty;
+}
+
+public class JoinOrder
+{
+    public long Id { get; set; }
+    public long CustomerId { get; set; }
+    public long Amount { get; set; }
+}
+
+public class JoinedRevenue
+{
+    public string Region { get; set; } = string.Empty;
+    public long Total { get; set; }
+}
+
+public class GroupJoinedOrderRegion
+{
+    public long OrderId { get; set; }
+    public string Region { get; set; } = string.Empty;
+    public long Amount { get; set; }
+}
+
+/// <summary>
+/// Pins translation of <c>orders.Join(customers, ...)</c> in an MV definition.
+/// The customers right-hand-side is a closure-captured static IQueryable&lt;T&gt; —
+/// the translator must resolve its element type and the entity's table name.
+/// </summary>
+public class LinqInnerJoinContext : DbContext
+{
+    public LinqInnerJoinContext(DbContextOptions<LinqInnerJoinContext> options)
+        : base(options) { }
+
+    public DbSet<JoinOrder> Orders => Set<JoinOrder>();
+    public DbSet<JoinCustomer> Customers => Set<JoinCustomer>();
+    public DbSet<JoinedRevenue> Revenue => Set<JoinedRevenue>();
+
+    private static readonly IQueryable<JoinCustomer> _customersStub =
+        Enumerable.Empty<JoinCustomer>().AsQueryable();
+
+    protected override void OnModelCreating(ModelBuilder mb)
+    {
+        mb.Entity<JoinOrder>(e =>
+        {
+            e.ToTable("JoinOrderSrc"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id);
+        });
+        mb.Entity<JoinCustomer>(e =>
+        {
+            e.ToTable("JoinCustomerSrc"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id);
+        });
+        mb.Entity<JoinedRevenue>(e =>
+        {
+            e.ToTable("JoinRevenue_MV"); e.HasNoKey();
+            e.UseSummingMergeTree(x => x.Region);
+            e.AsMaterializedView<JoinedRevenue, JoinOrder>(orders => orders
+                .Join(_customersStub,
+                    o => o.CustomerId,
+                    c => c.Id,
+                    (o, c) => new { o.Amount, c.Region })
+                .GroupBy(x => x.Region)
+                .Select(g => new JoinedRevenue { Region = g.Key, Total = g.Sum(x => x.Amount) }));
+        });
+    }
+}
+
+/// <summary>
+/// Same shape as LinqInnerJoinContext but the customer entity is flagged as a
+/// ClickHouse dictionary. The translator must emit <c>dictionary('name')</c>
+/// instead of a quoted table name in the join clause.
+/// </summary>
+public class LinqJoinDictionaryContext : DbContext
+{
+    public LinqJoinDictionaryContext(DbContextOptions<LinqJoinDictionaryContext> options)
+        : base(options) { }
+
+    public DbSet<JoinOrder> Orders => Set<JoinOrder>();
+    public DbSet<JoinCustomer> Customers => Set<JoinCustomer>();
+    public DbSet<JoinedRevenue> Revenue => Set<JoinedRevenue>();
+
+    private static readonly IQueryable<JoinCustomer> _customersStub =
+        Enumerable.Empty<JoinCustomer>().AsQueryable();
+
+    protected override void OnModelCreating(ModelBuilder mb)
+    {
+        mb.Entity<JoinOrder>(e =>
+        {
+            e.ToTable("DictJoinOrderSrc"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id);
+        });
+        mb.Entity<JoinCustomer>(e =>
+        {
+            e.ToTable("CustomerLookup"); e.HasNoKey();
+            e.HasAnnotation("ClickHouse:Dictionary", true);
+        });
+        mb.Entity<JoinedRevenue>(e =>
+        {
+            e.ToTable("DictJoinRevenue_MV"); e.HasNoKey();
+            e.UseSummingMergeTree(x => x.Region);
+            e.AsMaterializedView<JoinedRevenue, JoinOrder>(orders => orders
+                .Join(_customersStub,
+                    o => o.CustomerId,
+                    c => c.Id,
+                    (o, c) => new { o.Amount, c.Region })
+                .GroupBy(x => x.Region)
+                .Select(g => new JoinedRevenue { Region = g.Key, Total = g.Sum(x => x.Amount) }));
+        });
+    }
+}
+
+/// <summary>
+/// Pins translation of <c>orders.GroupJoin(customers, ...)</c>: emits LEFT JOIN
+/// and rewrites <c>cs.Select(c => c.X).FirstOrDefault() ?? d</c> into
+/// <c>coalesce(t1."X", d)</c>.
+/// </summary>
+public class LinqGroupJoinContext : DbContext
+{
+    public LinqGroupJoinContext(DbContextOptions<LinqGroupJoinContext> options)
+        : base(options) { }
+
+    public DbSet<JoinOrder> Orders => Set<JoinOrder>();
+    public DbSet<JoinCustomer> Customers => Set<JoinCustomer>();
+    public DbSet<GroupJoinedOrderRegion> GroupJoined => Set<GroupJoinedOrderRegion>();
+
+    private static readonly IQueryable<JoinCustomer> _customersStub =
+        Enumerable.Empty<JoinCustomer>().AsQueryable();
+
+    protected override void OnModelCreating(ModelBuilder mb)
+    {
+        mb.Entity<JoinOrder>(e =>
+        {
+            e.ToTable("GjOrderSrc"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id);
+        });
+        mb.Entity<JoinCustomer>(e =>
+        {
+            e.ToTable("GjCustomerSrc"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id);
+        });
+        mb.Entity<GroupJoinedOrderRegion>(e =>
+        {
+            e.ToTable("GjOrderRegion_MV"); e.HasNoKey();
+            e.UseMergeTree(x => x.OrderId);
+            e.AsMaterializedView<GroupJoinedOrderRegion, JoinOrder>(orders => orders
+                .GroupJoin(_customersStub,
+                    o => o.CustomerId,
+                    c => c.Id,
+                    (o, cs) => new GroupJoinedOrderRegion
+                    {
+                        OrderId = o.Id,
+                        Region = cs.Select(c => c.Region).FirstOrDefault() ?? "",
+                        Amount = o.Amount,
+                    }));
+        });
+    }
+}
+
+/// <summary>
+/// Source entity carrying AggregateFunction state columns for the MergeState rollup.
+/// Each byte[] column holds the binary state produced by the corresponding -State
+/// combinator on an upstream AggregatingMergeTree.
+/// </summary>
+public class MvMergeStateSource
+{
+    public string Bucket { get; set; } = string.Empty;
+    public byte[] C { get; set; } = Array.Empty<byte>();
+    public byte[] S { get; set; } = Array.Empty<byte>();
+    public byte[] Av { get; set; } = Array.Empty<byte>();
+    public byte[] Mn { get; set; } = Array.Empty<byte>();
+    public byte[] Mx { get; set; } = Array.Empty<byte>();
+    public byte[] U { get; set; } = Array.Empty<byte>();
+    public byte[] Ue { get; set; } = Array.Empty<byte>();
+    public byte[] An { get; set; } = Array.Empty<byte>();
+    public byte[] Al { get; set; } = Array.Empty<byte>();
+    public byte[] Q { get; set; } = Array.Empty<byte>();
+}
+
+/// <summary>
+/// Rollup entity that re-states each merged aggregate for downstream AMTs.
+/// </summary>
+public class MvMergeStateRollup
+{
+    public string Bucket { get; set; } = string.Empty;
+    public byte[] C { get; set; } = Array.Empty<byte>();
+    public byte[] S { get; set; } = Array.Empty<byte>();
+    public byte[] Av { get; set; } = Array.Empty<byte>();
+    public byte[] Mn { get; set; } = Array.Empty<byte>();
+    public byte[] Mx { get; set; } = Array.Empty<byte>();
+    public byte[] U { get; set; } = Array.Empty<byte>();
+    public byte[] Ue { get; set; } = Array.Empty<byte>();
+    public byte[] An { get; set; } = Array.Empty<byte>();
+    public byte[] Al { get; set; } = Array.Empty<byte>();
+    public byte[] Q { get; set; } = Array.Empty<byte>();
+}
+
+/// <summary>
+/// Pins translation of all 10 -MergeState combinators in one MV definition.
+/// Each Property is bound to its upstream AggregateFunction column type so the
+/// translator's column lookup resolves correctly.
+/// </summary>
+public class MergeStateAggregatesContext : DbContext
+{
+    public MergeStateAggregatesContext(DbContextOptions<MergeStateAggregatesContext> options)
+        : base(options) { }
+
+    public DbSet<MvMergeStateSource> Source => Set<MvMergeStateSource>();
+    public DbSet<MvMergeStateRollup> Rollup => Set<MvMergeStateRollup>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<MvMergeStateSource>(entity =>
+        {
+            entity.ToTable("MergeStateSource");
+            entity.HasNoKey();
+            entity.UseAggregatingMergeTree(x => x.Bucket);
+            entity.Property(x => x.C).HasAggregateFunction("count", typeof(ulong));
+            entity.Property(x => x.S).HasAggregateFunction("sum", typeof(long));
+            entity.Property(x => x.Av).HasAggregateFunction("avg", typeof(double));
+            entity.Property(x => x.Mn).HasAggregateFunction("min", typeof(long));
+            entity.Property(x => x.Mx).HasAggregateFunction("max", typeof(long));
+            entity.Property(x => x.U).HasAggregateFunction("uniq", typeof(long));
+            entity.Property(x => x.Ue).HasAggregateFunction("uniqExact", typeof(long));
+            entity.Property(x => x.An).HasAggregateFunction("any", typeof(long));
+            entity.Property(x => x.Al).HasAggregateFunction("anyLast", typeof(long));
+            entity.Property(x => x.Q).HasAggregateFunction("quantile", typeof(double));
+        });
+
+        modelBuilder.Entity<MvMergeStateRollup>(entity =>
+        {
+            entity.ToTable("MergeStateRollup_MV");
+            entity.HasNoKey();
+            entity.UseAggregatingMergeTree(x => x.Bucket);
+            entity.Property(x => x.C).HasAggregateFunction("count", typeof(ulong));
+            entity.Property(x => x.S).HasAggregateFunction("sum", typeof(long));
+            entity.Property(x => x.Av).HasAggregateFunction("avg", typeof(double));
+            entity.Property(x => x.Mn).HasAggregateFunction("min", typeof(long));
+            entity.Property(x => x.Mx).HasAggregateFunction("max", typeof(long));
+            entity.Property(x => x.U).HasAggregateFunction("uniq", typeof(long));
+            entity.Property(x => x.Ue).HasAggregateFunction("uniqExact", typeof(long));
+            entity.Property(x => x.An).HasAggregateFunction("any", typeof(long));
+            entity.Property(x => x.Al).HasAggregateFunction("anyLast", typeof(long));
+            entity.Property(x => x.Q).HasAggregateFunction("quantile", typeof(double));
+            entity.AsMaterializedView<MvMergeStateRollup, MvMergeStateSource>(
+                query: rows => rows
+                    .GroupBy(r => r.Bucket)
+                    .Select(g => new MvMergeStateRollup
+                    {
+                        Bucket = g.Key,
+                        C = g.CountMergeState(r => r.C),
+                        S = g.SumMergeState(r => r.S),
+                        Av = g.AvgMergeState(r => r.Av),
+                        Mn = g.MinMergeState(r => r.Mn),
+                        Mx = g.MaxMergeState(r => r.Mx),
+                        U = g.UniqMergeState(r => r.U),
+                        Ue = g.UniqExactMergeState(r => r.Ue),
+                        An = g.AnyMergeState(r => r.An),
+                        Al = g.AnyLastMergeState(r => r.Al),
+                        Q = g.QuantileMergeState(0.5, r => r.Q),
+                    }),
+                populate: false);
+        });
+    }
 }
 
 #endregion

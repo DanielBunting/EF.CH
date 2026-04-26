@@ -1,0 +1,93 @@
+using EF.CH.Extensions;
+using EF.CH.SystemTests.Fixtures;
+using EF.CH.SystemTests.Infrastructure;
+using Microsoft.EntityFrameworkCore;
+using Xunit;
+
+namespace EF.CH.SystemTests.Materialization.Joined;
+
+/// <summary>
+/// Raw-SQL baseline that pins the target SQL shape for the LINQ-AsofJoin MV
+/// translation work. Sits beside <see cref="MvAsofJoinSourceLinqUnsupportedTests"/>
+/// so the green/red contrast is explicit: the baseline proves the SQL works,
+/// the LINQ tests pin the gap.
+/// </summary>
+[Collection(SingleNodeCollection.Name)]
+public class MvAsofJoinSourceRawSqlTests
+{
+    private readonly SingleNodeClickHouseFixture _fixture;
+    public MvAsofJoinSourceRawSqlTests(SingleNodeClickHouseFixture fixture) => _fixture = fixture;
+    private string Conn => _fixture.ConnectionString;
+
+    [Fact]
+    public async Task RawSql_AsofJoin_MatchesLastQuoteAtOrBefore()
+    {
+        await using var ctx = TestContextFactory.Create<RawAsofInnerCtx>(Conn);
+        await ctx.Database.EnsureDeletedAsync();
+        await ctx.Database.EnsureCreatedAsync();
+
+        var t0 = new DateTime(2024, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        ctx.Quotes.AddRange(
+            new Quote { Id = 1, Symbol = "AAA", T = t0.AddMinutes(0),  Price = 100m },
+            new Quote { Id = 2, Symbol = "AAA", T = t0.AddMinutes(10), Price = 110m });
+        await ctx.SaveChangesAsync();
+
+        ctx.Trades.AddRange(
+            new Trade { Id = 10, Symbol = "AAA", T = t0.AddMinutes(5),  Qty = 1 },
+            new Trade { Id = 11, Symbol = "AAA", T = t0.AddMinutes(15), Qty = 2 });
+        await ctx.SaveChangesAsync();
+
+        await RawClickHouse.SettleMaterializationAsync(Conn, "RawAsofInnerTarget");
+
+        var rows = await RawClickHouse.RowsAsync(Conn,
+            "SELECT toInt64(TradeId) AS TradeId, toFloat64(QuotePrice) AS QuotePrice FROM \"RawAsofInnerTarget\" ORDER BY TradeId");
+        Assert.Equal(2, rows.Count);
+        Assert.Equal(100.0, Convert.ToDouble(rows[0]["QuotePrice"]));
+        Assert.Equal(110.0, Convert.ToDouble(rows[1]["QuotePrice"]));
+    }
+
+    public sealed class Quote
+    {
+        public uint Id { get; set; }
+        public string Symbol { get; set; } = "";
+        public DateTime T { get; set; }
+        public decimal Price { get; set; }
+    }
+    public sealed class Trade
+    {
+        public uint Id { get; set; }
+        public string Symbol { get; set; } = "";
+        public DateTime T { get; set; }
+        public int Qty { get; set; }
+    }
+    public sealed class TradeWithQuote
+    {
+        public uint TradeId { get; set; }
+        public DateTime TradeT { get; set; }
+        public decimal QuotePrice { get; set; }
+    }
+
+    public sealed class RawAsofInnerCtx(DbContextOptions<RawAsofInnerCtx> o) : DbContext(o)
+    {
+        public DbSet<Quote> Quotes => Set<Quote>();
+        public DbSet<Trade> Trades => Set<Trade>();
+        public DbSet<TradeWithQuote> Target => Set<TradeWithQuote>();
+        protected override void OnModelCreating(ModelBuilder mb)
+        {
+            mb.Entity<Quote>(e => { e.ToTable("RawAsofInnerQuotes"); e.HasKey(x => x.Id); e.UseMergeTree(x => new { x.Symbol, x.T }); });
+            mb.Entity<Trade>(e => { e.ToTable("RawAsofInnerTrades"); e.HasKey(x => x.Id); e.UseMergeTree(x => new { x.Symbol, x.T }); });
+            mb.Entity<TradeWithQuote>(e =>
+            {
+                e.ToTable("RawAsofInnerTarget"); e.HasNoKey();
+                e.UseMergeTree(x => x.TradeId);
+                e.AsMaterializedViewRaw(
+                    sourceTable: "RawAsofInnerTrades",
+                    selectSql: """
+                    SELECT t."Id" AS "TradeId", t."T" AS "TradeT", q."Price" AS "QuotePrice"
+                    FROM "RawAsofInnerTrades" AS t
+                    ASOF JOIN "RawAsofInnerQuotes" AS q ON t."Symbol" = q."Symbol" AND t."T" >= q."T"
+                    """);
+            });
+        }
+    }
+}

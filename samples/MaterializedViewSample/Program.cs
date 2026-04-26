@@ -1,7 +1,7 @@
-// MaterializedViewSample - Demonstrates materialized views via EF.CH
+// MaterializedViewSample - Demonstrates materialized views via EF.CH (all LINQ).
 //
-// 1. LINQ MV          - AsMaterializedView<T, S>(q => q.GroupBy(...).Select(...))
-// 2. LINQ MV + filter - AsMaterializedView<T, S> with Where + GroupBy + countIf
+// 1. Basic LINQ MV    - AsMaterializedView<T, S>(q => q.GroupBy(...).Select(...))
+// 2. LINQ MV + filter - AsMaterializedView<T, S> with toStartOfHour + Count + Avg + CountIf
 // 3. Null engine      - UseNullEngine as MV source (data discarded after MV processes)
 // 4. Populate option  - Backfill from existing data when creating the view
 
@@ -25,7 +25,7 @@ try
     Console.WriteLine();
 
     await DemoBasicMaterializedView(connectionString);
-    await DemoRawSqlMaterializedView(connectionString);
+    await DemoLinqWithFilterAndAggregates(connectionString);
     await DemoNullEngineSource(connectionString);
     await DemoPopulateOption(connectionString);
 
@@ -96,9 +96,9 @@ static async Task DemoBasicMaterializedView(string connectionString)
 }
 
 // ---------------------------------------------------------------------------
-// 2. LINQ Materialized View with Where + aggregates
+// 2. LINQ Materialized View with filter + aggregates
 // ---------------------------------------------------------------------------
-static async Task DemoRawSqlMaterializedView(string connectionString)
+static async Task DemoLinqWithFilterAndAggregates(string connectionString)
 {
     Console.WriteLine("--- 2. LINQ MV with filter + aggregates ---");
     Console.WriteLine("AsMaterializedView<T, S>(LINQ) using toStartOfHour, Count, Avg and CountIf.");
@@ -136,7 +136,7 @@ static async Task DemoRawSqlMaterializedView(string connectionString)
         .ThenBy(s => s.Path)
         .ToListAsync();
 
-    Console.WriteLine("Hourly summaries (from raw SQL materialized view):");
+    Console.WriteLine("Hourly summaries (from LINQ materialized view):");
     foreach (var s in summaries)
     {
         Console.WriteLine($"  Hour={s.Hour:HH:mm}, Path={s.Path}, " +

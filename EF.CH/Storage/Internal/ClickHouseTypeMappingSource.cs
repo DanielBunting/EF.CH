@@ -874,10 +874,13 @@ public partial class ClickHouseTypeMappingSource : RelationalTypeMappingSource
     [GeneratedRegex(@"^Tuple\((.+)\)$", RegexOptions.IgnoreCase)]
     private static partial Regex TupleRegex();
 
-    [GeneratedRegex(@"^SimpleAggregateFunction\((\w+),\s*(.+)\)$", RegexOptions.IgnoreCase)]
+    // Function name allows an optional parametric tail (e.g. quantile(0.5),
+    // quantileTDigest(0.99)) — the inner () must be argument literals, not nested
+    // calls. Captures the whole "name(args)" or bare name as group 1.
+    [GeneratedRegex(@"^SimpleAggregateFunction\((\w+(?:\([^)]*\))?),\s*(.+)\)$", RegexOptions.IgnoreCase)]
     private static partial Regex SimpleAggregateFunctionRegex();
 
-    [GeneratedRegex(@"^AggregateFunction\((\w+),\s*(.+)\)$", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"^AggregateFunction\((\w+(?:\([^)]*\))?),\s*(.+)\)$", RegexOptions.IgnoreCase)]
     private static partial Regex AggregateFunctionRegex();
 
     [GeneratedRegex(@"^Nested\((.+)\)$", RegexOptions.IgnoreCase)]

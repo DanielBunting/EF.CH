@@ -713,7 +713,7 @@ internal class ClickHouseMethodRewritingVisitor : ExpressionVisitor
     {
         // Arguments: [0]=outer, [1]=inner, [2]=outerKey, [3]=innerKey, [4]=asofCondition, [5]=resultSelector
         var asofCondition = UnwrapLambda(call.Arguments[4]);
-        var (leftPropName, rightPropName, op) = ParseAsofCondition(asofCondition);
+        var (leftPropName, rightPropName, op) = ClickHouseAsofConditionParser.Parse(asofCondition);
 
         var genericArgs = call.Method.GetGenericArguments(); // TOuter, TInner, TKey, TResult
         var leftColName = ResolveColumnName(genericArgs[0], leftPropName);
@@ -746,38 +746,8 @@ internal class ClickHouseMethodRewritingVisitor : ExpressionVisitor
             call.Arguments[5]); // resultSelector (skip asofCondition at [4])
     }
 
-    private static (string leftProp, string rightProp, string op) ParseAsofCondition(LambdaExpression lambda)
-    {
-        if (lambda.Body is not BinaryExpression binary)
-        {
-            throw new InvalidOperationException("ASOF condition must be a comparison (>=, >, <=, <).");
-        }
-
-        var op = binary.NodeType switch
-        {
-            ExpressionType.GreaterThanOrEqual => ">=",
-            ExpressionType.GreaterThan => ">",
-            ExpressionType.LessThanOrEqual => "<=",
-            ExpressionType.LessThan => "<",
-            _ => throw new InvalidOperationException("ASOF condition must use >=, >, <=, or < operator.")
-        };
-
-        var leftProp = ExtractPropertyName(binary.Left);
-        var rightProp = ExtractPropertyName(binary.Right);
-        return (leftProp, rightProp, op);
-    }
-
-    private static string ExtractPropertyName(Expression expression)
-    {
-        if (expression is UnaryExpression unary && unary.NodeType == ExpressionType.Convert)
-            expression = unary.Operand;
-
-        if (expression is MemberExpression member)
-            return member.Member.Name;
-
-        throw new InvalidOperationException(
-            $"ASOF condition must reference entity properties directly. Got: {expression.GetType().Name}");
-    }
+    // ASOF condition parsing lives in ClickHouseAsofConditionParser; both this
+    // preprocessor and the design-time MaterializedViewSqlTranslator call it.
 
     private static string ExtractMemberName(LambdaExpression lambda)
     {
