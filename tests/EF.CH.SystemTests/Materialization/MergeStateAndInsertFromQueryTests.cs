@@ -7,9 +7,9 @@ using Xunit;
 namespace EF.CH.SystemTests.Materialization;
 
 /// <summary>
-/// Gap #12 — <c>DbSet.InsertFromQuery(IQueryable)</c> for AMT→AMT chaining and
-/// the <c>-MergeState</c> combinator family (<c>countMergeState</c>,
-/// <c>sumMergeState</c>, …) are not surfaced. See .tmp/notes/feature-gaps.md §12.
+/// API-surface guards for server-side insert-from-query and the
+/// <c>-MergeState</c> combinator family used by AggregatingMergeTree chaining
+/// workflows.
 /// </summary>
 [Collection(SingleNodeCollection.Name)]
 public class MergeStateAndInsertFromQueryTests
@@ -25,8 +25,7 @@ public class MergeStateAndInsertFromQueryTests
             .SelectMany(t => t.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static))
             .Any(m => m.Name is "InsertFromQueryAsync" or "InsertFromQuery");
         Assert.True(found,
-            "Expected a DbSet<T>.InsertFromQuery(IQueryable<T>) extension. " +
-            "See .tmp/notes/feature-gaps.md §12.");
+            "Expected a DbSet<T>.InsertFromQuery(IQueryable<T>) extension.");
     }
 
     [Fact]

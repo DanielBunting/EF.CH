@@ -93,10 +93,8 @@ public class MvNonNullConstantLiteralTests
             "SELECT toUInt64(V) FROM \"MvLitULongTarget\" LIMIT 1"));
     }
 
-    // DateTime literals as inline `new DateTime(...)` compile to a NewExpression,
-    // which TranslateExpression does not currently support — that's a separate
-    // translator gap (constant-folding NewExpression for known constructible
-    // types) and is intentionally not covered by this file.
+    // Constructor literals such as inline `new DateTime(...)` compile to a
+    // NewExpression and are covered by the dedicated constructor-literal tests.
 
     [Fact]
     public async Task DoubleLiteral()

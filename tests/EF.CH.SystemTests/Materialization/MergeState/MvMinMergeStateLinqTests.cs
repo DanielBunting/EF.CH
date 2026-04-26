@@ -18,7 +18,7 @@ public class MvMinMergeStateLinqTests
     private string Conn => _fixture.ConnectionString;
 
     [Fact]
-    public async Task LinqMinMergeState_ShouldEventuallyWork()
+    public async Task LinqMinMergeState_ReturnsExpectedMinimum()
     {
         await using var ctx = TestContextFactory.Create<Ctx>(Conn);
         await ctx.Database.EnsureDeletedAsync();

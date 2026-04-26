@@ -18,7 +18,7 @@ public class MvAvgMergeStateLinqTests
     private string Conn => _fixture.ConnectionString;
 
     [Fact]
-    public async Task LinqAvgMergeState_ShouldEventuallyWork()
+    public async Task LinqAvgMergeState_ReturnsExpectedAverage()
     {
         await using var ctx = TestContextFactory.Create<Ctx>(Conn);
         await ctx.Database.EnsureDeletedAsync();

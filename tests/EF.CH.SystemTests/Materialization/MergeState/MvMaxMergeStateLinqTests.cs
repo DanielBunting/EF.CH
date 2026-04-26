@@ -18,7 +18,7 @@ public class MvMaxMergeStateLinqTests
     private string Conn => _fixture.ConnectionString;
 
     [Fact]
-    public async Task LinqMaxMergeState_ShouldEventuallyWork()
+    public async Task LinqMaxMergeState_ReturnsExpectedMaximum()
     {
         await using var ctx = TestContextFactory.Create<Ctx>(Conn);
         await ctx.Database.EnsureDeletedAsync();

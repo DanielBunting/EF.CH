@@ -7,9 +7,9 @@ using Xunit;
 namespace EF.CH.SystemTests.Materialization.Expressions;
 
 /// <summary>
-/// Inline <c>new Guid(string)</c> literal in an MV Select projection — same
-/// <c>NewExpression</c> path as the DateTime ctor case. Currently caught by
-/// <c>TranslateExpression</c>'s default arm.
+/// Inline <c>new Guid(string)</c> literal in an MV Select projection. This
+/// exercises the same <c>NewExpression</c> constant-folding path as the
+/// DateTime constructor case.
 /// </summary>
 [Collection(SingleNodeCollection.Name)]
 public class MvGuidConstructorLiteralTests
@@ -19,7 +19,7 @@ public class MvGuidConstructorLiteralTests
     private string Conn => _fixture.ConnectionString;
 
     [Fact]
-    public async Task LinqGuidConstructor_ShouldEventuallyWork()
+    public async Task LinqGuidConstructor_ConstantFoldsLiteral()
     {
         await using var ctx = TestContextFactory.Create<Ctx>(Conn);
         await ctx.Database.EnsureDeletedAsync();

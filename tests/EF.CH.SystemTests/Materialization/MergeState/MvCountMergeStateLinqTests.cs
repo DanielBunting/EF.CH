@@ -21,7 +21,7 @@ public class MvCountMergeStateLinqTests
     private string Conn => _fixture.ConnectionString;
 
     [Fact]
-    public async Task LinqCountMergeState_ShouldEventuallyWork()
+    public async Task LinqCountMergeState_ReturnsExpectedCounts()
     {
         await using var ctx = TestContextFactory.Create<Ctx>(Conn);
         await ctx.Database.EnsureDeletedAsync();

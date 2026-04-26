@@ -7,15 +7,10 @@ using Xunit;
 namespace EF.CH.SystemTests.Materialization.Expressions;
 
 /// <summary>
-/// Inline <c>new DateTime(...)</c> literal in an MV Select projection. The C# compiler
-/// emits a <c>NewExpression</c> in the expression tree, which
-/// <c>MaterializedViewSqlTranslator.TranslateExpression</c> does not currently handle —
-/// the default arm throws <c>NotSupportedException("Expression type NewExpression is
-/// not supported")</c> at design time during <c>EnsureCreatedAsync</c>.
-///
-/// Currently red. Will go green when the translator gains a <c>NewExpression</c> arm
-/// that constant-folds known constructible types via reflection.
-/// TODO: green when MaterializedViewSqlTranslator handles NewExpression for known-constructible types.
+/// Inline <c>new DateTime(...)</c> literal in an MV Select projection. The C#
+/// compiler emits a <c>NewExpression</c> in the expression tree, and the
+/// materialized-view translator should constant-fold known constructible
+/// literals into ClickHouse SQL.
 /// </summary>
 [Collection(SingleNodeCollection.Name)]
 public class MvDateTimeConstructorLiteralTests
@@ -25,7 +20,7 @@ public class MvDateTimeConstructorLiteralTests
     private string Conn => _fixture.ConnectionString;
 
     [Fact]
-    public async Task LinqDateTimeConstructor_ShouldEventuallyWork()
+    public async Task LinqDateTimeConstructor_ConstantFoldsLiteral()
     {
         await using var ctx = TestContextFactory.Create<Ctx>(Conn);
         await ctx.Database.EnsureDeletedAsync();
@@ -54,7 +49,6 @@ public class MvDateTimeConstructorLiteralTests
             {
                 e.ToTable("MvDateTimeCtorTarget"); e.HasNoKey(); e.UseMergeTree(x => x.Id);
                 e.Property(x => x.V).HasColumnType("DateTime64(3, 'UTC')");
-                // TODO: green when MaterializedViewSqlTranslator handles NewExpression for known-constructible types.
                 e.AsMaterializedView<Tgt, Row>(rows => rows
                     .Select(r => new Tgt
                     {

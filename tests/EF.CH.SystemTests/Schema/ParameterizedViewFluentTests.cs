@@ -8,9 +8,8 @@ using Xunit;
 namespace EF.CH.SystemTests.Schema;
 
 /// <summary>
-/// Gap #10 — ClickHouse parameterised views use <c>{paramName:Type}</c>
-/// placeholders bound at call time. EF Core has no native concept; EF.CH
-/// doesn't surface this through LINQ. See .tmp/notes/feature-gaps.md §10.
+/// API-surface guards for ClickHouse parameterized view mapping and query-time
+/// parameter binding.
 /// </summary>
 public class ParameterizedViewFluentTests
 {
@@ -25,8 +24,7 @@ public class ParameterizedViewFluentTests
                 && m.GetParameters()[0].ParameterType.IsGenericType
                 && m.GetParameters()[0].ParameterType.GetGenericTypeDefinition() == typeof(EntityTypeBuilder<>));
         Assert.True(found,
-            "Expected a fluent ToParameterizedView<T>(name) method on EntityTypeBuilder<T>. " +
-            "See .tmp/notes/feature-gaps.md §10.");
+            "Expected a fluent ToParameterizedView<T>(name) method on EntityTypeBuilder<T>.");
     }
 
     [Fact]
@@ -37,7 +35,6 @@ public class ParameterizedViewFluentTests
             .SelectMany(t => t.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static))
             .Any(m => m.Name == "WithParameter");
         Assert.True(found,
-            "Expected a WithParameter(name, value) extension on IQueryable<T>. " +
-            "See .tmp/notes/feature-gaps.md §10.");
+            "Expected a WithParameter(name, value) extension on IQueryable<T>.");
     }
 }

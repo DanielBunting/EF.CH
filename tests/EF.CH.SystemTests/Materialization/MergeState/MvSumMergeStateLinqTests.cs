@@ -19,7 +19,7 @@ public class MvSumMergeStateLinqTests
     private string Conn => _fixture.ConnectionString;
 
     [Fact]
-    public async Task LinqSumMergeState_ShouldEventuallyWork()
+    public async Task LinqSumMergeState_ReturnsExpectedSums()
     {
         await using var ctx = TestContextFactory.Create<Ctx>(Conn);
         await ctx.Database.EnsureDeletedAsync();

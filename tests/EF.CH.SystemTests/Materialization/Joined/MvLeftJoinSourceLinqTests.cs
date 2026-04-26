@@ -12,17 +12,16 @@ namespace EF.CH.SystemTests.Materialization.Joined;
 /// and the equivalent fluent form (explicit <c>GroupJoin</c> + <c>SelectMany</c>
 /// + <c>DefaultIfEmpty</c>). Both lower to the same expression tree shape that
 /// the MV translator must recognise as a single SQL <c>LEFT JOIN</c>.
-/// TODO: rename to MvLeftJoinSourceLinqTests once green.
 /// </summary>
 [Collection(SingleNodeCollection.Name)]
-public class MvLeftJoinSourceLinqUnsupportedTests
+public class MvLeftJoinSourceLinqTests
 {
     private readonly SingleNodeClickHouseFixture _fixture;
-    public MvLeftJoinSourceLinqUnsupportedTests(SingleNodeClickHouseFixture fixture) => _fixture = fixture;
+    public MvLeftJoinSourceLinqTests(SingleNodeClickHouseFixture fixture) => _fixture = fixture;
     private string Conn => _fixture.ConnectionString;
 
     [Fact]
-    public async Task LinqLeftJoin_QuerySyntax_ShouldEventuallyWork()
+    public async Task LinqLeftJoin_QuerySyntax_ProducesUnmatchedRows()
     {
         await using var ctx = TestContextFactory.Create<QuerySyntaxCtx>(Conn);
         await ctx.Database.EnsureDeletedAsync();
@@ -46,7 +45,7 @@ public class MvLeftJoinSourceLinqUnsupportedTests
     }
 
     [Fact]
-    public async Task LinqLeftJoin_FluentSyntax_ShouldEventuallyWork()
+    public async Task LinqLeftJoin_FluentSyntax_ProducesUnmatchedRows()
     {
         await using var ctx = TestContextFactory.Create<FluentCtx>(Conn);
         await ctx.Database.EnsureDeletedAsync();

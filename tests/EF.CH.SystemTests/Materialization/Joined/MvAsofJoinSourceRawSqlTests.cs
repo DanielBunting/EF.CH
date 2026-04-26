@@ -7,10 +7,9 @@ using Xunit;
 namespace EF.CH.SystemTests.Materialization.Joined;
 
 /// <summary>
-/// Raw-SQL baseline that pins the target SQL shape for the LINQ-AsofJoin MV
-/// translation work. Sits beside <see cref="MvAsofJoinSourceLinqUnsupportedTests"/>
-/// so the green/red contrast is explicit: the baseline proves the SQL works,
-/// the LINQ tests pin the gap.
+/// Raw-SQL baseline for the ASOF JOIN materialized-view SQL shape. Sits beside
+/// <see cref="MvAsofJoinSourceLinqTests"/> as an independent guard that the
+/// underlying ClickHouse DDL and query semantics still behave as expected.
 /// </summary>
 [Collection(SingleNodeCollection.Name)]
 public class MvAsofJoinSourceRawSqlTests

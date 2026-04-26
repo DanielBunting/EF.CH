@@ -7,13 +7,10 @@ using Xunit;
 namespace EF.CH.SystemTests.Schema;
 
 /// <summary>
-/// Gap #6 — fluent engine builders for the integration-engine family
-/// (PostgreSQL / MySQL / Redis / ODBC / KeeperMap) are not implemented.
-/// <c>UseDistributed</c> exists; the rest must be declared today via raw
-/// CREATE TABLE … ENGINE = Xyz(...). See .tmp/notes/feature-gaps.md §6.
-///
-/// These tests only check that the fluent method exists on
-/// <c>EntityTypeBuilder&lt;T&gt;</c> — they don't need a live remote DB.
+/// API-surface guards for fluent engine builders in the integration-engine
+/// family. These tests only check that the fluent method exists on
+/// <c>EntityTypeBuilder&lt;T&gt;</c>; live remote DB workflows are outside this
+/// system-test slice.
 /// </summary>
 public class ExternalEngineFluentTests
 {
@@ -36,31 +33,30 @@ public class ExternalEngineFluentTests
     public void UsePostgreSqlEngine_ShouldBeDefined()
     {
         Assert.True(HasFluentEngine("UsePostgreSqlEngine"),
-            "UsePostgreSqlEngine fluent method is not defined. See feature-gaps.md §6.");
+            "UsePostgreSqlEngine fluent method is not defined.");
     }
 
     [Fact]
     public void UseMySqlEngine_ShouldBeDefined()
     {
         Assert.True(HasFluentEngine("UseMySqlEngine"),
-            "UseMySqlEngine fluent method is not defined. See feature-gaps.md §6.");
+            "UseMySqlEngine fluent method is not defined.");
     }
 
     [Fact]
     public void UseRedisEngine_ShouldBeDefined()
     {
         Assert.True(HasFluentEngine("UseRedisEngine"),
-            "UseRedisEngine fluent method is not defined. See feature-gaps.md §6.");
+            "UseRedisEngine fluent method is not defined.");
     }
 
     [Fact]
     public void UseOdbcEngine_ShouldBeDefined()
     {
         Assert.True(HasFluentEngine("UseOdbcEngine"),
-            "UseOdbcEngine fluent method is not defined. See feature-gaps.md §6.");
+            "UseOdbcEngine fluent method is not defined.");
     }
 
-    // UseKeeperMapEngine IS already defined on EntityTypeBuilder<T>, so this is
-    // not a gap. (Left as documentation — original §6 grouped KeeperMap with
-    // the external engines but it's actually shipped.)
+    // UseKeeperMapEngine is already covered separately; it ships on
+    // EntityTypeBuilder<T> but is not part of this external-engine guard list.
 }

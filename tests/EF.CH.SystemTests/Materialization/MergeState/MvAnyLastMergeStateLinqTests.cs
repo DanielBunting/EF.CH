@@ -18,7 +18,7 @@ public class MvAnyLastMergeStateLinqTests
     private string Conn => _fixture.ConnectionString;
 
     [Fact]
-    public async Task LinqAnyLastMergeState_ShouldEventuallyWork()
+    public async Task LinqAnyLastMergeState_ProducesDailyState()
     {
         await using var ctx = TestContextFactory.Create<Ctx>(Conn);
         await ctx.Database.EnsureDeletedAsync();

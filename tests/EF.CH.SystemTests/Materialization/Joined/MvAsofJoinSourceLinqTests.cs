@@ -7,23 +7,18 @@ using Xunit;
 namespace EF.CH.SystemTests.Materialization.Joined;
 
 /// <summary>
-/// ASOF / ASOF LEFT JOIN inside a materialized-view definition. The runtime
-/// translator already supports both via <c>ClickHouseQueryableExtensions.AsofJoin</c>
-/// and <c>AsofLeftJoin</c>; the design-time MV translator does not yet recognise
-/// them and will throw <c>NotSupportedException</c> at <c>OnModelCreating</c>.
-/// These tests pin the desired behaviour and turn green when the MV translator
-/// gains <c>VisitAsofJoin</c>.
-/// TODO: rename to MvAsofJoinSourceLinqTests once green.
+/// ASOF and ASOF LEFT JOIN coverage inside materialized-view definitions using
+/// <c>ClickHouseQueryableExtensions.AsofJoin</c> and <c>AsofLeftJoin</c>.
 /// </summary>
 [Collection(SingleNodeCollection.Name)]
-public class MvAsofJoinSourceLinqUnsupportedTests
+public class MvAsofJoinSourceLinqTests
 {
     private readonly SingleNodeClickHouseFixture _fixture;
-    public MvAsofJoinSourceLinqUnsupportedTests(SingleNodeClickHouseFixture fixture) => _fixture = fixture;
+    public MvAsofJoinSourceLinqTests(SingleNodeClickHouseFixture fixture) => _fixture = fixture;
     private string Conn => _fixture.ConnectionString;
 
     [Fact]
-    public async Task LinqAsofJoin_Inner_ShouldEventuallyWork()
+    public async Task LinqAsofJoin_Inner_MatchesLastQuoteAtOrBefore()
     {
         await using var ctx = TestContextFactory.Create<AsofInnerCtx>(Conn);
         await ctx.Database.EnsureDeletedAsync();
@@ -50,7 +45,7 @@ public class MvAsofJoinSourceLinqUnsupportedTests
     }
 
     [Fact]
-    public async Task LinqAsofLeftJoin_PreservesUnmatched_ShouldEventuallyWork()
+    public async Task LinqAsofLeftJoin_PreservesUnmatched()
     {
         await using var ctx = TestContextFactory.Create<AsofLeftCtx>(Conn);
         await ctx.Database.EnsureDeletedAsync();

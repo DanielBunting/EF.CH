@@ -18,7 +18,7 @@ public class MvUniqMergeStateLinqTests
     private string Conn => _fixture.ConnectionString;
 
     [Fact]
-    public async Task LinqUniqMergeState_ShouldEventuallyWork()
+    public async Task LinqUniqMergeState_ReturnsExpectedCardinality()
     {
         await using var ctx = TestContextFactory.Create<Ctx>(Conn);
         await ctx.Database.EnsureDeletedAsync();

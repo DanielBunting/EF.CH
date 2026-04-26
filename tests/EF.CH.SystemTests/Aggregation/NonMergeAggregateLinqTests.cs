@@ -7,11 +7,10 @@ using Xunit;
 namespace EF.CH.SystemTests.Aggregation;
 
 /// <summary>
-/// Gap #2 — non-merge <c>ClickHouseAggregates.*</c> methods don't survive EF
-/// Core's <c>NavigationExpandingExpressionVisitor</c> when used on an
-/// <c>IGrouping</c>. Only the <c>-Merge</c> family is wired today via the
-/// sentinel preprocessor; extending the rewrite to every other method closes
-/// the gap. See .tmp/notes/feature-gaps.md §2.
+/// Coverage for non-merge <c>ClickHouseAggregates.*</c> methods on
+/// <c>IGrouping</c> projections. These tests assert the preprocessor keeps
+/// aggregate calls intact through EF Core's navigation expansion and SQL
+/// translation paths.
 /// </summary>
 [Collection(SingleNodeCollection.Name)]
 public class NonMergeAggregateLinqTests
@@ -115,6 +114,6 @@ public class NonMergeAggregateLinqTests
     {
         public DbSet<Row> Rows => Set<Row>();
         protected override void OnModelCreating(ModelBuilder mb) =>
-            mb.Entity<Row>(e => { e.ToTable("GapRows"); e.HasKey(x => x.Id); e.UseMergeTree(x => new { x.Bucket, x.Id }); });
+            mb.Entity<Row>(e => { e.ToTable("NonMergeAggregateRows"); e.HasKey(x => x.Id); e.UseMergeTree(x => new { x.Bucket, x.Id }); });
     }
 }

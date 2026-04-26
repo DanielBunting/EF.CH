@@ -18,7 +18,7 @@ public class MvQuantileMergeStateLinqTests
     private string Conn => _fixture.ConnectionString;
 
     [Fact]
-    public async Task LinqQuantileMergeState_ShouldEventuallyWork()
+    public async Task LinqQuantileMergeState_ReturnsBoundedQuantile()
     {
         // Explicit table drops first — EnsureDeletedAsync occasionally leaves
         // partial state from prior failed runs in the shared fixture, and the
