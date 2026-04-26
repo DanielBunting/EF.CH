@@ -166,6 +166,56 @@ public static class RawClickHouse
             $"SELECT name, type, expr, granularity FROM system.data_skipping_indices WHERE database = currentDatabase() AND table = '{Esc(table)}'");
 
     /// <summary>
+    /// Reads <c>system.dictionaries.status</c> for a dictionary in the current database.
+    /// Returns null if the dictionary is unknown to ClickHouse.
+    /// </summary>
+    public static async Task<string?> DictionaryStatusAsync(string connectionString, string name)
+    {
+        var rows = await RowsAsync(connectionString,
+            $"SELECT status FROM system.dictionaries WHERE database = currentDatabase() AND name = '{Esc(name)}' LIMIT 1");
+        if (rows.Count == 0) return null;
+        return rows[0]["status"]?.ToString();
+    }
+
+    /// <summary>
+    /// Reads <c>system.columns.default_kind</c> for a column. Empty string when the column has no
+    /// DEFAULT/MATERIALIZED/ALIAS/EPHEMERAL clause.
+    /// </summary>
+    public static Task<string> ColumnDefaultKindAsync(string connectionString, string table, string column)
+        => ScalarAsync<string>(connectionString,
+            $"SELECT default_kind FROM system.columns WHERE database = currentDatabase() AND table = '{Esc(table)}' AND name = '{Esc(column)}'");
+
+    /// <summary>
+    /// Reads <c>system.columns.compression_codec</c> for a column. Returns the rendered codec expression
+    /// (e.g. <c>"CODEC(DoubleDelta, LZ4)"</c>) or empty when the default codec applies.
+    /// </summary>
+    public static Task<string> ColumnCompressionCodecAsync(string connectionString, string table, string column)
+        => ScalarAsync<string>(connectionString,
+            $"SELECT compression_codec FROM system.columns WHERE database = currentDatabase() AND table = '{Esc(table)}' AND name = '{Esc(column)}'");
+
+    /// <summary>
+    /// Counts projection parts in <c>system.projection_parts</c> for the given table+projection.
+    /// Used to confirm a <c>MATERIALIZE PROJECTION</c> actually populated parts.
+    /// </summary>
+    public static Task<ulong> ProjectionPartsCountAsync(
+        string connectionString, string table, string projection)
+        => ScalarAsync<ulong>(connectionString,
+            $"SELECT count() FROM system.projection_parts WHERE database = currentDatabase() AND table = '{Esc(table)}' AND name = '{Esc(projection)}' AND active");
+
+    /// <summary>
+    /// True if <paramref name="table"/> declares <paramref name="projection"/> in its
+    /// <c>system.tables.engine_full</c> clause. Use this to assert presence regardless of whether
+    /// any data has been materialised.
+    /// </summary>
+    public static async Task<bool> ProjectionDeclaredAsync(
+        string connectionString, string table, string projection)
+    {
+        var engineFull = await EngineFullAsync(connectionString, table);
+        return engineFull.Contains($"PROJECTION \"{projection}\"", StringComparison.Ordinal)
+            || engineFull.Contains($"PROJECTION {projection}", StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Issues a query with a <c>SETTINGS</c> clause appended. Used for surfaces that require non-default
     /// ClickHouse settings (e.g. <c>allow_experimental_json_type=1</c>, <c>allow_suspicious_low_cardinality_types=1</c>).
     /// </summary>
