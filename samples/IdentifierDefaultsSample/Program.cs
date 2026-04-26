@@ -46,7 +46,7 @@ const string keeperConfig = """
     """;
 
 var container = new ClickHouseBuilder()
-    .WithImage("clickhouse/clickhouse-server:latest")
+    .WithImage("clickhouse/clickhouse-server:25.6")
     .WithResourceMapping(
         Encoding.UTF8.GetBytes(keeperConfig),
         "/etc/clickhouse-server/config.d/keeper.xml")

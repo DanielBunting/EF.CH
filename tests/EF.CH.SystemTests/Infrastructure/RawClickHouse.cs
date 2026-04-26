@@ -116,6 +116,39 @@ public static class RawClickHouse
     }
 
     /// <summary>
+    /// Reads one row from <c>system.view_refreshes</c> for the given refreshable MV.
+    /// Returns null if no row exists yet.
+    /// </summary>
+    public static async Task<IReadOnlyDictionary<string, object?>?> ViewRefreshAsync(string connectionString, string view)
+    {
+        var rows = await RowsAsync(connectionString,
+            $"SELECT * FROM system.view_refreshes WHERE view = '{Esc(view)}' LIMIT 1");
+        return rows.Count == 0 ? null : rows[0];
+    }
+
+    /// <summary>
+    /// Polls <c>system.view_refreshes.last_success_time</c> until it advances past
+    /// <paramref name="mustExceed"/> or the timeout expires.
+    /// </summary>
+    public static async Task WaitForViewRefreshAsync(string connectionString, string view,
+        DateTime mustExceed, TimeSpan? timeout = null)
+    {
+        var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(30));
+        while (DateTime.UtcNow < deadline)
+        {
+            var rows = await RowsAsync(connectionString,
+                $"SELECT last_success_time FROM system.view_refreshes WHERE view = '{Esc(view)}' LIMIT 1");
+            if (rows.Count > 0 && rows[0]["last_success_time"] is { } v && v is not DBNull)
+            {
+                var t = Convert.ToDateTime(v);
+                if (t > mustExceed) return;
+            }
+            await Task.Delay(250);
+        }
+        throw new TimeoutException($"Refreshable view '{view}' did not refresh after {mustExceed:O} within the timeout.");
+    }
+
+    /// <summary>
     /// Returns the rendered ClickHouse type for a column from <c>system.columns</c> (e.g. "LowCardinality(String)",
     /// "Decimal(18, 4)", "Map(String, Int32)"). Useful for asserting that the EF type-mapping produced the right CH type.
     /// </summary>

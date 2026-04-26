@@ -38,6 +38,19 @@ public class ClickHouseMigrationsScaffolder : MigrationsScaffolder
     private readonly List<StepMigrationData> _pendingStepMigrations = [];
     private string? _sharedSnapshotCode;
 
+    private static readonly string[] RefreshableMvAnnotationKeys =
+    [
+        ClickHouseAnnotationNames.MaterializedViewRefreshKind,
+        ClickHouseAnnotationNames.MaterializedViewRefreshInterval,
+        ClickHouseAnnotationNames.MaterializedViewRefreshOffset,
+        ClickHouseAnnotationNames.MaterializedViewRefreshRandomizeFor,
+        ClickHouseAnnotationNames.MaterializedViewRefreshDependsOn,
+        ClickHouseAnnotationNames.MaterializedViewRefreshAppend,
+        ClickHouseAnnotationNames.MaterializedViewRefreshEmpty,
+        ClickHouseAnnotationNames.MaterializedViewRefreshSettings,
+        ClickHouseAnnotationNames.MaterializedViewRefreshTarget,
+    ];
+
 #pragma warning disable EF1001 // Internal EF Core API usage
     public ClickHouseMigrationsScaffolder(
         MigrationsScaffolderDependencies dependencies,
@@ -232,7 +245,97 @@ public class ClickHouseMigrationsScaffolder : MigrationsScaffolder
 
         // Enrich DropTableOperations with annotations from previous model
         // so the splitter can distinguish MVs/dicts from regular tables
-        return EnrichDropOperationsWithAnnotations(operations, lastModel);
+        operations = EnrichDropOperationsWithAnnotations(operations, lastModel);
+
+        // Collapse drop+create pairs that differ only in refresh schedule into MODIFY REFRESH.
+        return CollapseRefreshScheduleChanges(operations);
+    }
+
+    /// <summary>
+    /// When a refreshable MV's only delta is its schedule annotations, EF Core's diff
+    /// emits a Drop+Create pair. Replace such pairs with a single
+    /// <see cref="EF.CH.Migrations.Operations.ModifyRefreshOperation"/>.
+    /// </summary>
+    private static IReadOnlyList<MigrationOperation> CollapseRefreshScheduleChanges(
+        IReadOnlyList<MigrationOperation> operations)
+    {
+        if (operations.Count < 2) return operations;
+
+        var byTable = new Dictionary<string, (DropTableOperation? Drop, CreateTableOperation? Create)>(StringComparer.OrdinalIgnoreCase);
+        foreach (var op in operations)
+        {
+            switch (op)
+            {
+                case DropTableOperation drop when drop.FindAnnotation(ClickHouseAnnotationNames.MaterializedView)?.Value as bool? == true:
+                    byTable[drop.Name] = (drop, byTable.GetValueOrDefault(drop.Name).Create);
+                    break;
+                case CreateTableOperation create when create.FindAnnotation(ClickHouseAnnotationNames.MaterializedView)?.Value as bool? == true:
+                    byTable[create.Name] = (byTable.GetValueOrDefault(create.Name).Drop, create);
+                    break;
+            }
+        }
+
+        var collapsedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var modifyOps = new Dictionary<string, EF.CH.Migrations.Operations.ModifyRefreshOperation>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (name, pair) in byTable)
+        {
+            if (pair.Drop is null || pair.Create is null) continue;
+            if (!IsScheduleOnlyChange(pair.Drop, pair.Create)) continue;
+
+            var newInterval = pair.Create.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshInterval)?.Value as string;
+            if (string.IsNullOrEmpty(newInterval)) continue;
+
+            modifyOps[name] = new EF.CH.Migrations.Operations.ModifyRefreshOperation
+            {
+                Name = pair.Create.Name,
+                Schema = pair.Create.Schema,
+                Kind = (pair.Create.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshKind)?.Value as string) ?? "EVERY",
+                Interval = newInterval!,
+                Offset = pair.Create.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshOffset)?.Value as string,
+                RandomizeFor = pair.Create.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshRandomizeFor)?.Value as string,
+                DependsOn = pair.Create.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshDependsOn)?.Value as string[],
+            };
+            collapsedNames.Add(name);
+        }
+
+        if (collapsedNames.Count == 0) return operations;
+
+        var result = new List<MigrationOperation>(operations.Count);
+        var emitted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var op in operations)
+        {
+            switch (op)
+            {
+                case DropTableOperation drop when collapsedNames.Contains(drop.Name):
+                    continue;
+                case CreateTableOperation create when collapsedNames.Contains(create.Name):
+                    if (emitted.Add(create.Name))
+                        result.Add(modifyOps[create.Name]);
+                    continue;
+                default:
+                    result.Add(op);
+                    break;
+            }
+        }
+        return result;
+    }
+
+    private static bool IsScheduleOnlyChange(DropTableOperation drop, CreateTableOperation create)
+    {
+        // Both must be MVs with a refresh interval on the new side.
+        var newInterval = create.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshInterval)?.Value as string;
+        if (string.IsNullOrEmpty(newInterval)) return false;
+
+        var oldQuery = drop.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewQuery)?.Value as string;
+        var newQuery = create.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewQuery)?.Value as string;
+        if (!string.Equals(oldQuery, newQuery, StringComparison.Ordinal)) return false;
+
+        var oldSource = drop.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewSource)?.Value as string;
+        var newSource = create.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewSource)?.Value as string;
+        if (!string.Equals(oldSource, newSource, StringComparison.Ordinal)) return false;
+
+        return true;
     }
 
     /// <summary>
@@ -272,6 +375,13 @@ public class ClickHouseMigrationsScaffolder : MigrationsScaffolder
                     var mvPopulate = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewPopulate)?.Value;
                     if (mvPopulate != null)
                         createOp.AddAnnotation(ClickHouseAnnotationNames.MaterializedViewPopulate, mvPopulate);
+
+                    foreach (var refreshAnn in RefreshableMvAnnotationKeys)
+                    {
+                        var value = entityType.FindAnnotation(refreshAnn)?.Value;
+                        if (value != null)
+                            createOp.AddAnnotation(refreshAnn, value);
+                    }
                 }
 
                 // Copy Dictionary annotations
@@ -330,6 +440,13 @@ public class ClickHouseMigrationsScaffolder : MigrationsScaffolder
                     var mvQuery = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewQuery)?.Value;
                     if (mvQuery != null)
                         dropOp.AddAnnotation(ClickHouseAnnotationNames.MaterializedViewQuery, mvQuery);
+
+                    foreach (var refreshAnn in RefreshableMvAnnotationKeys)
+                    {
+                        var value = entityType.FindAnnotation(refreshAnn)?.Value;
+                        if (value != null)
+                            dropOp.AddAnnotation(refreshAnn, value);
+                    }
                 }
 
                 // Copy Dictionary annotations

@@ -20,7 +20,7 @@ using Microsoft.EntityFrameworkCore;
 using Testcontainers.ClickHouse;
 
 var container = new ClickHouseBuilder()
-    .WithImage("clickhouse/clickhouse-server:latest")
+    .WithImage("clickhouse/clickhouse-server:25.6")
     .Build();
 
 Console.WriteLine("Starting ClickHouse container...");

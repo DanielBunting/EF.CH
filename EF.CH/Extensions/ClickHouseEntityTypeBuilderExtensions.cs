@@ -2364,6 +2364,116 @@ public static class ClickHouseEntityTypeBuilderExtensions
         return builder;
     }
 
+    /// <summary>
+    /// Configures the entity as a refreshable materialized view (LINQ form).
+    /// The view runs on a schedule (<c>REFRESH EVERY|AFTER &lt;interval&gt;</c>) instead of
+    /// on every source-table write.
+    /// </summary>
+    /// <example>
+    /// <code>
+    /// entity.AsRefreshableMaterializedView&lt;HourlySummary, RawEvent&gt;(
+    ///     q => q.GroupBy(e => e.Hour).Select(g => new HourlySummary { ... }),
+    ///     r => r.Every(TimeSpan.FromMinutes(5))
+    ///           .RandomizeFor(TimeSpan.FromSeconds(30))
+    ///           .DependsOn&lt;OtherMv&gt;());
+    /// </code>
+    /// </example>
+    public static EntityTypeBuilder<TEntity> AsRefreshableMaterializedView<TEntity, TSource>(
+        this EntityTypeBuilder<TEntity> builder,
+        Expression<Func<IQueryable<TSource>, IQueryable<TEntity>>> query,
+        Action<RefreshableMaterializedViewBuilder> configure)
+        where TEntity : class
+        where TSource : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(query);
+        ArgumentNullException.ThrowIfNull(configure);
+
+        var sourceEntityType = builder.Metadata.Model.FindEntityType(typeof(TSource));
+        var sourceTableName = sourceEntityType?.GetTableName() ?? typeof(TSource).Name;
+
+        var translator = new Query.Internal.MaterializedViewSqlTranslator(
+            (IModel)builder.Metadata.Model,
+            sourceTableName);
+        var selectSql = translator.Translate<TSource, TEntity>(query);
+
+        builder.HasNoKey();
+        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedView, true);
+        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewSource, sourceTableName);
+        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewQuery, selectSql);
+        ApplyRefreshSpec(builder, configure);
+        return builder;
+    }
+
+    /// <summary>
+    /// Configures the entity as a refreshable materialized view with a raw SQL SELECT.
+    /// </summary>
+    public static EntityTypeBuilder<TEntity> AsRefreshableMaterializedViewRaw<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        string sourceTable,
+        string selectSql,
+        Action<RefreshableMaterializedViewBuilder> configure)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentException.ThrowIfNullOrEmpty(sourceTable);
+        ArgumentException.ThrowIfNullOrEmpty(selectSql);
+        ArgumentNullException.ThrowIfNull(configure);
+
+        builder.HasNoKey();
+        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedView, true);
+        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewSource, sourceTable);
+        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewQuery, selectSql.Trim());
+        ApplyRefreshSpec(builder, configure);
+        return builder;
+    }
+
+    /// <summary>
+    /// Non-generic overload of <see cref="AsRefreshableMaterializedViewRaw{TEntity}"/>.
+    /// </summary>
+    public static EntityTypeBuilder AsRefreshableMaterializedViewRaw(
+        this EntityTypeBuilder builder,
+        string sourceTable,
+        string selectSql,
+        Action<RefreshableMaterializedViewBuilder> configure)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentException.ThrowIfNullOrEmpty(sourceTable);
+        ArgumentException.ThrowIfNullOrEmpty(selectSql);
+        ArgumentNullException.ThrowIfNull(configure);
+
+        builder.HasNoKey();
+        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedView, true);
+        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewSource, sourceTable);
+        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewQuery, selectSql.Trim());
+        ApplyRefreshSpec(builder, configure);
+        return builder;
+    }
+
+    private static void ApplyRefreshSpec(EntityTypeBuilder builder, Action<RefreshableMaterializedViewBuilder> configure)
+    {
+        var refreshBuilder = new RefreshableMaterializedViewBuilder();
+        configure(refreshBuilder);
+        var spec = refreshBuilder.Build();
+
+        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshKind, spec.Kind);
+        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshInterval, spec.Interval);
+        if (spec.Offset is not null)
+            builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshOffset, spec.Offset);
+        if (spec.RandomizeFor is not null)
+            builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshRandomizeFor, spec.RandomizeFor);
+        if (spec.DependsOn is { Length: > 0 })
+            builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshDependsOn, spec.DependsOn);
+        if (spec.Append)
+            builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshAppend, true);
+        if (spec.Empty)
+            builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshEmpty, true);
+        if (spec.Settings is { Count: > 0 })
+            builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshSettings, spec.Settings);
+        if (spec.Target is not null)
+            builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshTarget, spec.Target);
+    }
+
     #endregion
 
     #region Dictionaries
@@ -2842,6 +2952,201 @@ public static class ClickHouseEntityTypeBuilderExtensions
             }
         }
         return result.ToString();
+    }
+
+    #endregion
+
+    #region Plain Views
+
+    /// <summary>
+    /// Configures the entity as a result type for a plain (non-parameterized, non-materialized)
+    /// ClickHouse view. Marks the entity keyless and stores the view name as an annotation.
+    /// </summary>
+    /// <typeparam name="TEntity">The entity type representing the view's output schema.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="viewName">The view name in ClickHouse.</param>
+    /// <param name="schema">Optional schema (database) qualifier.</param>
+    /// <example>
+    /// <code>
+    /// modelBuilder.Entity&lt;ActiveUserView&gt;(entity =>
+    /// {
+    ///     entity.HasView("active_users");
+    /// });
+    ///
+    /// var rows = await context.FromView&lt;ActiveUserView&gt;("active_users").ToListAsync();
+    /// </code>
+    /// </example>
+    public static EntityTypeBuilder<TEntity> HasView<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        string viewName,
+        string? schema = null)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(viewName);
+
+        builder.HasNoKey();
+        builder.ToView(viewName, schema);
+
+        builder.HasAnnotation(ClickHouseAnnotationNames.View, true);
+        builder.HasAnnotation(ClickHouseAnnotationNames.ViewName, viewName);
+        if (!string.IsNullOrEmpty(schema))
+        {
+            builder.HasAnnotation(ClickHouseAnnotationNames.ViewSchema, schema);
+        }
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Non-generic overload of <see cref="HasView{TEntity}(EntityTypeBuilder{TEntity}, string, string?)"/>.
+    /// </summary>
+    public static EntityTypeBuilder HasView(
+        this EntityTypeBuilder builder,
+        string viewName,
+        string? schema = null)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(viewName);
+
+        builder.HasNoKey();
+        builder.ToView(viewName, schema);
+
+        builder.HasAnnotation(ClickHouseAnnotationNames.View, true);
+        builder.HasAnnotation(ClickHouseAnnotationNames.ViewName, viewName);
+        if (!string.IsNullOrEmpty(schema))
+        {
+            builder.HasAnnotation(ClickHouseAnnotationNames.ViewSchema, schema);
+        }
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Configures the entity as a plain ClickHouse view from a raw SELECT SQL string.
+    /// </summary>
+    /// <typeparam name="TEntity">The view result entity type.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="viewName">The view name in ClickHouse.</param>
+    /// <param name="selectSql">The SELECT SQL body for the view (without CREATE VIEW prefix).</param>
+    /// <param name="ifNotExists">Emit IF NOT EXISTS in CREATE VIEW DDL.</param>
+    /// <param name="orReplace">Emit OR REPLACE in CREATE VIEW DDL. Mutually exclusive with <paramref name="ifNotExists"/>.</param>
+    /// <param name="onCluster">Optional ON CLUSTER cluster name.</param>
+    /// <param name="schema">Optional schema (database) qualifier.</param>
+    public static EntityTypeBuilder<TEntity> AsViewRaw<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        string viewName,
+        string selectSql,
+        bool ifNotExists = false,
+        bool orReplace = false,
+        string? onCluster = null,
+        string? schema = null)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(viewName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(selectSql);
+
+        if (ifNotExists && orReplace)
+        {
+            throw new ArgumentException(
+                "ClickHouse CREATE VIEW does not allow combining IF NOT EXISTS with OR REPLACE.",
+                nameof(orReplace));
+        }
+
+        builder.HasNoKey();
+        builder.ToView(viewName, schema);
+
+        var metadata = new Views.ViewMetadataBase
+        {
+            ViewName = viewName,
+            ResultType = typeof(TEntity),
+            RawSelectSql = selectSql,
+            IfNotExists = ifNotExists,
+            OrReplace = orReplace,
+            OnCluster = onCluster,
+            Schema = schema
+        };
+
+        builder.HasAnnotation(ClickHouseAnnotationNames.View, true);
+        builder.HasAnnotation(ClickHouseAnnotationNames.ViewName, viewName);
+        builder.HasAnnotation(ClickHouseAnnotationNames.ViewMetadata, metadata);
+        if (ifNotExists)
+            builder.HasAnnotation(ClickHouseAnnotationNames.ViewIfNotExists, true);
+        if (orReplace)
+            builder.HasAnnotation(ClickHouseAnnotationNames.ViewOrReplace, true);
+        if (!string.IsNullOrEmpty(onCluster))
+            builder.HasAnnotation(ClickHouseAnnotationNames.ViewCluster, onCluster);
+        if (!string.IsNullOrEmpty(schema))
+            builder.HasAnnotation(ClickHouseAnnotationNames.ViewSchema, schema);
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Configures the entity as a plain ClickHouse view using a fluent builder.
+    /// </summary>
+    /// <typeparam name="TView">The view result entity type.</typeparam>
+    /// <typeparam name="TSource">The source entity type the view selects from.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="configure">Action to configure the view.</param>
+    /// <example>
+    /// <code>
+    /// modelBuilder.Entity&lt;ActiveUserView&gt;(entity =>
+    /// {
+    ///     entity.AsView&lt;ActiveUserView, User&gt;(cfg => cfg
+    ///         .FromTable()
+    ///         .Select(u => new ActiveUserView { UserId = u.UserId, Name = u.Name })
+    ///         .Where(u => u.IsActive)
+    ///         .OrReplace());
+    /// });
+    /// </code>
+    /// </example>
+    public static EntityTypeBuilder<TView> AsView<TView, TSource>(
+        this EntityTypeBuilder<TView> builder,
+        Action<Views.ViewConfiguration<TView, TSource>> configure)
+        where TView : class
+        where TSource : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(configure);
+
+        var configuration = new Views.ViewConfiguration<TView, TSource>();
+        configure(configuration);
+
+        var viewName = configuration.ViewName ?? ConvertToSnakeCase(typeof(TView).Name);
+
+        builder.HasNoKey();
+        builder.ToView(viewName, configuration.Schema);
+
+        var metadata = configuration.BuildMetadata(viewName);
+
+        builder.HasAnnotation(ClickHouseAnnotationNames.View, true);
+        builder.HasAnnotation(ClickHouseAnnotationNames.ViewName, viewName);
+        builder.HasAnnotation(ClickHouseAnnotationNames.ViewMetadata, metadata);
+        if (metadata.IfNotExists)
+            builder.HasAnnotation(ClickHouseAnnotationNames.ViewIfNotExists, true);
+        if (metadata.OrReplace)
+            builder.HasAnnotation(ClickHouseAnnotationNames.ViewOrReplace, true);
+        if (!string.IsNullOrEmpty(metadata.OnCluster))
+            builder.HasAnnotation(ClickHouseAnnotationNames.ViewCluster, metadata.OnCluster);
+        if (!string.IsNullOrEmpty(metadata.Schema))
+            builder.HasAnnotation(ClickHouseAnnotationNames.ViewSchema, metadata.Schema);
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Marks a view-mapped entity as deferred so that <c>EnsureViewsAsync</c> skips it
+    /// and the caller can deploy the view manually (e.g. after the source is seeded).
+    /// </summary>
+    public static EntityTypeBuilder<TEntity> AsViewDeferred<TEntity>(
+        this EntityTypeBuilder<TEntity> builder)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        builder.HasAnnotation(ClickHouseAnnotationNames.ViewDeferred, true);
+        return builder;
     }
 
     #endregion

@@ -2,7 +2,7 @@ version: "3.8"
 
 services:
   clickhouse1:
-    image: clickhouse/clickhouse-server:latest
+    image: clickhouse/clickhouse-server:25.6
     hostname: clickhouse1
     ports:
       - "8123:8123"
@@ -14,7 +14,7 @@ services:
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
 
   clickhouse2:
-    image: clickhouse/clickhouse-server:latest
+    image: clickhouse/clickhouse-server:25.6
     hostname: clickhouse2
     ports:
       - "8124:8123"
@@ -26,7 +26,7 @@ services:
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
 
   clickhouse3:
-    image: clickhouse/clickhouse-server:latest
+    image: clickhouse/clickhouse-server:25.6
     hostname: clickhouse3
     ports:
       - "8125:8123"

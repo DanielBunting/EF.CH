@@ -17,7 +17,7 @@ namespace EF.CH.Tests.Migrations;
 public class EnumScaffoldingTests : IAsyncLifetime
 {
     private readonly ClickHouseContainer _container = new ClickHouseBuilder()
-        .WithImage("clickhouse/clickhouse-server:latest")
+        .WithImage("clickhouse/clickhouse-server:25.6")
         .Build();
 
     public async Task InitializeAsync()

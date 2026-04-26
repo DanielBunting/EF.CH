@@ -57,6 +57,12 @@ public partial class ClickHouseDatabaseModelFactory : IDatabaseModelFactory
 
         // Query tables (filtered by options if specified)
         var tables = GetTables(connection, database, options);
+
+        // Refreshable materialized views are excluded by the regular tables query
+        // (engine = 'MaterializedView') but their REFRESH metadata is reverse-engineerable.
+        var refreshableMvs = GetRefreshableMaterializedViews(connection, database, options);
+        tables.AddRange(refreshableMvs);
+
         _logger.LogDebug("Found {Count} tables", tables.Count);
 
         if (tables.Count == 0)
@@ -152,6 +158,103 @@ public partial class ClickHouseDatabaseModelFactory : IDatabaseModelFactory
     }
 
     /// <summary>
+    /// Queries refreshable materialized views (engine = 'MaterializedView' with a REFRESH
+    /// clause embedded in <c>engine_full</c>) and parses the schedule.
+    /// </summary>
+    private List<TableInfo> GetRefreshableMaterializedViews(
+        DbConnection connection,
+        string database,
+        DatabaseModelFactoryOptions options)
+    {
+        var tables = new List<TableInfo>();
+        var escapedDatabase = database.Replace("'", "\\'");
+
+        using var command = connection.CreateCommand();
+        command.CommandText = $"""
+            SELECT
+                database,
+                name,
+                engine,
+                engine_full,
+                comment,
+                as_select
+            FROM system.tables
+            WHERE database = '{escapedDatabase}'
+              AND engine = 'MaterializedView'
+              AND position(engine_full, 'REFRESH ') > 0
+              AND name NOT LIKE '.%'
+              AND is_temporary = 0
+            ORDER BY name
+            """;
+
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            var tableName = reader.GetString("name");
+            if (options.Tables.Any() && !options.Tables.Contains(tableName))
+                continue;
+
+            var engineFull = reader.GetString("engine_full");
+            var asSelect = reader.IsDBNull("as_select") ? null : reader.GetString("as_select");
+
+            var refresh = ParseRefreshClause(engineFull);
+            if (refresh is null) continue;
+            refresh = refresh with { Query = asSelect };
+
+            tables.Add(new TableInfo
+            {
+                Database = reader.GetString("database"),
+                Name = tableName,
+                Engine = reader.GetString("engine"),
+                EngineFull = engineFull,
+                Comment = reader.IsDBNull("comment") ? null : reader.GetString("comment"),
+                Refresh = refresh,
+            });
+        }
+
+        return tables;
+    }
+
+    /// <summary>
+    /// Extracts the REFRESH clause from an MV's <c>engine_full</c> string.
+    /// Exposed as <c>internal</c> for unit testing.
+    /// </summary>
+    internal static RefreshableMaterializedViewInfo? ParseRefreshClause(string engineFull)
+    {
+        if (string.IsNullOrEmpty(engineFull)) return null;
+        var refreshMatch = Regex.Match(engineFull,
+            @"REFRESH\s+(?<kind>EVERY|AFTER)\s+(?<interval>\d+\s+\w+)" +
+            @"(?:\s+OFFSET\s+(?<offset>\d+\s+\w+))?" +
+            @"(?:\s+RANDOMIZE\s+FOR\s+(?<rand>\d+\s+\w+))?",
+            RegexOptions.IgnoreCase);
+        if (!refreshMatch.Success) return null;
+
+        string? dependsOn = null;
+        var depMatch = Regex.Match(engineFull,
+            @"DEPENDS\s+ON\s+(?<list>[A-Za-z_0-9\.""`,\s]+?)\s+(?:APPEND|TO|EMPTY|SETTINGS|AS|ORDER|ENGINE|PARTITION|PRIMARY|SAMPLE|TTL|$)",
+            RegexOptions.IgnoreCase);
+        if (depMatch.Success)
+            dependsOn = depMatch.Groups["list"].Value.Trim().TrimEnd(',').Trim();
+
+        var append = Regex.IsMatch(engineFull, @"\bAPPEND\b", RegexOptions.IgnoreCase);
+
+        string? target = null;
+        var toMatch = Regex.Match(engineFull, @"\bTO\s+(?<target>[A-Za-z_][\w\.""`]*)\b", RegexOptions.IgnoreCase);
+        if (toMatch.Success)
+            target = toMatch.Groups["target"].Value.Trim('"', '`');
+
+        return new RefreshableMaterializedViewInfo(
+            Kind: refreshMatch.Groups["kind"].Value.ToUpperInvariant(),
+            Interval: refreshMatch.Groups["interval"].Value.ToUpperInvariant(),
+            Offset: refreshMatch.Groups["offset"].Success ? refreshMatch.Groups["offset"].Value.ToUpperInvariant() : null,
+            RandomizeFor: refreshMatch.Groups["rand"].Success ? refreshMatch.Groups["rand"].Value.ToUpperInvariant() : null,
+            DependsOn: string.IsNullOrEmpty(dependsOn) ? null : dependsOn.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+            Append: append,
+            Target: target,
+            Query: null);
+    }
+
+    /// <summary>
     /// Queries system.columns to get column metadata for the specified tables.
     /// </summary>
     private ILookup<string, ColumnInfo> GetColumns(DbConnection connection, string database, List<string> tableNames)
@@ -240,6 +343,26 @@ public partial class ClickHouseDatabaseModelFactory : IDatabaseModelFactory
 
         // Apply engine annotations
         ApplyEngineAnnotations(dbTable, engineMetadata);
+
+        // Refreshable materialized views: emit refresh annotations
+        if (table.Refresh is { } r)
+        {
+            dbTable[ClickHouseAnnotationNames.MaterializedView] = true;
+            dbTable[ClickHouseAnnotationNames.MaterializedViewRefreshKind] = r.Kind;
+            dbTable[ClickHouseAnnotationNames.MaterializedViewRefreshInterval] = r.Interval;
+            if (r.Offset is not null)
+                dbTable[ClickHouseAnnotationNames.MaterializedViewRefreshOffset] = r.Offset;
+            if (r.RandomizeFor is not null)
+                dbTable[ClickHouseAnnotationNames.MaterializedViewRefreshRandomizeFor] = r.RandomizeFor;
+            if (r.DependsOn is { Length: > 0 })
+                dbTable[ClickHouseAnnotationNames.MaterializedViewRefreshDependsOn] = r.DependsOn;
+            if (r.Append)
+                dbTable[ClickHouseAnnotationNames.MaterializedViewRefreshAppend] = true;
+            if (r.Target is not null)
+                dbTable[ClickHouseAnnotationNames.MaterializedViewRefreshTarget] = r.Target;
+            if (!string.IsNullOrEmpty(r.Query))
+                dbTable[ClickHouseAnnotationNames.MaterializedViewQuery] = r.Query;
+        }
 
         // Detect and group Nested columns
         // ClickHouse stores Nested(ID UInt32, Name String) as separate columns:
@@ -713,7 +836,22 @@ public partial class ClickHouseDatabaseModelFactory : IDatabaseModelFactory
         public string? PrimaryKey { get; init; }
         public string? SamplingKey { get; init; }
         public string? Comment { get; init; }
+        public RefreshableMaterializedViewInfo? Refresh { get; init; }
     }
+
+    /// <summary>
+    /// Parsed REFRESH clause for refreshable materialized views.
+    /// Exposed as <c>internal</c> for unit testing.
+    /// </summary>
+    internal sealed record RefreshableMaterializedViewInfo(
+        string Kind,
+        string Interval,
+        string? Offset,
+        string? RandomizeFor,
+        string[]? DependsOn,
+        bool Append,
+        string? Target,
+        string? Query);
 
     /// <summary>
     /// Internal column metadata from system.columns.

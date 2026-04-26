@@ -44,7 +44,7 @@ public class ExternalMySqlIntegrationTests : IAsyncLifetime
             .Build();
 
         _clickHouseContainer = new ClickHouseBuilder()
-            .WithImage("clickhouse/clickhouse-server:latest")
+            .WithImage("clickhouse/clickhouse-server:25.6")
             .WithNetwork(_network)
             .Build();
 

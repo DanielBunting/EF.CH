@@ -31,7 +31,7 @@
 
 services:
   clickhouse1:
-    image: clickhouse/clickhouse-server:latest
+    image: clickhouse/clickhouse-server:25.6
     container_name: clickhouse1
     hostname: clickhouse1
     ports:
@@ -56,7 +56,7 @@ services:
       start_period: 30s
 
   clickhouse2:
-    image: clickhouse/clickhouse-server:latest
+    image: clickhouse/clickhouse-server:25.6
     container_name: clickhouse2
     hostname: clickhouse2
     ports:
@@ -81,7 +81,7 @@ services:
       start_period: 30s
 
   clickhouse3:
-    image: clickhouse/clickhouse-server:latest
+    image: clickhouse/clickhouse-server:25.6
     container_name: clickhouse3
     hostname: clickhouse3
     ports:
