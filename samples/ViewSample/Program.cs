@@ -1,11 +1,12 @@
 // -----------------------------------------------------------------
-// ViewSample - Plain ClickHouse Views with EF.CH
+// ViewSample - Plain ClickHouse Views with EF.CH (LINQ-first)
 // -----------------------------------------------------------------
-// Demonstrates:
-//   1. HasView + FromView (annotation-only mapping, raw runtime DDL)
-//   2. AsView fluent API (LINQ-driven SELECT, EnsureViewAsync)
-//   3. AsViewRaw + EnsureViewsAsync (raw SQL body, batch deployment)
-//   4. CreateViewAsync / DropViewAsync runtime helpers (OR REPLACE)
+// Demonstrates the LINQ-driven view fluent API:
+//   1. AsView<TView, TSource> — define the view body with LINQ
+//   2. EnsureViewAsync<T>     — deploy a single LINQ-defined view
+//   3. EnsureViewsAsync       — deploy every LINQ-defined view in the model
+//   4. AsView with OR REPLACE — re-deploy a view body without dropping
+//   5. LINQ composition on the result via context.Set<T>() / FromView<T>
 // -----------------------------------------------------------------
 
 using EF.CH.Extensions;
@@ -25,10 +26,10 @@ try
     var connectionString = container.GetConnectionString();
     await SeedData(connectionString);
 
-    await DemoHasViewAndFromView(connectionString);
-    await DemoAsViewFluent(connectionString);
+    await DemoAsViewWithLinq(connectionString);
+    await DemoLinqComposedOnView(connectionString);
     await DemoEnsureViewsAsync(connectionString);
-    await DemoOrReplace(connectionString);
+    await DemoOrReplaceFromLinq(connectionString);
 }
 finally
 {
@@ -55,59 +56,68 @@ static async Task SeedData(string connectionString)
 }
 
 // -----------------------------------------------------------------
-// Demo 1: HasView + FromView (raw runtime DDL)
+// Demo 1: Define a view body with LINQ (AsView<TView, TSource>)
 // -----------------------------------------------------------------
-static async Task DemoHasViewAndFromView(string connectionString)
+//
+// The view definition lives in OnModelCreating using a strongly-typed
+// .Select(...) projection and .Where(...) predicate. EF.CH translates
+// the LINQ to a CREATE VIEW DDL statement when EnsureViewAsync runs.
+// -----------------------------------------------------------------
+static async Task DemoAsViewWithLinq(string connectionString)
 {
-    Console.WriteLine("=== 1. HasView + FromView ===\n");
+    Console.WriteLine("=== 1. AsView<TView, TSource> with LINQ ===\n");
 
     await using var context = new ViewDemoContext(connectionString);
 
-    await context.Database.CreateViewAsync(
-        "all_users_view",
-        """
-        SELECT user_id AS "UserId", name AS "Name", is_active AS "IsActive", last_seen AS "LastSeen"
-        FROM users
-        """,
-        ifNotExists: true);
-
-    var rows = await context.FromView<UserView>("all_users_view")
-        .OrderBy(u => u.UserId)
-        .ToListAsync();
-
-    Console.WriteLine($"FromView returned {rows.Count} users:");
-    foreach (var u in rows)
-        Console.WriteLine($"  {u.UserId}: {u.Name} (active={u.IsActive})");
-}
-
-// -----------------------------------------------------------------
-// Demo 2: AsView fluent API + EnsureViewAsync
-// -----------------------------------------------------------------
-static async Task DemoAsViewFluent(string connectionString)
-{
-    Console.WriteLine("\n=== 2. AsView fluent + EnsureViewAsync ===\n");
-
-    await using var context = new ViewDemoContext(connectionString);
-
-    // ActiveUserView is configured with AsView<ActiveUserView, User>(...) below.
     await context.Database.EnsureViewAsync<ActiveUserView>();
-    Console.WriteLine("Created view 'active_users' from fluent AsView<TView, TSource> config.");
-    Console.WriteLine("Generated DDL:");
+    Console.WriteLine("Generated DDL from the LINQ view definition:");
     Console.WriteLine(context.Database.GetViewSql<ActiveUserView>());
     Console.WriteLine();
 
-    // Query through stock EF Core (entity is mapped to a view via ToView under the hood).
     var actives = await context.Set<ActiveUserView>()
         .OrderBy(u => u.UserId)
         .ToListAsync();
 
-    Console.WriteLine($"context.Set<ActiveUserView>() returned {actives.Count} active users:");
+    Console.WriteLine($"Active users (queried via Set<ActiveUserView>()): {actives.Count}");
     foreach (var u in actives)
         Console.WriteLine($"  {u.UserId}: {u.Name}");
 }
 
 // -----------------------------------------------------------------
-// Demo 3: EnsureViewsAsync — batch creation of all configured views
+// Demo 2: LINQ composition on a LINQ-defined view
+// -----------------------------------------------------------------
+//
+// RecentUserView is an AsView with multi-clause LINQ WHERE. Once it
+// exists in ClickHouse, you can stack further LINQ on top — Where,
+// OrderBy, Take, Select — exactly like a regular DbSet.
+// -----------------------------------------------------------------
+static async Task DemoLinqComposedOnView(string connectionString)
+{
+    Console.WriteLine("\n=== 2. LINQ composition on a LINQ-defined view ===\n");
+
+    await using var context = new ViewDemoContext(connectionString);
+
+    await context.Database.EnsureViewAsync<RecentUserView>();
+
+    Console.WriteLine("View DDL (multi-clause WHERE built from LINQ):");
+    Console.WriteLine(context.Database.GetViewSql<RecentUserView>());
+    Console.WriteLine();
+
+    // Compose further LINQ on top of the view.
+    var topRecent = await context.Set<RecentUserView>()
+        .Where(u => u.Name.StartsWith("A") || u.Name.StartsWith("C"))
+        .OrderByDescending(u => u.LastSeen)
+        .Take(5)
+        .Select(u => new { u.Name, u.LastSeen })
+        .ToListAsync();
+
+    Console.WriteLine($"Recent users matching A*/C* (LINQ-composed): {topRecent.Count}");
+    foreach (var u in topRecent)
+        Console.WriteLine($"  {u.Name} — last seen {u.LastSeen:yyyy-MM-dd HH:mm}");
+}
+
+// -----------------------------------------------------------------
+// Demo 3: EnsureViewsAsync — batch deploy every LINQ-defined view
 // -----------------------------------------------------------------
 static async Task DemoEnsureViewsAsync(string connectionString)
 {
@@ -116,36 +126,30 @@ static async Task DemoEnsureViewsAsync(string connectionString)
     await using var context = new ViewDemoContext(connectionString);
 
     var created = await context.Database.EnsureViewsAsync();
-    Console.WriteLine($"EnsureViewsAsync re-deployed {created} view(s) (OR REPLACE makes it idempotent).");
+    Console.WriteLine(
+        $"EnsureViewsAsync re-deployed {created} LINQ-defined view(s) " +
+        "(OR REPLACE makes it idempotent on every startup).");
 }
 
 // -----------------------------------------------------------------
-// Demo 4: CreateViewAsync with OR REPLACE
+// Demo 4: Re-deploy a LINQ-defined view body via OR REPLACE
 // -----------------------------------------------------------------
-static async Task DemoOrReplace(string connectionString)
+//
+// To "edit" a view, change its LINQ definition in OnModelCreating and
+// re-run EnsureViewAsync. Because the AsView config opted into
+// .OrReplace(), no DROP is needed.
+// -----------------------------------------------------------------
+static async Task DemoOrReplaceFromLinq(string connectionString)
 {
-    Console.WriteLine("\n=== 4. CreateViewAsync with OR REPLACE ===\n");
+    Console.WriteLine("\n=== 4. OR REPLACE re-deployment from LINQ ===\n");
 
     await using var context = new ViewDemoContext(connectionString);
 
-    await context.Database.CreateViewAsync(
-        "user_count_view",
-        "SELECT count() AS \"Count\" FROM users",
-        orReplace: true);
-    Console.WriteLine("Created user_count_view.");
+    await context.Database.EnsureViewAsync<RecentUserView>();
+    Console.WriteLine("Re-deployed RecentUserView via the LINQ definition (CREATE OR REPLACE).");
 
-    // Replace the body — OR REPLACE means we don't need to drop first.
-    await context.Database.CreateViewAsync(
-        "user_count_view",
-        "SELECT countIf(is_active = 1) AS \"Count\" FROM users",
-        orReplace: true);
-    Console.WriteLine("Replaced user_count_view body (active-only count).");
-
-    var counts = await context.FromView<UserCountView>("user_count_view").ToListAsync();
-    Console.WriteLine($"Active user count: {counts[0].Count}");
-
-    await context.Database.DropViewAsync("user_count_view");
-    await context.Database.DropViewAsync("all_users_view");
+    var count = await context.Set<RecentUserView>().CountAsync();
+    Console.WriteLine($"RecentUserView row count after re-deployment: {count}");
 }
 
 // -----------------------------------------------------------------
@@ -160,23 +164,17 @@ public class User
     public DateTime LastSeen { get; set; }
 }
 
-public class UserView
-{
-    public ulong UserId { get; set; }
-    public string Name { get; set; } = string.Empty;
-    public bool IsActive { get; set; }
-    public DateTime LastSeen { get; set; }
-}
-
 public class ActiveUserView
 {
     public ulong UserId { get; set; }
     public string Name { get; set; } = string.Empty;
 }
 
-public class UserCountView
+public class RecentUserView
 {
-    public ulong Count { get; set; }
+    public ulong UserId { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public DateTime LastSeen { get; set; }
 }
 
 // -----------------------------------------------------------------
@@ -187,6 +185,9 @@ public class ViewDemoContext(string connectionString) : DbContext
 {
     public DbSet<User> Users => Set<User>();
     public DbSet<ActiveUserView> ActiveUsers => Set<ActiveUserView>();
+    public DbSet<RecentUserView> RecentUsers => Set<RecentUserView>();
+
+    private static readonly DateTime Cutoff = DateTime.UtcNow.AddDays(-7);
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
     {
@@ -200,27 +201,42 @@ public class ViewDemoContext(string connectionString) : DbContext
             entity.ToTable("users");
             entity.HasKey(e => e.UserId);
             entity.UseMergeTree(e => e.UserId);
-            entity.Property(e => e.UserId).HasColumnName("user_id");
-            entity.Property(e => e.Name).HasColumnName("name");
-            entity.Property(e => e.IsActive).HasColumnName("is_active");
-            entity.Property(e => e.LastSeen).HasColumnName("last_seen");
         });
 
-        // Plain HasView mapping — used by FromView<UserView>("all_users_view").
-        modelBuilder.Entity<UserView>(e => e.HasView("all_users_view"));
-
-        // Fluent AsView with LINQ-driven SELECT and OR REPLACE.
+        // View body defined entirely in LINQ:
+        //   SELECT UserId, Name FROM users WHERE IsActive
         modelBuilder.Entity<ActiveUserView>(entity =>
         {
             entity.AsView<ActiveUserView, User>(cfg => cfg
                 .HasName("active_users")
                 .FromTable()
-                .Select(u => new ActiveUserView { UserId = u.UserId, Name = u.Name })
+                .Select(u => new ActiveUserView
+                {
+                    UserId = u.UserId,
+                    Name = u.Name
+                })
                 .Where(u => u.IsActive)
                 .OrReplace());
         });
 
-        // Keyless mapping for the count view.
-        modelBuilder.Entity<UserCountView>(e => e.HasView("user_count_view"));
+        // Multi-clause WHERE built with LINQ — captured `Cutoff` is baked into
+        // the DDL as a literal at view-creation time:
+        //   SELECT UserId, Name, LastSeen FROM users
+        //   WHERE IsActive AND LastSeen >= '<cutoff>'
+        modelBuilder.Entity<RecentUserView>(entity =>
+        {
+            entity.AsView<RecentUserView, User>(cfg => cfg
+                .HasName("recent_users")
+                .FromTable()
+                .Select(u => new RecentUserView
+                {
+                    UserId = u.UserId,
+                    Name = u.Name,
+                    LastSeen = u.LastSeen
+                })
+                .Where(u => u.IsActive)
+                .Where(u => u.LastSeen >= Cutoff)
+                .OrReplace());
+        });
     }
 }
