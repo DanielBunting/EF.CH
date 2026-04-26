@@ -39,6 +39,8 @@ public static class ClickHousePropertyBuilderExtensions
         [typeof(DateTime)] = "DateTime64(3)",
         [typeof(DateOnly)] = "Date",
         [typeof(string)] = "String",
+        [typeof(bool)] = "Bool",
+        [typeof(Guid)] = "UUID",
     };
 
     /// <summary>

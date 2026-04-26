@@ -16,7 +16,7 @@ namespace EF.CH.Tests.Migrations;
 public class PhaseOrderingIntegrationTests : IAsyncLifetime
 {
     private readonly ClickHouseContainer _container = new ClickHouseBuilder()
-        .WithImage("clickhouse/clickhouse-server:latest")
+        .WithImage("clickhouse/clickhouse-server:25.6")
         .Build();
 
     private readonly ClickHouseMigrationsSplitter _splitter = new();
@@ -456,7 +456,7 @@ public class PhaseOrderingDbContext : DbContext
 public class PhaseTransitionMatrixTests : IAsyncLifetime
 {
     private readonly ClickHouseContainer _container = new ClickHouseBuilder()
-        .WithImage("clickhouse/clickhouse-server:latest")
+        .WithImage("clickhouse/clickhouse-server:25.6")
         .Build();
 
     private readonly ClickHouseMigrationsSplitter _splitter = new();
@@ -996,7 +996,7 @@ public class PhaseTransitionMatrixTests : IAsyncLifetime
 public class MigrationLifecycleIntegrationTests : IAsyncLifetime
 {
     private readonly ClickHouseContainer _container = new ClickHouseBuilder()
-        .WithImage("clickhouse/clickhouse-server:latest")
+        .WithImage("clickhouse/clickhouse-server:25.6")
         .Build();
 
     private readonly ClickHouseMigrationsSplitter _splitter = new();
@@ -1528,7 +1528,7 @@ public class MigrationLifecycleIntegrationTests : IAsyncLifetime
 public class ComplexMultiOperationTests : IAsyncLifetime
 {
     private readonly ClickHouseContainer _container = new ClickHouseBuilder()
-        .WithImage("clickhouse/clickhouse-server:latest")
+        .WithImage("clickhouse/clickhouse-server:25.6")
         .Build();
 
     private readonly ClickHouseMigrationsSplitter _splitter = new();

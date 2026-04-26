@@ -97,16 +97,16 @@ public class ClickHouseIPv6TypeMapping : RelationalTypeMapping
 }
 
 /// <summary>
-/// Type mapping for System.Net.IPAddress (maps to IPv6 for maximum compatibility).
+/// Type mapping for System.Net.IPAddress.
+/// The driver returns IPAddress directly for both IPv4 and IPv6 columns,
+/// so no value converter is needed.
 /// </summary>
 public class ClickHouseIPAddressTypeMapping : RelationalTypeMapping
 {
-    public ClickHouseIPAddressTypeMapping()
+    public ClickHouseIPAddressTypeMapping(string storeType = "IPv6")
         : base(new RelationalTypeMappingParameters(
-            new CoreTypeMappingParameters(
-                typeof(IPAddress),
-                converter: new IPAddressToStringConverter()),
-            "IPv6",
+            new CoreTypeMappingParameters(typeof(IPAddress)),
+            storeType,
             StoreTypePostfix.None,
             System.Data.DbType.String))
     {
@@ -128,7 +128,8 @@ public class ClickHouseIPAddressTypeMapping : RelationalTypeMapping
             string s => s,
             _ => value.ToString()
         };
-        return $"toIPv6('{ip}')";
+        var function = StoreType.Equals("IPv4", StringComparison.OrdinalIgnoreCase) ? "toIPv4" : "toIPv6";
+        return $"{function}('{ip}')";
     }
 }
 
@@ -158,15 +159,3 @@ internal class ClickHouseIPv6Converter : ValueConverter<ClickHouseIPv6, string>
     }
 }
 
-/// <summary>
-/// Value converter for IPAddress to/from string.
-/// </summary>
-internal class IPAddressToStringConverter : ValueConverter<IPAddress, string>
-{
-    public IPAddressToStringConverter()
-        : base(
-            ip => ip.ToString(),
-            s => IPAddress.Parse(s))
-    {
-    }
-}

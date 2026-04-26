@@ -22,7 +22,7 @@ Console.WriteLine("Creating database and tables...");
 await context.Database.EnsureCreatedAsync();
 
 // Clean up any existing data
-await context.Database.ExecuteSqlRawAsync("TRUNCATE TABLE Orders");
+await context.Database.TruncateTableAsync<Order>();
 
 // ============================================================
 // Seed sample data

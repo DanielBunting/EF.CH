@@ -712,4 +712,307 @@ public static class ClickHouseQueryableExtensions
     internal static readonly MethodInfo AsofLeftJoinMethodInfo =
         typeof(ClickHouseQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
             .First(m => m.Name == nameof(AsofLeftJoin));
+
+    // ----- ANY strictness family -----
+    // ClickHouse's ANY modifier returns one match per left row instead of all.
+    // Significantly faster than the implicit ALL for dimension/dictionary lookups.
+    // Currently MV-translation only — runtime support requires a preprocessor
+    // rewrite similar to RewriteAsofJoin.
+
+    /// <summary>
+    /// ANY INNER JOIN — one match per left row. Use against deduplicated dimension
+    /// tables or dictionaries when ALL-strictness's full match expansion is wasted.
+    /// MV-definition only; not yet supported in runtime queries.
+    /// </summary>
+    public static IQueryable<TResult> AnyJoin<TOuter, TInner, TKey, TResult>(
+        this IQueryable<TOuter> outer,
+        IQueryable<TInner> inner,
+        Expression<Func<TOuter, TKey>> outerKeySelector,
+        Expression<Func<TInner, TKey>> innerKeySelector,
+        Expression<Func<TOuter, TInner, TResult>> resultSelector)
+    {
+        ArgumentNullException.ThrowIfNull(outer);
+        ArgumentNullException.ThrowIfNull(inner);
+        ArgumentNullException.ThrowIfNull(outerKeySelector);
+        ArgumentNullException.ThrowIfNull(innerKeySelector);
+        ArgumentNullException.ThrowIfNull(resultSelector);
+        return outer.Provider.CreateQuery<TResult>(
+            Expression.Call(
+                null,
+                AnyJoinMethodInfo.MakeGenericMethod(typeof(TOuter), typeof(TInner), typeof(TKey), typeof(TResult)),
+                outer.Expression, inner.Expression,
+                Expression.Quote(outerKeySelector), Expression.Quote(innerKeySelector),
+                Expression.Quote(resultSelector)));
+    }
+
+    /// <summary>
+    /// ANY LEFT JOIN — preserves all left rows, but only one match per left row
+    /// from the right side. MV-definition only; not yet supported in runtime queries.
+    /// </summary>
+    public static IQueryable<TResult> AnyLeftJoin<TOuter, TInner, TKey, TResult>(
+        this IQueryable<TOuter> outer,
+        IQueryable<TInner> inner,
+        Expression<Func<TOuter, TKey>> outerKeySelector,
+        Expression<Func<TInner, TKey>> innerKeySelector,
+        Expression<Func<TOuter, TInner, TResult>> resultSelector)
+    {
+        ArgumentNullException.ThrowIfNull(outer);
+        ArgumentNullException.ThrowIfNull(inner);
+        ArgumentNullException.ThrowIfNull(outerKeySelector);
+        ArgumentNullException.ThrowIfNull(innerKeySelector);
+        ArgumentNullException.ThrowIfNull(resultSelector);
+        return outer.Provider.CreateQuery<TResult>(
+            Expression.Call(
+                null,
+                AnyLeftJoinMethodInfo.MakeGenericMethod(typeof(TOuter), typeof(TInner), typeof(TKey), typeof(TResult)),
+                outer.Expression, inner.Expression,
+                Expression.Quote(outerKeySelector), Expression.Quote(innerKeySelector),
+                Expression.Quote(resultSelector)));
+    }
+
+    /// <summary>
+    /// ANY RIGHT JOIN — preserves all right rows; one match per right row from the
+    /// left side. MV-definition only; not yet supported in runtime queries.
+    /// </summary>
+    public static IQueryable<TResult> AnyRightJoin<TOuter, TInner, TKey, TResult>(
+        this IQueryable<TOuter> outer,
+        IQueryable<TInner> inner,
+        Expression<Func<TOuter, TKey>> outerKeySelector,
+        Expression<Func<TInner, TKey>> innerKeySelector,
+        Expression<Func<TOuter, TInner, TResult>> resultSelector)
+    {
+        ArgumentNullException.ThrowIfNull(outer);
+        ArgumentNullException.ThrowIfNull(inner);
+        ArgumentNullException.ThrowIfNull(outerKeySelector);
+        ArgumentNullException.ThrowIfNull(innerKeySelector);
+        ArgumentNullException.ThrowIfNull(resultSelector);
+        return outer.Provider.CreateQuery<TResult>(
+            Expression.Call(
+                null,
+                AnyRightJoinMethodInfo.MakeGenericMethod(typeof(TOuter), typeof(TInner), typeof(TKey), typeof(TResult)),
+                outer.Expression, inner.Expression,
+                Expression.Quote(outerKeySelector), Expression.Quote(innerKeySelector),
+                Expression.Quote(resultSelector)));
+    }
+
+    internal static readonly MethodInfo AnyJoinMethodInfo =
+        typeof(ClickHouseQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .First(m => m.Name == nameof(AnyJoin));
+    internal static readonly MethodInfo AnyLeftJoinMethodInfo =
+        typeof(ClickHouseQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .First(m => m.Name == nameof(AnyLeftJoin));
+    internal static readonly MethodInfo AnyRightJoinMethodInfo =
+        typeof(ClickHouseQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .First(m => m.Name == nameof(AnyRightJoin));
+
+    // ----- Standard RIGHT / FULL OUTER -----
+
+    /// <summary>
+    /// RIGHT JOIN — preserves all rows from the inner (right) side; unmatched
+    /// outer columns receive type defaults. MV-definition only; not yet
+    /// supported in runtime queries.
+    /// </summary>
+    public static IQueryable<TResult> RightJoin<TOuter, TInner, TKey, TResult>(
+        this IQueryable<TOuter> outer,
+        IQueryable<TInner> inner,
+        Expression<Func<TOuter, TKey>> outerKeySelector,
+        Expression<Func<TInner, TKey>> innerKeySelector,
+        Expression<Func<TOuter, TInner, TResult>> resultSelector)
+    {
+        ArgumentNullException.ThrowIfNull(outer);
+        ArgumentNullException.ThrowIfNull(inner);
+        ArgumentNullException.ThrowIfNull(outerKeySelector);
+        ArgumentNullException.ThrowIfNull(innerKeySelector);
+        ArgumentNullException.ThrowIfNull(resultSelector);
+        return outer.Provider.CreateQuery<TResult>(
+            Expression.Call(
+                null,
+                RightJoinMethodInfo.MakeGenericMethod(typeof(TOuter), typeof(TInner), typeof(TKey), typeof(TResult)),
+                outer.Expression, inner.Expression,
+                Expression.Quote(outerKeySelector), Expression.Quote(innerKeySelector),
+                Expression.Quote(resultSelector)));
+    }
+
+    /// <summary>
+    /// FULL OUTER JOIN — preserves rows from both sides; unmatched columns on
+    /// either side receive type defaults. MV-definition only; not yet
+    /// supported in runtime queries.
+    /// </summary>
+    public static IQueryable<TResult> FullOuterJoin<TOuter, TInner, TKey, TResult>(
+        this IQueryable<TOuter> outer,
+        IQueryable<TInner> inner,
+        Expression<Func<TOuter, TKey>> outerKeySelector,
+        Expression<Func<TInner, TKey>> innerKeySelector,
+        Expression<Func<TOuter, TInner, TResult>> resultSelector)
+    {
+        ArgumentNullException.ThrowIfNull(outer);
+        ArgumentNullException.ThrowIfNull(inner);
+        ArgumentNullException.ThrowIfNull(outerKeySelector);
+        ArgumentNullException.ThrowIfNull(innerKeySelector);
+        ArgumentNullException.ThrowIfNull(resultSelector);
+        return outer.Provider.CreateQuery<TResult>(
+            Expression.Call(
+                null,
+                FullOuterJoinMethodInfo.MakeGenericMethod(typeof(TOuter), typeof(TInner), typeof(TKey), typeof(TResult)),
+                outer.Expression, inner.Expression,
+                Expression.Quote(outerKeySelector), Expression.Quote(innerKeySelector),
+                Expression.Quote(resultSelector)));
+    }
+
+    internal static readonly MethodInfo RightJoinMethodInfo =
+        typeof(ClickHouseQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .First(m => m.Name == nameof(RightJoin));
+    internal static readonly MethodInfo FullOuterJoinMethodInfo =
+        typeof(ClickHouseQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .First(m => m.Name == nameof(FullOuterJoin));
+
+    // ----- SEMI / ANTI families -----
+    // Existence/non-existence filters. SEMI keeps rows that have at least one
+    // match; ANTI keeps rows that have none. The "preserved side" determines
+    // which row type the result selector receives — semi/anti can't project
+    // the discarded side because it isn't materialised.
+
+    /// <summary>
+    /// LEFT SEMI JOIN — keeps each outer row that has at least one matching
+    /// inner row. Result selector receives only the outer row (inner is opaque).
+    /// MV-definition only; not yet supported in runtime queries.
+    /// </summary>
+    public static IQueryable<TResult> LeftSemiJoin<TOuter, TInner, TKey, TResult>(
+        this IQueryable<TOuter> outer,
+        IQueryable<TInner> inner,
+        Expression<Func<TOuter, TKey>> outerKeySelector,
+        Expression<Func<TInner, TKey>> innerKeySelector,
+        Expression<Func<TOuter, TResult>> resultSelector)
+    {
+        ArgumentNullException.ThrowIfNull(outer);
+        ArgumentNullException.ThrowIfNull(inner);
+        ArgumentNullException.ThrowIfNull(outerKeySelector);
+        ArgumentNullException.ThrowIfNull(innerKeySelector);
+        ArgumentNullException.ThrowIfNull(resultSelector);
+        return outer.Provider.CreateQuery<TResult>(
+            Expression.Call(
+                null,
+                LeftSemiJoinMethodInfo.MakeGenericMethod(typeof(TOuter), typeof(TInner), typeof(TKey), typeof(TResult)),
+                outer.Expression, inner.Expression,
+                Expression.Quote(outerKeySelector), Expression.Quote(innerKeySelector),
+                Expression.Quote(resultSelector)));
+    }
+
+    /// <summary>
+    /// LEFT ANTI JOIN — keeps each outer row that has *no* matching inner row.
+    /// Result selector receives only the outer row.
+    /// MV-definition only; not yet supported in runtime queries.
+    /// </summary>
+    public static IQueryable<TResult> LeftAntiJoin<TOuter, TInner, TKey, TResult>(
+        this IQueryable<TOuter> outer,
+        IQueryable<TInner> inner,
+        Expression<Func<TOuter, TKey>> outerKeySelector,
+        Expression<Func<TInner, TKey>> innerKeySelector,
+        Expression<Func<TOuter, TResult>> resultSelector)
+    {
+        ArgumentNullException.ThrowIfNull(outer);
+        ArgumentNullException.ThrowIfNull(inner);
+        ArgumentNullException.ThrowIfNull(outerKeySelector);
+        ArgumentNullException.ThrowIfNull(innerKeySelector);
+        ArgumentNullException.ThrowIfNull(resultSelector);
+        return outer.Provider.CreateQuery<TResult>(
+            Expression.Call(
+                null,
+                LeftAntiJoinMethodInfo.MakeGenericMethod(typeof(TOuter), typeof(TInner), typeof(TKey), typeof(TResult)),
+                outer.Expression, inner.Expression,
+                Expression.Quote(outerKeySelector), Expression.Quote(innerKeySelector),
+                Expression.Quote(resultSelector)));
+    }
+
+    /// <summary>
+    /// RIGHT SEMI JOIN — keeps each inner row that has at least one matching
+    /// outer row. Result selector receives only the inner row.
+    /// MV-definition only; not yet supported in runtime queries.
+    /// </summary>
+    public static IQueryable<TResult> RightSemiJoin<TOuter, TInner, TKey, TResult>(
+        this IQueryable<TOuter> outer,
+        IQueryable<TInner> inner,
+        Expression<Func<TOuter, TKey>> outerKeySelector,
+        Expression<Func<TInner, TKey>> innerKeySelector,
+        Expression<Func<TInner, TResult>> resultSelector)
+    {
+        ArgumentNullException.ThrowIfNull(outer);
+        ArgumentNullException.ThrowIfNull(inner);
+        ArgumentNullException.ThrowIfNull(outerKeySelector);
+        ArgumentNullException.ThrowIfNull(innerKeySelector);
+        ArgumentNullException.ThrowIfNull(resultSelector);
+        return outer.Provider.CreateQuery<TResult>(
+            Expression.Call(
+                null,
+                RightSemiJoinMethodInfo.MakeGenericMethod(typeof(TOuter), typeof(TInner), typeof(TKey), typeof(TResult)),
+                outer.Expression, inner.Expression,
+                Expression.Quote(outerKeySelector), Expression.Quote(innerKeySelector),
+                Expression.Quote(resultSelector)));
+    }
+
+    /// <summary>
+    /// RIGHT ANTI JOIN — keeps each inner row that has *no* matching outer row.
+    /// Result selector receives only the inner row.
+    /// MV-definition only; not yet supported in runtime queries.
+    /// </summary>
+    public static IQueryable<TResult> RightAntiJoin<TOuter, TInner, TKey, TResult>(
+        this IQueryable<TOuter> outer,
+        IQueryable<TInner> inner,
+        Expression<Func<TOuter, TKey>> outerKeySelector,
+        Expression<Func<TInner, TKey>> innerKeySelector,
+        Expression<Func<TInner, TResult>> resultSelector)
+    {
+        ArgumentNullException.ThrowIfNull(outer);
+        ArgumentNullException.ThrowIfNull(inner);
+        ArgumentNullException.ThrowIfNull(outerKeySelector);
+        ArgumentNullException.ThrowIfNull(innerKeySelector);
+        ArgumentNullException.ThrowIfNull(resultSelector);
+        return outer.Provider.CreateQuery<TResult>(
+            Expression.Call(
+                null,
+                RightAntiJoinMethodInfo.MakeGenericMethod(typeof(TOuter), typeof(TInner), typeof(TKey), typeof(TResult)),
+                outer.Expression, inner.Expression,
+                Expression.Quote(outerKeySelector), Expression.Quote(innerKeySelector),
+                Expression.Quote(resultSelector)));
+    }
+
+    internal static readonly MethodInfo LeftSemiJoinMethodInfo =
+        typeof(ClickHouseQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .First(m => m.Name == nameof(LeftSemiJoin));
+    internal static readonly MethodInfo LeftAntiJoinMethodInfo =
+        typeof(ClickHouseQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .First(m => m.Name == nameof(LeftAntiJoin));
+    internal static readonly MethodInfo RightSemiJoinMethodInfo =
+        typeof(ClickHouseQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .First(m => m.Name == nameof(RightSemiJoin));
+    internal static readonly MethodInfo RightAntiJoinMethodInfo =
+        typeof(ClickHouseQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .First(m => m.Name == nameof(RightAntiJoin));
+
+    // ----- CROSS JOIN -----
+
+    /// <summary>
+    /// CROSS JOIN — bare cartesian product of two sources. The query-syntax
+    /// <c>from o in outer from c in inner select …</c> form is also recognised
+    /// (handled via SelectMany). MV-definition only.
+    /// </summary>
+    public static IQueryable<TResult> CrossJoin<TOuter, TInner, TResult>(
+        this IQueryable<TOuter> outer,
+        IQueryable<TInner> inner,
+        Expression<Func<TOuter, TInner, TResult>> resultSelector)
+    {
+        ArgumentNullException.ThrowIfNull(outer);
+        ArgumentNullException.ThrowIfNull(inner);
+        ArgumentNullException.ThrowIfNull(resultSelector);
+        return outer.Provider.CreateQuery<TResult>(
+            Expression.Call(
+                null,
+                CrossJoinMethodInfo.MakeGenericMethod(typeof(TOuter), typeof(TInner), typeof(TResult)),
+                outer.Expression, inner.Expression,
+                Expression.Quote(resultSelector)));
+    }
+
+    internal static readonly MethodInfo CrossJoinMethodInfo =
+        typeof(ClickHouseQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .First(m => m.Name == nameof(CrossJoin));
 }

@@ -8,7 +8,7 @@ namespace EF.CH.Tests.Features;
 public class SetOperationTests : IAsyncLifetime
 {
     private readonly ClickHouseContainer _container = new ClickHouseBuilder()
-        .WithImage("clickhouse/clickhouse-server:latest")
+        .WithImage("clickhouse/clickhouse-server:25.6")
         .Build();
 
     public async Task InitializeAsync()
@@ -171,15 +171,7 @@ public class SetOperationTests : IAsyncLifetime
 
     private async Task SetupTable(SetOperationTestContext context)
     {
-        await context.Database.ExecuteSqlRawAsync(@"
-            CREATE TABLE IF NOT EXISTS ""SetItems"" (
-                ""Id"" UUID,
-                ""Name"" String,
-                ""Category"" String,
-                ""Price"" Decimal64(2)
-            ) ENGINE = MergeTree()
-            ORDER BY ""Id""
-        ");
+        await context.Database.EnsureCreatedAsync();
     }
 
     private async Task SeedData(SetOperationTestContext context)

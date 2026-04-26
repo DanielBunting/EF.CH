@@ -20,7 +20,7 @@ using Microsoft.EntityFrameworkCore;
 using Testcontainers.ClickHouse;
 
 var container = new ClickHouseBuilder()
-    .WithImage("clickhouse/clickhouse-server:latest")
+    .WithImage("clickhouse/clickhouse-server:25.6")
     .Build();
 
 Console.WriteLine("Starting ClickHouse container...");
@@ -95,34 +95,11 @@ static async Task DemoIfCombinators(string connectionString)
     }
 
     // ------- Read back the aggregated summaries -------
-    // Cast Float32 → Float64 on read: several quantile* variants return Array(Float32)
-    // or Float32 natively, which the .NET driver won't implicitly widen to double[]/double.
-    var summaries = await context.Database
-        .SqlQueryRaw<RegionSummaryResult>(@"
-            SELECT
-                Region,
-                OrderCount,
-                PaidRevenue,
-                CancelledCount,
-                PaidCustomers,
-                PaidCustomersApprox,
-                LatestFulfilledAmount,
-                EarliestFulfilledAmount,
-                TopPaidProducts,
-                TopWeightedPaidProducts,
-                CancelledOrderIds,
-                UniqPaidProducts,
-                MedianPaidAmount,
-                StddevPaidAmount,
-                VarPaidAmount,
-                toFloat64(P95FulfillTimeExact) AS P95FulfillTimeExact,
-                toFloat64(P95FulfillTimeTDigest) AS P95FulfillTimeTDigest,
-                toFloat64(P95FulfillTimeTiming) AS P95FulfillTimeTiming,
-                toFloat64(P95FulfillTimeDD) AS P95FulfillTimeDD,
-                arrayMap(x -> toFloat64(x), FulfillTimePercentiles) AS FulfillTimePercentiles,
-                arrayMap(x -> toFloat64(x), FulfillTimePercentilesTDigest) AS FulfillTimePercentilesTDigest
-            FROM region_summary FINAL
-            ORDER BY Region")
+    // The MV's target columns are all Float64/UInt64/String/Array(…) so the entity's
+    // CLR types map cleanly through the LINQ + Final() path — no raw-SQL cast shim needed.
+    var summaries = await context.RegionSummaries
+        .Final()
+        .OrderBy(r => r.Region)
         .ToListAsync();
 
     Console.WriteLine("\nPer-region summaries (populated by the -If materialized view):\n");

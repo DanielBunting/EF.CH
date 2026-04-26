@@ -184,16 +184,25 @@ public class ClickHouseJsonMethodTranslator : IMethodCallTranslator
         if (pathExpr == null)
             return null;
 
-        var defaultValue = arguments[2];
+        // Coerce the default literal to the declared return type so it is emitted at the
+        // correct width. The JSON path itself returns ClickHouse's Dynamic type, and
+        // ifNull narrows to the smallest fitting integer (e.g. Int8 for 42 or -1) — so
+        // we also wrap the whole ifNull in toInt32/toInt64/etc. to force a fixed-width
+        // result the materialiser's GetInt32/GetInt64 can read.
+        var returnTypeMapping = _sqlExpressionFactory.TypeMappingSource.FindMapping(returnType);
+        var defaultValue = returnTypeMapping is null
+            ? arguments[2]
+            : _sqlExpressionFactory.ApplyTypeMapping(arguments[2], returnTypeMapping);
 
-        // Generate: ifNull(path_expr, default)
-        return _sqlExpressionFactory.Function(
+        var ifNullExpr = _sqlExpressionFactory.Function(
             "ifNull",
             new[] { pathExpr, defaultValue },
             nullable: true,
             argumentsPropagateNullability: new[] { true, true },
             returnType,
-            _sqlExpressionFactory.TypeMappingSource.FindMapping(returnType));
+            returnTypeMapping);
+
+        return _sqlExpressionFactory.WrapWithClrCast(ifNullExpr, returnType);
     }
 
     /// <summary>

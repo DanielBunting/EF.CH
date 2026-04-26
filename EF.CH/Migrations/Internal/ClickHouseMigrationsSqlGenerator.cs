@@ -192,6 +192,12 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
                 {
                     deps.Add(sourceDep);
                 }
+                // Refreshable-MV explicit dependencies
+                var refreshDeps = GetAnnotation<string[]>(createOp, ClickHouseAnnotationNames.MaterializedViewRefreshDependsOn);
+                if (refreshDeps is { Length: > 0 })
+                    foreach (var d in refreshDeps) deps.Add(d);
+                var refreshTarget = GetAnnotation<string>(createOp, ClickHouseAnnotationNames.MaterializedViewRefreshTarget);
+                if (!string.IsNullOrEmpty(refreshTarget)) deps.Add(refreshTarget);
                 break;
 
             case CreateIndexOperation indexOp when !string.IsNullOrEmpty(indexOp.Table):
@@ -335,13 +341,29 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
             return;
         }
 
-        var isMaterializedView = GetAnnotation<bool?>(operation, ClickHouseAnnotationNames.MaterializedView)
-                              ?? GetEntityAnnotation<bool?>(entityType, ClickHouseAnnotationNames.MaterializedView)
-                              ?? false;
+        var deferredMv = GetAnnotation<bool?>(operation, ClickHouseAnnotationNames.MaterializedViewDeferred)
+                      ?? GetEntityAnnotation<bool?>(entityType, ClickHouseAnnotationNames.MaterializedViewDeferred)
+                      ?? false;
+        var markedAsMaterializedView = GetAnnotation<bool?>(operation, ClickHouseAnnotationNames.MaterializedView)
+                                    ?? GetEntityAnnotation<bool?>(entityType, ClickHouseAnnotationNames.MaterializedView)
+                                    ?? false;
 
-        if (isMaterializedView)
+        // Deferred MV: skip both the MV creation AND the base-table creation. The caller
+        // is responsible for issuing CREATE MATERIALIZED VIEW … POPULATE via
+        // DatabaseFacade.CreateMaterializedViewAsync<T>().
+        if (deferredMv && markedAsMaterializedView)
         {
-            GenerateMaterializedView(operation, entityType, model, builder, terminate);
+            return;
+        }
+
+        if (!deferredMv && markedAsMaterializedView)
+        {
+            var refreshInterval = GetAnnotation<string>(operation, ClickHouseAnnotationNames.MaterializedViewRefreshInterval)
+                               ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.MaterializedViewRefreshInterval);
+            if (!string.IsNullOrEmpty(refreshInterval))
+                GenerateRefreshableMaterializedView(operation, entityType, model, builder, terminate);
+            else
+                GenerateMaterializedView(operation, entityType, model, builder, terminate);
             return;
         }
 
@@ -486,6 +508,143 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
             builder.AppendLine(Dependencies.SqlGenerationHelper.StatementTerminator);
             EndStatement(builder);
         }
+    }
+
+    /// <summary>
+    /// Generates CREATE MATERIALIZED VIEW … REFRESH … AS … for a refreshable MV.
+    /// </summary>
+    private void GenerateRefreshableMaterializedView(
+        CreateTableOperation operation,
+        IEntityType? entityType,
+        IModel? model,
+        MigrationCommandListBuilder builder,
+        bool terminate)
+    {
+        var viewQuery = GetAnnotation<string>(operation, ClickHouseAnnotationNames.MaterializedViewQuery)
+                     ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.MaterializedViewQuery);
+
+        if (string.IsNullOrEmpty(viewQuery) && entityType != null && model != null)
+            viewQuery = TranslateMaterializedViewExpression(entityType, model);
+
+        if (string.IsNullOrEmpty(viewQuery))
+        {
+            throw new InvalidOperationException(
+                $"Refreshable materialized view '{operation.Name}' must have a view query defined " +
+                $"via AsRefreshableMaterializedViewRaw() or AsRefreshableMaterializedView().");
+        }
+
+        var kind = GetAnnotation<string>(operation, ClickHouseAnnotationNames.MaterializedViewRefreshKind)
+                ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.MaterializedViewRefreshKind)
+                ?? "EVERY";
+        var interval = GetAnnotation<string>(operation, ClickHouseAnnotationNames.MaterializedViewRefreshInterval)
+                    ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.MaterializedViewRefreshInterval)
+                    ?? throw new InvalidOperationException(
+                        $"Refreshable materialized view '{operation.Name}' is missing a refresh interval.");
+        var offset = GetAnnotation<string>(operation, ClickHouseAnnotationNames.MaterializedViewRefreshOffset)
+                  ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.MaterializedViewRefreshOffset);
+        var randomize = GetAnnotation<string>(operation, ClickHouseAnnotationNames.MaterializedViewRefreshRandomizeFor)
+                     ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.MaterializedViewRefreshRandomizeFor);
+        var dependsOn = GetAnnotation<string[]>(operation, ClickHouseAnnotationNames.MaterializedViewRefreshDependsOn)
+                     ?? GetEntityAnnotation<string[]>(entityType, ClickHouseAnnotationNames.MaterializedViewRefreshDependsOn);
+        var append = GetAnnotation<bool?>(operation, ClickHouseAnnotationNames.MaterializedViewRefreshAppend)
+                  ?? GetEntityAnnotation<bool?>(entityType, ClickHouseAnnotationNames.MaterializedViewRefreshAppend)
+                  ?? false;
+        var empty = GetAnnotation<bool?>(operation, ClickHouseAnnotationNames.MaterializedViewRefreshEmpty)
+                 ?? GetEntityAnnotation<bool?>(entityType, ClickHouseAnnotationNames.MaterializedViewRefreshEmpty)
+                 ?? false;
+        var settings = GetAnnotation<IReadOnlyDictionary<string, string>>(operation, ClickHouseAnnotationNames.MaterializedViewRefreshSettings)
+                    ?? GetEntityAnnotation<IReadOnlyDictionary<string, string>>(entityType, ClickHouseAnnotationNames.MaterializedViewRefreshSettings);
+        var target = GetAnnotation<string>(operation, ClickHouseAnnotationNames.MaterializedViewRefreshTarget)
+                  ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.MaterializedViewRefreshTarget);
+
+        var onClusterClause = GetOnClusterClause(operation.Name, operation.Schema, entityType, model, operation);
+        var helper = Dependencies.SqlGenerationHelper;
+
+        builder
+            .Append("CREATE MATERIALIZED VIEW IF NOT EXISTS ")
+            .Append(helper.DelimitIdentifier(operation.Name, operation.Schema))
+            .Append(onClusterClause);
+
+        builder.AppendLine();
+        builder.Append("REFRESH ").Append(kind).Append(" ").Append(interval);
+        if (!string.IsNullOrEmpty(offset))
+            builder.Append(" OFFSET ").Append(offset);
+        if (!string.IsNullOrEmpty(randomize))
+            builder.Append(" RANDOMIZE FOR ").Append(randomize);
+
+        if (dependsOn is { Length: > 0 })
+        {
+            builder.AppendLine();
+            builder.Append("DEPENDS ON ");
+            for (int i = 0; i < dependsOn.Length; i++)
+            {
+                if (i > 0) builder.Append(", ");
+                builder.Append(ResolveDependencyName(dependsOn[i], model, helper));
+            }
+        }
+
+        if (append)
+        {
+            builder.AppendLine();
+            builder.Append("APPEND");
+        }
+
+        if (!string.IsNullOrEmpty(target))
+        {
+            builder.AppendLine();
+            builder.Append("TO ").Append(helper.DelimitIdentifier(target));
+        }
+        else
+        {
+            builder.AppendLine();
+            GenerateEngineClauseForView(operation, entityType, model, builder);
+        }
+
+        if (empty)
+        {
+            builder.AppendLine();
+            builder.Append("EMPTY");
+        }
+
+        if (settings is { Count: > 0 })
+        {
+            builder.AppendLine();
+            builder.Append("SETTINGS ");
+            var first = true;
+            foreach (var kv in settings)
+            {
+                if (!first) builder.Append(", ");
+                builder.Append(kv.Key).Append(" = ").Append(kv.Value);
+                first = false;
+            }
+        }
+
+        builder.AppendLine();
+        builder.Append("AS ");
+        builder.Append(viewQuery);
+
+        if (terminate)
+        {
+            builder.AppendLine(helper.StatementTerminator);
+            EndStatement(builder);
+        }
+    }
+
+    /// <summary>
+    /// Resolve a DEPENDS ON entry that may be either an entity CLR/short name or a table name.
+    /// </summary>
+    private static string ResolveDependencyName(string entry, IModel? model, Microsoft.EntityFrameworkCore.Storage.ISqlGenerationHelper helper)
+    {
+        if (model is not null)
+        {
+            var match = model.GetEntityTypes().FirstOrDefault(e =>
+                string.Equals(e.ShortName(), entry, StringComparison.Ordinal) ||
+                string.Equals(e.Name, entry, StringComparison.Ordinal));
+            var table = match?.GetTableName();
+            if (!string.IsNullOrEmpty(table))
+                return helper.DelimitIdentifier(table!, match!.GetSchema());
+        }
+        return helper.DelimitIdentifier(entry);
     }
 
     /// <summary>
@@ -910,11 +1069,21 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         var distributedPolicy = GetAnnotation<string>(operation, ClickHouseAnnotationNames.DistributedPolicyName)
                              ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.DistributedPolicyName);
 
+        var externalEngineArgs = GetAnnotation<string>(operation, ClickHouseAnnotationNames.ExternalEngineArguments)
+                              ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.ExternalEngineArguments);
+
         builder.Append("ENGINE = ");
 
         // Generate engine with parameters
         switch (engine)
         {
+            case ClickHouseEngineNames.PostgreSQL
+              or ClickHouseEngineNames.MySQL
+              or ClickHouseEngineNames.Redis
+              or ClickHouseEngineNames.ODBC when !string.IsNullOrEmpty(externalEngineArgs):
+                builder.Append($"{engine}({externalEngineArgs})");
+                break;
+
             case ClickHouseEngineNames.ReplacingMergeTree when !string.IsNullOrEmpty(versionColumn) && !string.IsNullOrEmpty(isDeletedColumn):
                 // ReplacingMergeTree(version, is_deleted) - ClickHouse 23.2+
                 builder.Append($"{ClickHouseEngineNames.ReplacingMergeTree}({Dependencies.SqlGenerationHelper.DelimitIdentifier(versionColumn)}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(isDeletedColumn)})");
@@ -1064,6 +1233,10 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
                               ?? GetEntityAnnotation<ulong?>(entityType, ClickHouseAnnotationNames.KeeperMapKeysLimit);
         var isKeeperMap = string.Equals(engine, ClickHouseEngineNames.KeeperMap, StringComparison.OrdinalIgnoreCase);
 
+        // External integration engine arguments (PostgreSQL/MySQL/Redis/ODBC).
+        var externalEngineArgs = GetAnnotation<string>(operation, ClickHouseAnnotationNames.ExternalEngineArguments)
+                              ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.ExternalEngineArguments);
+
         builder.AppendLine();
         builder.Append("ENGINE = ");
 
@@ -1083,6 +1256,14 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         // Generate engine with parameters
         switch (engine)
         {
+            // External integration engines — emit the already-quoted arg list verbatim.
+            case ClickHouseEngineNames.PostgreSQL
+              or ClickHouseEngineNames.MySQL
+              or ClickHouseEngineNames.Redis
+              or ClickHouseEngineNames.ODBC when !string.IsNullOrEmpty(externalEngineArgs):
+                builder.Append($"{engine}({externalEngineArgs})");
+                break;
+
             // Replicated engines
             case ClickHouseEngineNames.ReplicatedReplacingMergeTree when !string.IsNullOrEmpty(versionColumn) && !string.IsNullOrEmpty(isDeletedColumn):
                 builder.Append($"{ClickHouseEngineNames.ReplicatedReplacingMergeTree}({replicationPath}, {replicaName}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(versionColumn)}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(isDeletedColumn)})");
@@ -2067,10 +2248,45 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
             case MaterializeProjectionOperation materializeProjection:
                 Generate(materializeProjection, model, builder);
                 break;
+            case ModifyRefreshOperation modifyRefresh:
+                Generate(modifyRefresh, model, builder);
+                break;
             default:
                 base.Generate(operation, model, builder);
                 break;
         }
+    }
+
+    /// <summary>
+    /// Generates ALTER TABLE … MODIFY REFRESH … for a refreshable MV schedule change.
+    /// </summary>
+    protected virtual void Generate(
+        ModifyRefreshOperation operation,
+        IModel? model,
+        MigrationCommandListBuilder builder)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        ArgumentNullException.ThrowIfNull(builder);
+
+        var helper = Dependencies.SqlGenerationHelper;
+        builder.Append("ALTER TABLE ");
+        builder.Append(helper.DelimitIdentifier(operation.Name, operation.Schema));
+        builder.Append(" MODIFY REFRESH ").Append(operation.Kind).Append(" ").Append(operation.Interval);
+        if (!string.IsNullOrEmpty(operation.Offset))
+            builder.Append(" OFFSET ").Append(operation.Offset);
+        if (!string.IsNullOrEmpty(operation.RandomizeFor))
+            builder.Append(" RANDOMIZE FOR ").Append(operation.RandomizeFor);
+        if (operation.DependsOn is { Length: > 0 })
+        {
+            builder.Append(" DEPENDS ON ");
+            for (int i = 0; i < operation.DependsOn.Length; i++)
+            {
+                if (i > 0) builder.Append(", ");
+                builder.Append(ResolveDependencyName(operation.DependsOn[i], model, helper));
+            }
+        }
+        builder.AppendLine(helper.StatementTerminator);
+        EndStatement(builder);
     }
 
     #region Projection Operations
@@ -2224,8 +2440,19 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
             return string.Empty;
         }
 
-        return $" ON CLUSTER {Dependencies.SqlGenerationHelper.DelimitIdentifier(clusterName)}";
+        return $" ON CLUSTER {FormatClusterName(clusterName)}";
     }
+
+    /// <summary>
+    /// Formats a cluster name for <c>ON CLUSTER</c>. Macro references such as
+    /// <c>{cluster}</c> are emitted as single-quoted string literals so that
+    /// ClickHouse expands them from the server's <c>&lt;macros&gt;</c> config.
+    /// Literal cluster names are emitted as delimited identifiers.
+    /// </summary>
+    private string FormatClusterName(string clusterName)
+        => ClickHouseClusterMacros.ContainsMacro(clusterName)
+            ? $"'{clusterName.Replace("'", "''")}'"
+            : Dependencies.SqlGenerationHelper.DelimitIdentifier(clusterName);
 
     /// <summary>
     /// Gets the cluster name for an entity type.

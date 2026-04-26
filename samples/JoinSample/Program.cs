@@ -4,7 +4,7 @@ using Testcontainers.ClickHouse;
 
 // Start ClickHouse container
 var container = new ClickHouseBuilder()
-    .WithImage("clickhouse/clickhouse-server:latest")
+    .WithImage("clickhouse/clickhouse-server:25.6")
     .Build();
 
 Console.WriteLine("Starting ClickHouse container...");
@@ -19,46 +19,21 @@ try
 
     await using var context = new AnalyticsContext(options);
 
-    // Create tables
-    await context.Database.ExecuteSqlRawAsync(@"
-        CREATE TABLE IF NOT EXISTS ""Events"" (
-            ""Id"" UInt32,
-            ""Timestamp"" DateTime,
-            ""Symbol"" String,
-            ""Name"" String,
-            ""Tags"" Array(String),
-            ""Scores"" Array(Int32)
-        ) ENGINE = ReplacingMergeTree()
-        ORDER BY (""Symbol"", ""Timestamp"")
-    ");
+    await context.Database.EnsureDeletedAsync();
+    await context.Database.EnsureCreatedAsync();
 
-    await context.Database.ExecuteSqlRawAsync(@"
-        CREATE TABLE IF NOT EXISTS ""Prices"" (
-            ""Timestamp"" DateTime,
-            ""Symbol"" String,
-            ""Price"" Decimal64(4),
-            ""Volume"" UInt64
-        ) ENGINE = ReplacingMergeTree()
-        ORDER BY (""Symbol"", ""Timestamp"")
-    ");
-
-    // Seed data
-    await context.Database.ExecuteSqlRawAsync(@"
-        INSERT INTO ""Events"" VALUES
-        (1, '2024-01-01 09:30:00', 'AAPL', 'Trade1', ['critical','urgent'], [10,20]),
-        (2, '2024-01-01 10:30:00', 'AAPL', 'Trade2', ['info'], [5]),
-        (3, '2024-01-01 09:30:00', 'GOOG', 'Trade3', ['critical','debug'], [30,40]),
-        (4, '2024-01-01 11:00:00', 'GOOG', 'Trade4', [], [])
-    ");
-
-    await context.Database.ExecuteSqlRawAsync(@"
-        INSERT INTO ""Prices"" VALUES
-        ('2024-01-01 09:00:00', 'AAPL', 150.0000, 1000),
-        ('2024-01-01 10:00:00', 'AAPL', 152.5000, 2000),
-        ('2024-01-01 11:00:00', 'AAPL', 151.0000, 1500),
-        ('2024-01-01 09:00:00', 'GOOG', 2800.0000, 500),
-        ('2024-01-01 10:00:00', 'GOOG', 2820.0000, 800)
-    ");
+    context.Events.AddRange(
+        new Event { Id = 1, Timestamp = new DateTime(2024, 1, 1, 9, 30, 0), Symbol = "AAPL", Name = "Trade1", Tags = ["critical", "urgent"], Scores = [10, 20] },
+        new Event { Id = 2, Timestamp = new DateTime(2024, 1, 1, 10, 30, 0), Symbol = "AAPL", Name = "Trade2", Tags = ["info"], Scores = [5] },
+        new Event { Id = 3, Timestamp = new DateTime(2024, 1, 1, 9, 30, 0), Symbol = "GOOG", Name = "Trade3", Tags = ["critical", "debug"], Scores = [30, 40] },
+        new Event { Id = 4, Timestamp = new DateTime(2024, 1, 1, 11, 0, 0), Symbol = "GOOG", Name = "Trade4", Tags = [], Scores = [] });
+    context.Prices.AddRange(
+        new Price { Timestamp = new DateTime(2024, 1, 1, 9, 0, 0), Symbol = "AAPL", Value = 150.0000m, Volume = 1000 },
+        new Price { Timestamp = new DateTime(2024, 1, 1, 10, 0, 0), Symbol = "AAPL", Value = 152.5000m, Volume = 2000 },
+        new Price { Timestamp = new DateTime(2024, 1, 1, 11, 0, 0), Symbol = "AAPL", Value = 151.0000m, Volume = 1500 },
+        new Price { Timestamp = new DateTime(2024, 1, 1, 9, 0, 0), Symbol = "GOOG", Value = 2800.0000m, Volume = 500 },
+        new Price { Timestamp = new DateTime(2024, 1, 1, 10, 0, 0), Symbol = "GOOG", Value = 2820.0000m, Volume = 800 });
+    await context.SaveChangesAsync();
 
     // ===============================
     // 1. ARRAY JOIN - Explode tags
@@ -192,7 +167,7 @@ public class AnalyticsContext : DbContext
         {
             entity.HasKey(e => e.Id);
             entity.ToTable("Events");
-            entity.UseMergeTree(x => new { x.Symbol, x.Timestamp });
+            entity.UseReplacingMergeTree(x => new { x.Symbol, x.Timestamp });
         });
 
         modelBuilder.Entity<Price>(entity =>
@@ -200,7 +175,7 @@ public class AnalyticsContext : DbContext
             entity.HasKey(e => new { e.Symbol, e.Timestamp });
             entity.ToTable("Prices");
             entity.Property(e => e.Value).HasColumnName("Price");
-            entity.UseMergeTree(x => new { x.Symbol, x.Timestamp });
+            entity.UseReplacingMergeTree(x => new { x.Symbol, x.Timestamp });
         });
     }
 }

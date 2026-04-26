@@ -1,5 +1,7 @@
 using EF.CH.Configuration;
 using EF.CH.Infrastructure;
+using EF.CH.Metadata;
+using EF.CH.QueryProfiling;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.Configuration;
@@ -37,6 +39,7 @@ public static class ClickHouseDbContextOptionsExtensions
         ((IDbContextOptionsBuilderInfrastructure)optionsBuilder).AddOrUpdateExtension(extension);
 
         ConfigureWarnings(optionsBuilder);
+        AddProviderInterceptors(optionsBuilder);
 
         clickHouseOptionsAction?.Invoke(new ClickHouseDbContextOptionsBuilder(optionsBuilder));
 
@@ -64,6 +67,7 @@ public static class ClickHouseDbContextOptionsExtensions
         ((IDbContextOptionsBuilderInfrastructure)optionsBuilder).AddOrUpdateExtension(extension);
 
         ConfigureWarnings(optionsBuilder);
+        AddProviderInterceptors(optionsBuilder);
 
         clickHouseOptionsAction?.Invoke(new ClickHouseDbContextOptionsBuilder(optionsBuilder));
 
@@ -101,6 +105,15 @@ public static class ClickHouseDbContextOptionsExtensions
     private static void ConfigureWarnings(DbContextOptionsBuilder optionsBuilder)
     {
         // Future: Configure ClickHouse-specific warnings here
+    }
+
+    /// <summary>
+    /// Registers the provider's always-on interceptors (currently the QueryStats capture
+    /// used by <c>ToListWithStatsAsync</c>) onto the options builder.
+    /// </summary>
+    private static void AddProviderInterceptors(DbContextOptionsBuilder optionsBuilder)
+    {
+        optionsBuilder.AddInterceptors(new ClickHouseQueryStatsInterceptor());
     }
 }
 
@@ -319,6 +332,14 @@ public class ClickHouseDbContextOptionsBuilder
         ((IDbContextOptionsBuilderInfrastructure)_optionsBuilder).AddOrUpdateExtension(extension);
         return this;
     }
+
+    /// <summary>
+    /// Sets the default cluster to the <c>{cluster}</c> server-side macro, so
+    /// DDL emits <c>ON CLUSTER '{cluster}'</c> and lets ClickHouse resolve the
+    /// cluster name from each node's <c>&lt;macros&gt;</c> config.
+    /// </summary>
+    public virtual ClickHouseDbContextOptionsBuilder UseCluster()
+        => UseCluster(ClickHouseClusterMacros.Cluster);
 
     /// <summary>
     /// Adds a named connection configuration using a fluent builder.

@@ -77,25 +77,33 @@ public class ClickHouseMathMethodTranslator : IMethodCallTranslator
 
         var methodName = method.Name;
 
-        // Single-argument methods
+        // Single-argument methods.
+        // Wrap with toInt32/toFloat64/etc. to match the .NET return type — ClickHouse
+        // can pick narrower types for integer-typed args (e.g. sign returns Int8;
+        // sin/cos applied to a UInt8-typed argument may project something materialiser
+        // can't read back as Double). The wrap stabilises the projected column.
         if (arguments.Count == 1 && SingleArgMathMappings.TryGetValue(methodName, out var singleArgFunc))
         {
-            return _sqlExpressionFactory.Function(
-                singleArgFunc,
-                arguments,
-                nullable: true,
-                argumentsPropagateNullability: new[] { true },
+            return _sqlExpressionFactory.WrapWithClrCast(
+                _sqlExpressionFactory.Function(
+                    singleArgFunc,
+                    arguments,
+                    nullable: true,
+                    argumentsPropagateNullability: new[] { true },
+                    method.ReturnType),
                 method.ReturnType);
         }
 
         // Two-argument methods
         if (arguments.Count == 2 && TwoArgMathMappings.TryGetValue(methodName, out var twoArgFunc))
         {
-            return _sqlExpressionFactory.Function(
-                twoArgFunc,
-                arguments,
-                nullable: true,
-                argumentsPropagateNullability: new[] { true, true },
+            return _sqlExpressionFactory.WrapWithClrCast(
+                _sqlExpressionFactory.Function(
+                    twoArgFunc,
+                    arguments,
+                    nullable: true,
+                    argumentsPropagateNullability: new[] { true, true },
+                    method.ReturnType),
                 method.ReturnType);
         }
 
@@ -105,22 +113,26 @@ public class ClickHouseMathMethodTranslator : IMethodCallTranslator
             if (arguments.Count == 1)
             {
                 // Round to nearest integer
-                return _sqlExpressionFactory.Function(
-                    "round",
-                    arguments,
-                    nullable: true,
-                    argumentsPropagateNullability: new[] { true },
+                return _sqlExpressionFactory.WrapWithClrCast(
+                    _sqlExpressionFactory.Function(
+                        "round",
+                        arguments,
+                        nullable: true,
+                        argumentsPropagateNullability: new[] { true },
+                        method.ReturnType),
                     method.ReturnType);
             }
 
             if (arguments.Count == 2)
             {
                 // Round to specified decimal places
-                return _sqlExpressionFactory.Function(
-                    "round",
-                    arguments,
-                    nullable: true,
-                    argumentsPropagateNullability: new[] { true, false },
+                return _sqlExpressionFactory.WrapWithClrCast(
+                    _sqlExpressionFactory.Function(
+                        "round",
+                        arguments,
+                        nullable: true,
+                        argumentsPropagateNullability: new[] { true, false },
+                        method.ReturnType),
                     method.ReturnType);
             }
         }
@@ -128,9 +140,8 @@ public class ClickHouseMathMethodTranslator : IMethodCallTranslator
         // Special handling for Log with base
         if (methodName == nameof(Math.Log) && arguments.Count == 2)
         {
-            // Math.Log(value, base) → log(base, value) in ClickHouse
-            // Or implement as: log(value) / log(base)
-            return _sqlExpressionFactory.Divide(
+            // Math.Log(value, base) → log(value) / log(base)
+            var divide = _sqlExpressionFactory.Divide(
                 _sqlExpressionFactory.Function(
                     "log",
                     new[] { arguments[0] },
@@ -143,35 +154,40 @@ public class ClickHouseMathMethodTranslator : IMethodCallTranslator
                     nullable: true,
                     argumentsPropagateNullability: new[] { true },
                     typeof(double)));
+            return _sqlExpressionFactory.WrapWithClrCast(divide, typeof(double));
         }
 
         // Clamp: greatest(min, least(max, value))
         if (methodName == nameof(Math.Clamp) && arguments.Count == 3)
         {
             // arguments[0] = value, arguments[1] = min, arguments[2] = max
-            return _sqlExpressionFactory.Function(
-                "greatest",
-                new SqlExpression[]
-                {
-                    arguments[1], // min
-                    _sqlExpressionFactory.Function(
-                        "least",
-                        new[] { arguments[2], arguments[0] }, // max, value
-                        nullable: true,
-                        argumentsPropagateNullability: new[] { true, true },
-                        method.ReturnType)
-                },
-                nullable: true,
-                argumentsPropagateNullability: new[] { true, true },
+            return _sqlExpressionFactory.WrapWithClrCast(
+                _sqlExpressionFactory.Function(
+                    "greatest",
+                    new SqlExpression[]
+                    {
+                        arguments[1], // min
+                        _sqlExpressionFactory.Function(
+                            "least",
+                            new[] { arguments[2], arguments[0] }, // max, value
+                            nullable: true,
+                            argumentsPropagateNullability: new[] { true, true },
+                            method.ReturnType)
+                    },
+                    nullable: true,
+                    argumentsPropagateNullability: new[] { true, true },
+                    method.ReturnType),
                 method.ReturnType);
         }
 
         // FusedMultiplyAdd: (x * y) + z
         if (methodName == nameof(Math.FusedMultiplyAdd) && arguments.Count == 3)
         {
-            return _sqlExpressionFactory.Add(
-                _sqlExpressionFactory.Multiply(arguments[0], arguments[1]),
-                arguments[2]);
+            return _sqlExpressionFactory.WrapWithClrCast(
+                _sqlExpressionFactory.Add(
+                    _sqlExpressionFactory.Multiply(arguments[0], arguments[1]),
+                    arguments[2]),
+                method.ReturnType);
         }
 
         return null;

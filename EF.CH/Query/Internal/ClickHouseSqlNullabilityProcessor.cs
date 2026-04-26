@@ -164,6 +164,32 @@ public class ClickHouseSqlNullabilityProcessor : SqlNullabilityProcessor
             return rawSqlExpression;
         }
 
+        if (sqlExpression is ClickHouseLambdaExpression lambdaExpression)
+        {
+            var visitedBody = Visit(lambdaExpression.Body, allowOptimizedExpansion: false, out var bodyNullable);
+            nullable = bodyNullable;
+            return visitedBody == lambdaExpression.Body
+                ? lambdaExpression
+                : new ClickHouseLambdaExpression(lambdaExpression.ParameterNames, visitedBody);
+        }
+
+        if (sqlExpression is ClickHouseMergeSentinelExpression sentinel)
+        {
+            // Merge sentinels are pipeline markers; the aggregate translator unwraps
+            // them before SQL generation, so the state column inside is what actually
+            // matters for nullability.
+            var visitedState = Visit(sentinel.StateColumn, allowOptimizedExpansion: false, out var innerNullable);
+            var visitedSecond = sentinel.SecondArg is null
+                ? null
+                : Visit(sentinel.SecondArg, allowOptimizedExpansion: false, out _);
+            nullable = innerNullable;
+            return visitedState == sentinel.StateColumn && visitedSecond == sentinel.SecondArg
+                ? sentinel
+                : new ClickHouseMergeSentinelExpression(
+                    visitedState, sentinel.FunctionName, sentinel.Type, sentinel.TypeMapping,
+                    sentinel.MergeParameter, sentinel.Parameters, visitedSecond);
+        }
+
         return base.VisitCustomSqlExpression(sqlExpression, allowOptimizedExpansion, out nullable);
     }
 

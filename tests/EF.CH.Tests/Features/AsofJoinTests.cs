@@ -8,7 +8,7 @@ namespace EF.CH.Tests.Features;
 public class AsofJoinTests : IAsyncLifetime
 {
     private readonly ClickHouseContainer _container = new ClickHouseBuilder()
-        .WithImage("clickhouse/clickhouse-server:latest")
+        .WithImage("clickhouse/clickhouse-server:25.6")
         .Build();
 
     public async Task InitializeAsync() => await _container.StartAsync();
@@ -130,45 +130,26 @@ public class AsofJoinTests : IAsyncLifetime
 
     private async Task SetupTables(AsofJoinTestContext context)
     {
-        await context.Database.ExecuteSqlRawAsync(@"
-            CREATE TABLE IF NOT EXISTS ""AsofEvents"" (
-                ""Timestamp"" DateTime,
-                ""Symbol"" String,
-                ""EventName"" String
-            ) ENGINE = ReplacingMergeTree()
-            ORDER BY (""Symbol"", ""Timestamp"")
-        ");
-
-        await context.Database.ExecuteSqlRawAsync(@"
-            CREATE TABLE IF NOT EXISTS ""AsofPrices"" (
-                ""Timestamp"" DateTime,
-                ""Symbol"" String,
-                ""Price"" Decimal64(4),
-                ""Volume"" UInt64
-            ) ENGINE = ReplacingMergeTree()
-            ORDER BY (""Symbol"", ""Timestamp"")
-        ");
+        await context.Database.EnsureCreatedAsync();
     }
 
     private async Task SeedData(AsofJoinTestContext context)
     {
-        await context.Database.ExecuteSqlRawAsync(@"
-            INSERT INTO ""AsofPrices"" (""Timestamp"", ""Symbol"", ""Price"", ""Volume"") VALUES
-            ('2024-01-01 09:00:00', 'AAPL', 150.0000, 1000),
-            ('2024-01-01 10:00:00', 'AAPL', 152.5000, 2000),
-            ('2024-01-01 11:00:00', 'AAPL', 151.0000, 1500),
-            ('2024-01-01 09:00:00', 'GOOG', 140.0000, 500),
-            ('2024-01-01 10:00:00', 'GOOG', 142.0000, 800)
-        ");
+        context.AsofPrices.AddRange(
+            new AsofPrice { Timestamp = new DateTime(2024, 1, 1, 9, 0, 0),  Symbol = "AAPL", Price = 150.0000m, Volume = 1000 },
+            new AsofPrice { Timestamp = new DateTime(2024, 1, 1, 10, 0, 0), Symbol = "AAPL", Price = 152.5000m, Volume = 2000 },
+            new AsofPrice { Timestamp = new DateTime(2024, 1, 1, 11, 0, 0), Symbol = "AAPL", Price = 151.0000m, Volume = 1500 },
+            new AsofPrice { Timestamp = new DateTime(2024, 1, 1, 9, 0, 0),  Symbol = "GOOG", Price = 140.0000m, Volume = 500 },
+            new AsofPrice { Timestamp = new DateTime(2024, 1, 1, 10, 0, 0), Symbol = "GOOG", Price = 142.0000m, Volume = 800 });
 
-        await context.Database.ExecuteSqlRawAsync(@"
-            INSERT INTO ""AsofEvents"" (""Timestamp"", ""Symbol"", ""EventName"") VALUES
-            ('2024-01-01 09:30:00', 'AAPL', 'Trade1'),
-            ('2024-01-01 10:30:00', 'AAPL', 'Trade2'),
-            ('2024-01-01 11:30:00', 'AAPL', 'Trade3'),
-            ('2024-01-01 09:30:00', 'GOOG', 'Trade4'),
-            ('2024-01-01 10:30:00', 'GOOG', 'Trade5')
-        ");
+        context.AsofEvents.AddRange(
+            new AsofEvent { Timestamp = new DateTime(2024, 1, 1, 9, 30, 0),  Symbol = "AAPL", EventName = "Trade1" },
+            new AsofEvent { Timestamp = new DateTime(2024, 1, 1, 10, 30, 0), Symbol = "AAPL", EventName = "Trade2" },
+            new AsofEvent { Timestamp = new DateTime(2024, 1, 1, 11, 30, 0), Symbol = "AAPL", EventName = "Trade3" },
+            new AsofEvent { Timestamp = new DateTime(2024, 1, 1, 9, 30, 0),  Symbol = "GOOG", EventName = "Trade4" },
+            new AsofEvent { Timestamp = new DateTime(2024, 1, 1, 10, 30, 0), Symbol = "GOOG", EventName = "Trade5" });
+
+        await context.SaveChangesAsync();
     }
 
     private AsofJoinTestContext CreateContext()
@@ -209,14 +190,14 @@ public class AsofJoinTestContext : DbContext
         {
             entity.HasKey(e => new { e.Symbol, e.Timestamp });
             entity.ToTable("AsofEvents");
-            entity.UseMergeTree(x => new { x.Symbol, x.Timestamp });
+            entity.UseReplacingMergeTree(x => new { x.Symbol, x.Timestamp });
         });
 
         modelBuilder.Entity<AsofPrice>(entity =>
         {
             entity.HasKey(e => new { e.Symbol, e.Timestamp });
             entity.ToTable("AsofPrices");
-            entity.UseMergeTree(x => new { x.Symbol, x.Timestamp });
+            entity.UseReplacingMergeTree(x => new { x.Symbol, x.Timestamp });
         });
     }
 }

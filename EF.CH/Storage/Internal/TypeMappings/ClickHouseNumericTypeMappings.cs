@@ -208,7 +208,21 @@ public class ClickHouseFloat32TypeMapping : ClickHouseTypeMapping
         if (float.IsNegativeInfinity(floatValue))
             return "-inf";
 
-        return floatValue.ToString("G9", CultureInfo.InvariantCulture);
+        return EnsureFloatLiteral(floatValue.ToString("G9", CultureInfo.InvariantCulture));
+    }
+
+    // Integral-valued floats render as "0", "1", "-3" etc. under G-format, which
+    // ClickHouse parses as the smallest fitting unsigned int (UInt8/UInt16/…).
+    // Force a decimal point so the literal always types as Float32/Float64.
+    internal static string EnsureFloatLiteral(string literal)
+    {
+        if (literal.Length == 0) return literal;
+        for (var i = 0; i < literal.Length; i++)
+        {
+            var c = literal[i];
+            if (c == '.' || c == 'e' || c == 'E') return literal;
+        }
+        return literal + ".0";
     }
 }
 
@@ -241,6 +255,6 @@ public class ClickHouseFloat64TypeMapping : ClickHouseTypeMapping
         if (double.IsNegativeInfinity(doubleValue))
             return "-inf";
 
-        return doubleValue.ToString("G17", CultureInfo.InvariantCulture);
+        return ClickHouseFloat32TypeMapping.EnsureFloatLiteral(doubleValue.ToString("G17", CultureInfo.InvariantCulture));
     }
 }

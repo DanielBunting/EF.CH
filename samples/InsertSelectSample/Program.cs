@@ -21,8 +21,8 @@ Console.WriteLine("Creating database and tables...");
 await context.Database.EnsureCreatedAsync();
 
 // Clean up any existing data
-await context.Database.ExecuteSqlRawAsync("TRUNCATE TABLE Events");
-await context.Database.ExecuteSqlRawAsync("TRUNCATE TABLE ArchivedEvents");
+await context.Database.TruncateTableAsync<Event>();
+await context.Database.TruncateTableAsync<ArchivedEvent>();
 
 // ============================================================
 // Seed sample data
@@ -79,7 +79,7 @@ Console.WriteLine($"Archive table now has {archivedCount:N0} records");
 Console.WriteLine("\n--- Data Archival with DateTime Parameter ---");
 
 // Clear archive for this demo
-await context.Database.ExecuteSqlRawAsync("TRUNCATE TABLE ArchivedEvents");
+await context.Database.TruncateTableAsync<ArchivedEvent>();
 
 // Captured DateTime variable - properly resolved
 var cutoffDate = DateTime.UtcNow.AddDays(-14);
@@ -106,7 +106,7 @@ Console.WriteLine($"Archived {oldEventCount:N0} old events");
 Console.WriteLine("\n--- Cross-table Copy (Multiple Filters) ---");
 
 // Clear archive for this demo
-await context.Database.ExecuteSqlRawAsync("TRUNCATE TABLE ArchivedEvents");
+await context.Database.TruncateTableAsync<ArchivedEvent>();
 
 var copyResult = await context.ArchivedEvents.ExecuteInsertFromQueryAsync(
     context.Events.Where(e => e.Category == "Clothing" || e.Category == "Books"),
@@ -130,7 +130,7 @@ Console.WriteLine($"Copied {copiedCount:N0} records to archive");
 Console.WriteLine("\n--- Reverse Fluent API (.InsertIntoAsync()) ---");
 
 // Clear archive for this demo
-await context.Database.ExecuteSqlRawAsync("TRUNCATE TABLE ArchivedEvents");
+await context.Database.TruncateTableAsync<ArchivedEvent>();
 
 var fluentResult = await context.Events
     .Where(e => e.Category == "Sports")
@@ -156,7 +156,7 @@ Console.WriteLine($"Archived {sportsArchived:N0} Sports category events");
 Console.WriteLine("\n--- Copy All Records ---");
 
 // Clear archive for this demo
-await context.Database.ExecuteSqlRawAsync("TRUNCATE TABLE ArchivedEvents");
+await context.Database.TruncateTableAsync<ArchivedEvent>();
 
 var allResult = await context.ArchivedEvents.ExecuteInsertFromQueryAsync(
     context.Events,
@@ -178,7 +178,7 @@ Console.WriteLine($"Copied all {allCount:N0} records in {allResult.Elapsed.Total
 Console.WriteLine("\n--- Performance Comparison ---");
 
 // Clear archive
-await context.Database.ExecuteSqlRawAsync("TRUNCATE TABLE ArchivedEvents");
+await context.Database.TruncateTableAsync<ArchivedEvent>();
 
 // Server-side INSERT ... SELECT
 var serverSideStart = DateTime.UtcNow;

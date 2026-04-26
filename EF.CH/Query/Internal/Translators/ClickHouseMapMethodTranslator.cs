@@ -147,21 +147,31 @@ public class ClickHouseMapMemberTranslator : IMemberTranslator
                 returnType);
         }
 
-        // Count → length(mapKeys(map))
+        // Count → toInt32(length(mapKeys(map)))
         if (member.Name == "Count")
         {
+            // Derive Array(K) CLR type & mapping from the dictionary's key type so the
+            // intermediate mapKeys(...) node carries a RelationalTypeMapping (required
+            // by EF's RelationalTypeMappingPostprocessor).
+            var keyType = declaringType.GetGenericArguments()[0];
+            var arrayType = keyType.MakeArrayType();
+            var arrayMapping = _sqlExpressionFactory.TypeMappingSource.FindMapping(arrayType);
+
             var keysExpr = _sqlExpressionFactory.Function(
                 "mapKeys",
                 new[] { instance },
                 nullable: true,
                 argumentsPropagateNullability: new[] { true },
-                typeof(object)); // Intermediate type
+                arrayType,
+                arrayMapping);
 
-            return _sqlExpressionFactory.Function(
-                "length",
-                new[] { keysExpr },
-                nullable: true,
-                argumentsPropagateNullability: new[] { true },
+            return _sqlExpressionFactory.WrapWithClrCast(
+                _sqlExpressionFactory.Function(
+                    "length",
+                    new[] { keysExpr },
+                    nullable: true,
+                    argumentsPropagateNullability: new[] { true },
+                    typeof(ulong)),
                 typeof(int));
         }
 

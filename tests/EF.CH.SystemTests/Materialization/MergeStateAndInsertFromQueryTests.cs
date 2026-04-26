@@ -1,0 +1,47 @@
+using EF.CH.Extensions;
+using EF.CH.SystemTests.Fixtures;
+using EF.CH.SystemTests.Infrastructure;
+using Microsoft.EntityFrameworkCore;
+using Xunit;
+
+namespace EF.CH.SystemTests.Materialization;
+
+/// <summary>
+/// API-surface guards for server-side insert-from-query and the
+/// <c>-MergeState</c> combinator family used by AggregatingMergeTree chaining
+/// workflows.
+/// </summary>
+[Collection(SingleNodeCollection.Name)]
+public class MergeStateAndInsertFromQueryTests
+{
+    private readonly SingleNodeClickHouseFixture _fixture;
+    public MergeStateAndInsertFromQueryTests(SingleNodeClickHouseFixture fx) => _fixture = fx;
+
+    [Fact]
+    public void InsertFromQuery_ShouldBeDefined()
+    {
+        var found = typeof(ClickHouseEntityTypeBuilderExtensions).Assembly
+            .GetTypes()
+            .SelectMany(t => t.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static))
+            .Any(m => m.Name is "InsertFromQueryAsync" or "InsertFromQuery");
+        Assert.True(found,
+            "Expected a DbSet<T>.InsertFromQuery(IQueryable<T>) extension.");
+    }
+
+    [Fact]
+    public void CountMergeState_ShouldBeDeclaredOnClickHouseAggregates()
+    {
+        var method = typeof(ClickHouseAggregates).GetMethod(nameof(ClickHouseAggregates.CountMerge));
+        Assert.NotNull(method);
+
+        var mergeStateMethod = typeof(ClickHouseAggregates).GetMethod("CountMergeState");
+        Assert.NotNull(mergeStateMethod);
+    }
+
+    [Fact]
+    public void SumMergeState_UniqMergeState_ShouldBeDeclaredOnClickHouseAggregates()
+    {
+        Assert.NotNull(typeof(ClickHouseAggregates).GetMethod("SumMergeState"));
+        Assert.NotNull(typeof(ClickHouseAggregates).GetMethod("UniqMergeState"));
+    }
+}

@@ -52,20 +52,21 @@ await context.SaveChangesAsync();
 // ============================================================
 Console.WriteLine("--- 1. Approximate Count Distinct ---\n");
 
-// Compare different algorithms for counting unique users
-var countResults = await context.Database
-    .SqlQueryRaw<CountDistinctResult>(@"
-        SELECT
-            uniq(UserId) AS Uniq,
-            uniqCombined(UserId) AS UniqCombined,
-            uniqCombined64(UserId) AS UniqCombined64,
-            uniqHLL12(UserId) AS UniqHLL12,
-            uniqTheta(UserId) AS UniqTheta,
-            uniqExact(UserId) AS UniqExact
-        FROM page_views")
-    .ToListAsync();
-
-var cr = countResults[0];
+// Compare different algorithms for counting unique users. Group by a constant so
+// the whole table becomes one aggregated bucket — the preprocessor rewrites these
+// ClickHouseAggregates.* calls through the sentinel pipeline to native SQL.
+var cr = await context.PageViews
+    .GroupBy(_ => 1)
+    .Select(g => new CountDistinctResult
+    {
+        Uniq = g.Uniq(x => x.UserId),
+        UniqCombined = g.UniqCombined(x => x.UserId),
+        UniqCombined64 = g.UniqCombined64(x => x.UserId),
+        UniqHLL12 = g.UniqHLL12(x => x.UserId),
+        UniqTheta = g.UniqTheta(x => x.UserId),
+        UniqExact = g.UniqExact(x => x.UserId),
+    })
+    .FirstAsync();
 Console.WriteLine($"  Algorithm         | Unique Users");
 Console.WriteLine($"  ------------------|--------------");
 Console.WriteLine($"  uniq              | {cr.Uniq,12}");
@@ -81,18 +82,17 @@ Console.WriteLine();
 // ============================================================
 Console.WriteLine("--- 2. Quantile Algorithm Variants (P95 Load Time) ---\n");
 
-var quantileResults = await context.Database
-    .SqlQueryRaw<QuantileVariantResult>(@"
-        SELECT
-            toFloat64(quantile(0.95)(LoadTimeMs)) AS Quantile,
-            toFloat64(quantileTDigest(0.95)(LoadTimeMs)) AS QuantileTDigest,
-            toFloat64(quantileDD(0.01, 0.95)(LoadTimeMs)) AS QuantileDD,
-            toFloat64(quantileExact(0.95)(LoadTimeMs)) AS QuantileExact,
-            toFloat64(quantileTiming(0.95)(LoadTimeMs)) AS QuantileTiming
-        FROM page_views")
-    .ToListAsync();
-
-var qr = quantileResults[0];
+var qr = await context.PageViews
+    .GroupBy(_ => 1)
+    .Select(g => new QuantileVariantResult
+    {
+        Quantile = g.Quantile(0.95, x => x.LoadTimeMs),
+        QuantileTDigest = g.QuantileTDigest(0.95, x => x.LoadTimeMs),
+        QuantileDD = g.QuantileDD(0.01, 0.95, x => x.LoadTimeMs),
+        QuantileExact = g.QuantileExact(0.95, x => x.LoadTimeMs),
+        QuantileTiming = g.QuantileTiming(0.95, x => x.LoadTimeMs),
+    })
+    .FirstAsync();
 Console.WriteLine($"  Algorithm         | P95 Load Time (ms)");
 Console.WriteLine($"  ------------------|--------------------");
 Console.WriteLine($"  quantile          | {qr.Quantile,18:F1}");
@@ -107,14 +107,14 @@ Console.WriteLine();
 // ============================================================
 Console.WriteLine("--- 3. Multi-Quantile (Load Time Distribution) ---\n");
 
-var multiQuantileResults = await context.Database
-    .SqlQueryRaw<MultiQuantileResult>(@"
-        SELECT
-            Region,
-            arrayMap(x -> toFloat64(x), quantiles(0.5, 0.9, 0.95, 0.99)(LoadTimeMs)) AS Percentiles
-        FROM page_views
-        GROUP BY Region
-        ORDER BY Region")
+var multiQuantileResults = await context.PageViews
+    .GroupBy(x => x.Region)
+    .Select(g => new MultiQuantileResult
+    {
+        Region = g.Key,
+        Percentiles = g.Quantiles(new[] { 0.5, 0.9, 0.95, 0.99 }, x => x.LoadTimeMs),
+    })
+    .OrderBy(r => r.Region)
     .ToListAsync();
 
 Console.WriteLine($"  Region | P50 (ms)  | P90 (ms)  | P95 (ms)  | P99 (ms)");
@@ -130,15 +130,14 @@ Console.WriteLine();
 // ============================================================
 Console.WriteLine("--- 4. Top Pages (by view count vs. weighted by duration) ---\n");
 
-var topKResults = await context.Database
-    .SqlQueryRaw<TopKComparisonResult>(@"
-        SELECT
-            topK(5)(Page) AS TopByCount,
-            topKWeighted(5)(Page, ViewDurationSec) AS TopByDuration
-        FROM page_views")
-    .ToListAsync();
-
-var tk = topKResults[0];
+var tk = await context.PageViews
+    .GroupBy(_ => 1)
+    .Select(g => new TopKComparisonResult
+    {
+        TopByCount = g.TopK(5, x => x.Page),
+        TopByDuration = g.TopKWeighted(5, x => x.Page, x => x.ViewDurationSec),
+    })
+    .FirstAsync();
 Console.WriteLine($"  Rank | By View Count        | By Total Duration (weighted)");
 Console.WriteLine($"  -----|----------------------|-----------------------------");
 for (int i = 0; i < Math.Max(tk.TopByCount.Length, tk.TopByDuration.Length); i++)
@@ -154,17 +153,17 @@ Console.WriteLine();
 // ============================================================
 Console.WriteLine("--- 5. Per-Region Summary ---\n");
 
-var regionResults = await context.Database
-    .SqlQueryRaw<RegionSummaryResult>(@"
-        SELECT
-            Region,
-            count() AS TotalViews,
-            uniqCombined(UserId) AS UniqueUsers,
-            toFloat64(quantileTDigest(0.5)(LoadTimeMs)) AS MedianLoadTime,
-            toFloat64(quantileTDigest(0.95)(LoadTimeMs)) AS P95LoadTime
-        FROM page_views
-        GROUP BY Region
-        ORDER BY Region")
+var regionResults = await context.PageViews
+    .GroupBy(x => x.Region)
+    .Select(g => new RegionSummaryResult
+    {
+        Region = g.Key,
+        TotalViews = (ulong)g.LongCount(),
+        UniqueUsers = g.UniqCombined(x => x.UserId),
+        MedianLoadTime = g.QuantileTDigest(0.5, x => x.LoadTimeMs),
+        P95LoadTime = g.QuantileTDigest(0.95, x => x.LoadTimeMs),
+    })
+    .OrderBy(r => r.Region)
     .ToListAsync();
 
 Console.WriteLine($"  Region | Views  | Unique Users | Median (ms) | P95 (ms)");
@@ -245,7 +244,7 @@ public class AnalyticsDbContext : DbContext
 
     protected override void OnConfiguring(DbContextOptionsBuilder options)
     {
-        options.UseClickHouse("Host=localhost;Password=default;Database=approx_functions_sample");
+        options.UseClickHouse("Host=localhost;Database=approx_functions_sample");
     }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)

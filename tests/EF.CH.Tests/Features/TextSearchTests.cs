@@ -51,7 +51,8 @@ public class TextSearchTests
 
         var sql = query.ToQueryString();
 
-        Assert.Contains("hasAnyToken(", sql);
+        // ClickHouse 25.6 dropped hasAnyToken; emit hasAny(splitByNonAlpha(haystack), tokens) instead.
+        Assert.Contains("hasAny(splitByNonAlpha(", sql);
     }
 
     [Fact]
@@ -64,7 +65,8 @@ public class TextSearchTests
 
         var sql = query.ToQueryString();
 
-        Assert.Contains("hasAllTokens(", sql);
+        // ClickHouse 25.6 dropped hasAllTokens; emit hasAll(splitByNonAlpha(haystack), tokens) instead.
+        Assert.Contains("hasAll(splitByNonAlpha(", sql);
     }
 
     #endregion

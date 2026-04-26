@@ -202,6 +202,114 @@ public static class ClickHouseMigrationBuilderExtensions
 
     #endregion
 
+    #region Plain Views
+
+    /// <summary>
+    /// Creates a ClickHouse view from a raw SELECT SQL string in a migration.
+    /// </summary>
+    /// <param name="migrationBuilder">The migration builder.</param>
+    /// <param name="viewName">The view name.</param>
+    /// <param name="selectSql">The SELECT SQL body (without CREATE VIEW prefix).</param>
+    /// <param name="ifNotExists">Emit IF NOT EXISTS.</param>
+    /// <param name="orReplace">Emit OR REPLACE. Mutually exclusive with <paramref name="ifNotExists"/>.</param>
+    /// <param name="onCluster">Optional ON CLUSTER cluster name.</param>
+    /// <param name="schema">Optional schema (database) qualifier.</param>
+    /// <example>
+    /// <code>
+    /// migrationBuilder.CreateView(
+    ///     viewName: "active_users",
+    ///     selectSql: "SELECT user_id, name FROM users WHERE is_active = 1",
+    ///     orReplace: true);
+    /// </code>
+    /// </example>
+    public static MigrationBuilder CreateView(
+        this MigrationBuilder migrationBuilder,
+        string viewName,
+        string selectSql,
+        bool ifNotExists = false,
+        bool orReplace = false,
+        string? onCluster = null,
+        string? schema = null)
+    {
+        ArgumentNullException.ThrowIfNull(migrationBuilder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(viewName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(selectSql);
+
+        if (ifNotExists && orReplace)
+        {
+            throw new ArgumentException(
+                "ClickHouse CREATE VIEW does not allow combining IF NOT EXISTS with OR REPLACE.",
+                nameof(orReplace));
+        }
+
+        var sb = new StringBuilder();
+        sb.Append("CREATE ");
+        if (orReplace)
+            sb.Append("OR REPLACE ");
+        sb.Append("VIEW ");
+        if (ifNotExists)
+            sb.Append("IF NOT EXISTS ");
+        AppendQualifiedName(sb, schema, viewName);
+        if (!string.IsNullOrEmpty(onCluster))
+        {
+            sb.Append(" ON CLUSTER ");
+            sb.Append(onCluster);
+        }
+        sb.Append(" AS\n");
+        sb.Append(selectSql.Trim());
+
+        migrationBuilder.Sql(sb.ToString());
+        return migrationBuilder;
+    }
+
+    /// <summary>
+    /// Drops a ClickHouse view in a migration.
+    /// </summary>
+    public static MigrationBuilder DropView(
+        this MigrationBuilder migrationBuilder,
+        string viewName,
+        bool ifExists = true,
+        string? onCluster = null,
+        string? schema = null)
+    {
+        ArgumentNullException.ThrowIfNull(migrationBuilder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(viewName);
+
+        var sb = new StringBuilder();
+        sb.Append("DROP VIEW ");
+        if (ifExists)
+            sb.Append("IF EXISTS ");
+        AppendQualifiedName(sb, schema, viewName);
+        if (!string.IsNullOrEmpty(onCluster))
+        {
+            sb.Append(" ON CLUSTER ");
+            sb.Append(onCluster);
+        }
+
+        migrationBuilder.Sql(sb.ToString());
+        return migrationBuilder;
+    }
+
+    private static void AppendQualifiedName(StringBuilder sb, string? schema, string name)
+    {
+        if (!string.IsNullOrEmpty(schema))
+        {
+            sb.Append('"');
+            sb.Append(schema.Replace("\"", "\"\""));
+            sb.Append("\".\"");
+            sb.Append(name.Replace("\"", "\"\""));
+            sb.Append('"');
+        }
+        else
+        {
+            sb.Append('"');
+            sb.Append(name.Replace("\"", "\"\""));
+            sb.Append('"');
+        }
+    }
+
+    #endregion
+
     #region Projections
 
     /// <summary>

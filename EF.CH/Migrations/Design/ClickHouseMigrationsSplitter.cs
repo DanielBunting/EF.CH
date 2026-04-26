@@ -35,7 +35,10 @@ internal enum MigrationPhase
     CreateIndexes = 8,
 
     /// <summary>Phase 9: Add and materialize projections.</summary>
-    AddProjections = 9
+    AddProjections = 9,
+
+    /// <summary>Phase 10: Modify refreshable MV schedules (non-disruptive, runs last).</summary>
+    ModifyMvSchedule = 10
 }
 
 /// <summary>
@@ -153,6 +156,9 @@ public class ClickHouseMigrationsSplitter
         // Phase 9: Add projections (original order)
         result.AddRange(phaseGroups[MigrationPhase.AddProjections]);
 
+        // Phase 10: Modify refresh schedules (original order)
+        result.AddRange(phaseGroups[MigrationPhase.ModifyMvSchedule]);
+
         return result;
     }
 
@@ -191,6 +197,9 @@ public class ClickHouseMigrationsSplitter
 
             AddProjectionOperation or MaterializeProjectionOperation
                 => MigrationPhase.AddProjections,
+
+            ModifyRefreshOperation
+                => MigrationPhase.ModifyMvSchedule,
 
             _ => MigrationPhase.ModifyColumns  // Default: other ops go to phase 7
         };
@@ -316,6 +325,16 @@ public class ClickHouseMigrationsSplitter
             foreach (var tableRef in tableRefs)
                 deps.Add(tableRef);
         }
+
+        // Refreshable-MV explicit dependencies
+        var refreshDeps = GetAnnotation<string[]>(op, ClickHouseAnnotationNames.MaterializedViewRefreshDependsOn);
+        if (refreshDeps is { Length: > 0 })
+            foreach (var d in refreshDeps) deps.Add(d);
+
+        // Refreshable-MV target table (TO <target>)
+        var refreshTarget = GetAnnotation<string>(op, ClickHouseAnnotationNames.MaterializedViewRefreshTarget);
+        if (!string.IsNullOrEmpty(refreshTarget))
+            deps.Add(refreshTarget);
 
         return deps;
     }

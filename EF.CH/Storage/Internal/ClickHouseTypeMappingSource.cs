@@ -124,8 +124,9 @@ public partial class ClickHouseTypeMappingSource : RelationalTypeMappingSource
             ["Date32"] = new ClickHouseDate32TypeMapping(),
             ["Time"] = new ClickHouseTimeTypeMapping(),
 
-            // JSON (native JSON type, requires ClickHouse 24.8+)
-            ["JSON"] = new ClickHouseJsonTypeMapping(typeof(JsonElement)),
+            // JSON is intentionally not registered here; ParseStoreType's JSON branch
+            // honours the caller-supplied clrType (so JsonDocument properties get a
+            // JsonDocument-keyed mapping rather than the JsonElement default).
 
             // IP Address types
             ["IPv4"] = new ClickHouseIPv4TypeMapping(),
@@ -134,8 +135,10 @@ public partial class ClickHouseTypeMappingSource : RelationalTypeMappingSource
 
     /// <summary>
     /// Cache for dynamically created type mappings.
+    /// Keyed on (storeTypeName, clrType) because some store types (notably JSON)
+    /// resolve to a different mapping depending on the property's CLR type.
     /// </summary>
-    private readonly ConcurrentDictionary<string, RelationalTypeMapping?> _storeTypeMappingCache = new();
+    private readonly ConcurrentDictionary<(string StoreTypeName, Type? ClrType), RelationalTypeMapping?> _storeTypeMappingCache = new();
 
     public ClickHouseTypeMappingSource(TypeMappingSourceDependencies dependencies,
         RelationalTypeMappingSourceDependencies relationalDependencies)
@@ -226,14 +229,14 @@ public partial class ClickHouseTypeMappingSource : RelationalTypeMappingSource
     /// <returns>The type mapping, or null if not found</returns>
     internal RelationalTypeMapping? FindMappingByStoreType(string storeTypeName, Type? clrType = null)
     {
-        // Check cache first
-        if (_storeTypeMappingCache.TryGetValue(storeTypeName, out var cached))
+        var key = (storeTypeName, clrType);
+        if (_storeTypeMappingCache.TryGetValue(key, out var cached))
         {
             return cached;
         }
 
         var mapping = ParseStoreType(storeTypeName, clrType);
-        _storeTypeMappingCache.TryAdd(storeTypeName, mapping);
+        _storeTypeMappingCache.TryAdd(key, mapping);
         return mapping;
     }
 
@@ -244,6 +247,27 @@ public partial class ClickHouseTypeMappingSource : RelationalTypeMappingSource
     {
         // Trim whitespace
         storeTypeName = storeTypeName.Trim();
+
+        // IPv4/IPv6 columns: when the property is declared as IPAddress, return an
+        // IPAddress-keyed mapping. The driver materialises both IPv4 and IPv6 columns
+        // as IPAddress, so binding to the IPAddress CLR type avoids a coercion error
+        // against the ClickHouseIPv4/ClickHouseIPv6 wrapper structs.
+        if (clrType == typeof(IPAddress) &&
+            (string.Equals(storeTypeName, "IPv4", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(storeTypeName, "IPv6", StringComparison.OrdinalIgnoreCase)))
+        {
+            return new ClickHouseIPAddressTypeMapping(storeTypeName);
+        }
+
+        // Date / Date32 columns: when the property is declared as DateTime, return a
+        // DateTime-keyed mapping. The driver returns DateTime for Date and Date32, and
+        // users frequently model these as DateTime rather than DateOnly.
+        if (clrType == typeof(DateTime) &&
+            (string.Equals(storeTypeName, "Date", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(storeTypeName, "Date32", StringComparison.OrdinalIgnoreCase)))
+        {
+            return new ClickHouseDateTimeAsDateTypeMapping(storeTypeName);
+        }
 
         // Check simple types first
         if (StoreTypeMappings.TryGetValue(storeTypeName, out var simpleMapping))
@@ -850,10 +874,13 @@ public partial class ClickHouseTypeMappingSource : RelationalTypeMappingSource
     [GeneratedRegex(@"^Tuple\((.+)\)$", RegexOptions.IgnoreCase)]
     private static partial Regex TupleRegex();
 
-    [GeneratedRegex(@"^SimpleAggregateFunction\((\w+),\s*(.+)\)$", RegexOptions.IgnoreCase)]
+    // Function name allows an optional parametric tail (e.g. quantile(0.5),
+    // quantileTDigest(0.99)) — the inner () must be argument literals, not nested
+    // calls. Captures the whole "name(args)" or bare name as group 1.
+    [GeneratedRegex(@"^SimpleAggregateFunction\((\w+(?:\([^)]*\))?),\s*(.+)\)$", RegexOptions.IgnoreCase)]
     private static partial Regex SimpleAggregateFunctionRegex();
 
-    [GeneratedRegex(@"^AggregateFunction\((\w+),\s*(.+)\)$", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"^AggregateFunction\((\w+(?:\([^)]*\))?),\s*(.+)\)$", RegexOptions.IgnoreCase)]
     private static partial Regex AggregateFunctionRegex();
 
     [GeneratedRegex(@"^Nested\((.+)\)$", RegexOptions.IgnoreCase)]

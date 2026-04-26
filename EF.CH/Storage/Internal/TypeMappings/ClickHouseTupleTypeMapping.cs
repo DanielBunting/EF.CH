@@ -1,5 +1,7 @@
+using System.Linq.Expressions;
 using System.Text;
 using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 namespace EF.CH.Storage.Internal.TypeMappings;
 
@@ -35,7 +37,7 @@ public class ClickHouseTupleTypeMapping : RelationalTypeMapping
         IReadOnlyList<string>? elementNames = null)
         : base(
             new RelationalTypeMappingParameters(
-                new CoreTypeMappingParameters(clrType),
+                new CoreTypeMappingParameters(clrType, BuildValueTupleConverter(clrType)),
                 BuildStoreType(elementMappings, elementNames)))
     {
         ElementMappings = elementMappings;
@@ -208,4 +210,74 @@ public class ClickHouseTupleTypeMapping : RelationalTypeMapping
                genericDef == typeof(Tuple<,,,,,,>) ||
                genericDef == typeof(Tuple<,,,,,,,>);
     }
+
+    /// <summary>
+    /// Builds a value converter that bridges <see cref="ValueTuple"/> properties to the
+    /// reference <see cref="Tuple"/> instances the driver materialises. Returns null when
+    /// no conversion is required (the property is already a reference Tuple).
+    /// </summary>
+    private static ValueConverter? BuildValueTupleConverter(Type clrType)
+    {
+        if (!IsValueTuple(clrType))
+        {
+            return null;
+        }
+
+        var typeArgs = clrType.GetGenericArguments();
+        var providerType = MakeReferenceTupleType(typeArgs);
+        if (providerType is null)
+        {
+            return null;
+        }
+
+        var toProviderFuncType = typeof(Func<,>).MakeGenericType(clrType, providerType);
+        var fromProviderFuncType = typeof(Func<,>).MakeGenericType(providerType, clrType);
+
+        // Model (ValueTuple<...>) → Provider (Tuple<...>)
+        var modelParam = Expression.Parameter(clrType, "v");
+        var providerCtor = providerType.GetConstructor(typeArgs)
+            ?? throw new InvalidOperationException($"No constructor found for {providerType}");
+        var toProviderArgs = new Expression[typeArgs.Length];
+        for (var i = 0; i < typeArgs.Length; i++)
+        {
+            toProviderArgs[i] = Expression.Field(modelParam, "Item" + (i + 1));
+        }
+        var toProvider = Expression.Lambda(
+            toProviderFuncType,
+            Expression.New(providerCtor, toProviderArgs),
+            modelParam);
+
+        // Provider (Tuple<...>) → Model (ValueTuple<...>)
+        var providerParam = Expression.Parameter(providerType, "v");
+        var modelCtor = clrType.GetConstructor(typeArgs)
+            ?? throw new InvalidOperationException($"No constructor found for {clrType}");
+        var fromProviderArgs = new Expression[typeArgs.Length];
+        for (var i = 0; i < typeArgs.Length; i++)
+        {
+            fromProviderArgs[i] = Expression.Property(providerParam, "Item" + (i + 1));
+        }
+        var fromProvider = Expression.Lambda(
+            fromProviderFuncType,
+            Expression.New(modelCtor, fromProviderArgs),
+            providerParam);
+
+        var converterType = typeof(ValueConverter<,>).MakeGenericType(clrType, providerType);
+        return (ValueConverter)Activator.CreateInstance(
+            converterType,
+            toProvider,
+            fromProvider,
+            null /* mappingHints */)!;
+    }
+
+    private static Type? MakeReferenceTupleType(Type[] typeArgs) => typeArgs.Length switch
+    {
+        1 => typeof(Tuple<>).MakeGenericType(typeArgs),
+        2 => typeof(Tuple<,>).MakeGenericType(typeArgs),
+        3 => typeof(Tuple<,,>).MakeGenericType(typeArgs),
+        4 => typeof(Tuple<,,,>).MakeGenericType(typeArgs),
+        5 => typeof(Tuple<,,,,>).MakeGenericType(typeArgs),
+        6 => typeof(Tuple<,,,,,>).MakeGenericType(typeArgs),
+        7 => typeof(Tuple<,,,,,,>).MakeGenericType(typeArgs),
+        _ => null
+    };
 }

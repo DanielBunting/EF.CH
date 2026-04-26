@@ -1,7 +1,7 @@
-// MaterializedViewSample - Demonstrates materialized views via EF.CH
+// MaterializedViewSample - Demonstrates materialized views via EF.CH (all LINQ).
 //
-// 1. Basic MV         - AsMaterializedViewRaw with GroupBy aggregation
-// 2. Raw SQL MV       - AsMaterializedViewRaw with custom aggregation logic
+// 1. Basic LINQ MV    - AsMaterializedView<T, S>(q => q.GroupBy(...).Select(...))
+// 2. LINQ MV + filter - AsMaterializedView<T, S> with toStartOfHour + Count + Avg + CountIf
 // 3. Null engine      - UseNullEngine as MV source (data discarded after MV processes)
 // 4. Populate option  - Backfill from existing data when creating the view
 
@@ -10,7 +10,7 @@ using Microsoft.EntityFrameworkCore;
 using Testcontainers.ClickHouse;
 
 var container = new ClickHouseBuilder()
-    .WithImage("clickhouse/clickhouse-server:latest")
+    .WithImage("clickhouse/clickhouse-server:25.6")
     .Build();
 
 Console.WriteLine("Starting ClickHouse container...");
@@ -25,7 +25,7 @@ try
     Console.WriteLine();
 
     await DemoBasicMaterializedView(connectionString);
-    await DemoRawSqlMaterializedView(connectionString);
+    await DemoLinqWithFilterAndAggregates(connectionString);
     await DemoNullEngineSource(connectionString);
     await DemoPopulateOption(connectionString);
 
@@ -44,7 +44,7 @@ finally
 static async Task DemoBasicMaterializedView(string connectionString)
 {
     Console.WriteLine("--- 1. Basic Materialized View ---");
-    Console.WriteLine("AsMaterializedViewRaw with GroupBy aggregation for daily order summaries.");
+    Console.WriteLine("AsMaterializedView<T, S>(LINQ) with GroupBy aggregation for daily order summaries.");
     Console.WriteLine("EnsureCreatedAsync generates the source table, target table, and view.");
     Console.WriteLine();
 
@@ -96,12 +96,12 @@ static async Task DemoBasicMaterializedView(string connectionString)
 }
 
 // ---------------------------------------------------------------------------
-// 2. Raw SQL Materialized View
+// 2. LINQ Materialized View with filter + aggregates
 // ---------------------------------------------------------------------------
-static async Task DemoRawSqlMaterializedView(string connectionString)
+static async Task DemoLinqWithFilterAndAggregates(string connectionString)
 {
-    Console.WriteLine("--- 2. Raw SQL Materialized View ---");
-    Console.WriteLine("AsMaterializedViewRaw for full control over the SELECT transformation.");
+    Console.WriteLine("--- 2. LINQ MV with filter + aggregates ---");
+    Console.WriteLine("AsMaterializedView<T, S>(LINQ) using toStartOfHour, Count, Avg and CountIf.");
     Console.WriteLine();
 
     await using var context = new RawMvContext(connectionString);
@@ -136,7 +136,7 @@ static async Task DemoRawSqlMaterializedView(string connectionString)
         .ThenBy(s => s.Path)
         .ToListAsync();
 
-    Console.WriteLine("Hourly summaries (from raw SQL materialized view):");
+    Console.WriteLine("Hourly summaries (from LINQ materialized view):");
     foreach (var s in summaries)
     {
         Console.WriteLine($"  Hour={s.Hour:HH:mm}, Path={s.Path}, " +
@@ -326,18 +326,17 @@ public class LinqMvContext(string connectionString) : DbContext
             entity.HasNoKey();
             entity.UseSummingMergeTree(x => new { x.Date, x.ProductId });
 
-            // MV aggregates orders into daily summaries per product
-            entity.AsMaterializedViewRaw(
-                sourceTable: "LinqOrders",
-                selectSql: @"SELECT
-                    toDate(""OrderDate"") AS ""Date"",
-                    ""ProductId"",
-                    sum(""Quantity"") AS ""TotalQuantity"",
-                    sum(""Revenue"") AS ""TotalRevenue"",
-                    count() AS ""OrderCount""
-                FROM ""LinqOrders""
-                GROUP BY ""Date"", ""ProductId""",
-                populate: false);
+            // MV aggregates orders into daily summaries per product, defined in LINQ.
+            entity.AsMaterializedView<LinqDailySummary, LinqOrder>(orders => orders
+                .GroupBy(o => new { Date = o.OrderDate.Date, o.ProductId })
+                .Select(g => new LinqDailySummary
+                {
+                    Date = g.Key.Date,
+                    ProductId = g.Key.ProductId,
+                    TotalQuantity = (ulong)g.Sum(o => o.Quantity),
+                    TotalRevenue = g.Sum(o => o.Revenue),
+                    OrderCount = (ulong)g.Count(),
+                }));
         });
     }
 }
@@ -386,17 +385,17 @@ public class RawMvContext(string connectionString) : DbContext
             entity.HasNoKey();
             entity.UseSummingMergeTree(x => new { x.Hour, x.Path });
 
-            // Raw SQL MV: full control over the SELECT transformation
-            entity.AsMaterializedViewRaw(
-                sourceTable: "AccessLogs",
-                selectSql: @"SELECT
-                    toStartOfHour(RequestedAt) AS Hour,
-                    Path,
-                    count() AS RequestCount,
-                    avg(ResponseTimeMs) AS AvgResponseMs,
-                    countIf(StatusCode >= 500) AS ErrorCount
-                FROM AccessLogs
-                GROUP BY Hour, Path");
+            // Typed MV with a hour-granular bucket + countIf.
+            entity.AsMaterializedView<HourlySummary, AccessLog>(logs => logs
+                .GroupBy(x => new { Hour = EF.CH.Extensions.ClickHouseFunctions.ToStartOfHour(x.RequestedAt), x.Path })
+                .Select(g => new HourlySummary
+                {
+                    Hour = g.Key.Hour,
+                    Path = g.Key.Path,
+                    RequestCount = (ulong)g.Count(),
+                    AvgResponseMs = g.Average(x => (double)x.ResponseTimeMs),
+                    ErrorCount = (ulong)EF.CH.Extensions.ClickHouseAggregates.CountIf(g, x => x.StatusCode >= 500),
+                }));
         });
     }
 }
@@ -442,15 +441,15 @@ public class NullEngineMvContext(string connectionString) : DbContext
             entity.HasNoKey();
             entity.UseSummingMergeTree(x => new { x.MetricName, x.MinuteSlot });
 
-            entity.AsMaterializedViewRaw(
-                sourceTable: "RawMetrics",
-                selectSql: @"SELECT
-                    MetricName,
-                    toStartOfMinute(Timestamp) AS MinuteSlot,
-                    sum(Value) AS ValueSum,
-                    count() AS ValueCount
-                FROM RawMetrics
-                GROUP BY MetricName, MinuteSlot");
+            entity.AsMaterializedView<MetricsSummary, RawMetric>(raw => raw
+                .GroupBy(x => new { x.MetricName, MinuteSlot = EF.CH.Extensions.ClickHouseFunctions.ToStartOfMinute(x.Timestamp) })
+                .Select(g => new MetricsSummary
+                {
+                    MetricName = g.Key.MetricName,
+                    MinuteSlot = g.Key.MinuteSlot,
+                    ValueSum = g.Sum(x => x.Value),
+                    ValueCount = (ulong)g.Count(),
+                }));
         });
     }
 }
@@ -497,14 +496,14 @@ public class PopulateMvContext(string connectionString) : DbContext
             entity.HasNoKey();
             entity.UseSummingMergeTree(x => new { x.Date });
 
-            entity.AsMaterializedViewRaw(
-                sourceTable: "PopulateOrders",
-                selectSql: @"SELECT
-                    toDate(OrderDate) AS Date,
-                    sum(Amount) AS TotalAmount,
-                    count() AS OrderCount
-                FROM PopulateOrders
-                GROUP BY Date",
+            entity.AsMaterializedView<PopulateSummary, PopulateOrder>(orders => orders
+                .GroupBy(o => o.OrderDate.Date)
+                .Select(g => new PopulateSummary
+                {
+                    Date = g.Key,
+                    TotalAmount = g.Sum(o => o.Amount),
+                    OrderCount = (ulong)g.Count(),
+                }),
                 populate: true);
         });
     }

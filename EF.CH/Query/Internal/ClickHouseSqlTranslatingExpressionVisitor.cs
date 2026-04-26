@@ -17,6 +17,7 @@ public class ClickHouseSqlTranslatingExpressionVisitor : RelationalSqlTranslatin
 {
     private readonly ClickHouseSqlExpressionFactory _sqlExpressionFactory;
     private readonly IRelationalTypeMappingSource _typeMappingSource;
+    private readonly ClickHouseQueryCompilationContextOptions _options;
 
     public ClickHouseSqlTranslatingExpressionVisitor(
         RelationalSqlTranslatingExpressionVisitorDependencies dependencies,
@@ -26,6 +27,7 @@ public class ClickHouseSqlTranslatingExpressionVisitor : RelationalSqlTranslatin
     {
         _sqlExpressionFactory = (ClickHouseSqlExpressionFactory)dependencies.SqlExpressionFactory;
         _typeMappingSource = dependencies.TypeMappingSource;
+        _options = ((RelationalQueryCompilationContext)queryCompilationContext).QueryCompilationContextOptions();
     }
 
     /// <summary>
@@ -87,6 +89,25 @@ public class ClickHouseSqlTranslatingExpressionVisitor : RelationalSqlTranslatin
             IsWindowBuilderType(unaryExpression.Operand.Type))
         {
             return TranslateWindowFunctionFromBuilder(unaryExpression.Operand);
+        }
+
+        // arr.Length is emitted by the C# compiler as ArrayLength, not a member access.
+        // Translate to toInt32(length(arr)) — same shape the array member translator
+        // produces for its (now-unreachable) Array.Length branch.
+        if (unaryExpression.NodeType == ExpressionType.ArrayLength)
+        {
+            var operand = Visit(unaryExpression.Operand);
+            if (operand is SqlExpression sqlOperand)
+            {
+                return _sqlExpressionFactory.WrapWithClrCast(
+                    _sqlExpressionFactory.Function(
+                        "length",
+                        new[] { sqlOperand },
+                        nullable: true,
+                        argumentsPropagateNullability: new[] { true },
+                        typeof(ulong)),
+                    typeof(int));
+            }
         }
 
         // Handle NOT operations
@@ -306,7 +327,7 @@ public class ClickHouseSqlTranslatingExpressionVisitor : RelationalSqlTranslatin
             ? typeof(Nullable<>).MakeGenericType(nonNullableResultType)
             : nonNullableResultType;
 
-        return new ClickHouseWindowFunctionExpression(
+        var windowExpr = new ClickHouseWindowFunctionExpression(
             functionName,
             valueArgs,
             partitionBySql,
@@ -315,6 +336,15 @@ public class ClickHouseSqlTranslatingExpressionVisitor : RelationalSqlTranslatin
             nonNullableResultType,
             nullableResultType,
             _typeMappingSource.FindMapping(nonNullableResultType));
+
+        // ClickHouse's row_number() returns UInt64, but Window.RowNumber() declares
+        // long — wrap in toInt64 so the row reader sees Int64 as the projection type.
+        if (functionName == "row_number" && nonNullableResultType == typeof(long))
+        {
+            return _sqlExpressionFactory.WrapWithClrCast(windowExpr, typeof(long));
+        }
+
+        return windowExpr;
     }
 
     /// <summary>
@@ -502,6 +532,15 @@ public class ClickHouseSqlTranslatingExpressionVisitor : RelationalSqlTranslatin
             return TranslateRawSql(methodCallExpression);
         }
 
+        // PreWhereMarker is the rewrite landing for PreWhere(): lift the inner predicate
+        // into options.PreWhereExpression and substitute a constant true so the
+        // surrounding Where contributes no SQL.
+        if (declaringType == typeof(ClickHouseFunctions) &&
+            method.Name == nameof(ClickHouseFunctions.PreWhereMarker))
+        {
+            return TranslatePreWhereMarker(methodCallExpression);
+        }
+
         // Handle ToStartOfInterval — extract value/unit from expression tree to build INTERVAL literal
         if (declaringType == typeof(ClickHouseDateTruncDbFunctionsExtensions)
             && method.Name == nameof(ClickHouseDateTruncDbFunctionsExtensions.ToStartOfInterval))
@@ -523,6 +562,33 @@ public class ClickHouseSqlTranslatingExpressionVisitor : RelationalSqlTranslatin
         }
 
         return base.VisitMethodCall(methodCallExpression);
+    }
+
+    /// <summary>
+    /// Lifts a <see cref="ClickHouseFunctions.PreWhereMarker"/> call into the query options'
+    /// <see cref="ClickHouseQueryCompilationContextOptions.PreWhereExpression"/> and returns
+    /// a SQL constant true. The surrounding WHERE clause then contributes no useful SQL,
+    /// while the postprocessor → SQL generator pipeline emits the captured predicate as PREWHERE.
+    /// </summary>
+    private Expression TranslatePreWhereMarker(MethodCallExpression methodCallExpression)
+    {
+        var inner = Visit(methodCallExpression.Arguments[0]);
+        if (inner is not SqlExpression innerSql)
+        {
+            throw new InvalidOperationException(
+                "Could not translate PREWHERE predicate to SQL. " +
+                "Ensure all expressions are server-evaluable.");
+        }
+
+        if (_options.PreWhereExpression != null)
+        {
+            throw new InvalidOperationException(
+                "PreWhere can only be called once per query. Combine conditions in a single PreWhere call.");
+        }
+
+        _options.PreWhereExpression = innerSql;
+
+        return _sqlExpressionFactory.Constant(true, _typeMappingSource.FindMapping(typeof(bool)));
     }
 
     /// <summary>
@@ -932,7 +998,7 @@ public class ClickHouseSqlTranslatingExpressionVisitor : RelationalSqlTranslatin
             ? typeof(Nullable<>).MakeGenericType(resultType)
             : resultType;
 
-        return new ClickHouseWindowFunctionExpression(
+        var windowExpr = new ClickHouseWindowFunctionExpression(
             functionName,
             valueArgs,
             partitionBySql,
@@ -941,6 +1007,15 @@ public class ClickHouseSqlTranslatingExpressionVisitor : RelationalSqlTranslatin
             resultType,
             nullableResultType,
             _typeMappingSource.FindMapping(resultType));
+
+        // ClickHouse's row_number() returns UInt64, but Window.RowNumber() declares
+        // long — wrap in toInt64 so the row reader sees Int64 as the projection type.
+        if (functionName == "row_number" && resultType == typeof(long))
+        {
+            return _sqlExpressionFactory.WrapWithClrCast(windowExpr, typeof(long));
+        }
+
+        return windowExpr;
     }
 
     /// <summary>
@@ -1223,13 +1298,15 @@ public class ClickHouseSqlTranslatingExpressionVisitor : RelationalSqlTranslatin
                 $"Could not translate argument '{argument}' to SQL expression.");
         }
 
-        // Ensure constants have type mappings
-        if (sqlExpression is SqlConstantExpression constant && constant.TypeMapping == null && constant.Value != null)
+        // Backfill type mappings on any null-mapped node so the SQL nullability
+        // processor doesn't blow up on bare intermediate nodes (e.g. an implicit
+        // Convert(int→long) inserted by the C# compiler for Sum<long>(intColumn, …)).
+        if (sqlExpression.TypeMapping is null)
         {
-            var typeMapping = _typeMappingSource.FindMapping(constant.Type);
-            if (typeMapping != null)
+            var typeMapping = _typeMappingSource.FindMapping(sqlExpression.Type);
+            if (typeMapping is not null)
             {
-                return _sqlExpressionFactory.Constant(constant.Value, typeMapping);
+                return _sqlExpressionFactory.ApplyTypeMapping(sqlExpression, typeMapping);
             }
         }
 

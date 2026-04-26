@@ -44,8 +44,11 @@ public class GroupByModifierTests
     }
 
     [Fact]
-    public void WithTotals_GeneratesTotalsClause()
+    public void WithTotals_EmitsGroupingSetsWithEmptyTotals()
     {
+        // WITH TOTALS is rewritten to GROUPING SETS so the grand-total row
+        // streams over RowBinary (the default driver format), which silently
+        // drops the WITH TOTALS extra row.
         using var context = CreateContext();
 
         var query = context.Sales
@@ -56,8 +59,9 @@ public class GroupByModifierTests
         var sql = query.ToQueryString();
         Console.WriteLine("Generated SQL: " + sql);
 
-        Assert.Contains("GROUP BY", sql);
-        Assert.Contains("WITH TOTALS", sql);
+        Assert.Contains("GROUP BY GROUPING SETS ((", sql);
+        Assert.Contains("), ())", sql);
+        Assert.DoesNotContain("WITH TOTALS", sql);
     }
 
     [Fact]
@@ -124,12 +128,11 @@ public class GroupByModifierTests
         Console.WriteLine("Generated SQL: " + sql);
 
         Assert.Contains("WHERE", sql);
-        Assert.Contains("GROUP BY", sql);
-        Assert.Contains("WITH TOTALS", sql);
+        Assert.Contains("GROUP BY GROUPING SETS", sql);
 
         // Verify correct ordering: WHERE before GROUP BY
-        var whereIndex = sql.IndexOf("WHERE");
-        var groupByIndex = sql.IndexOf("GROUP BY");
+        var whereIndex = sql.IndexOf("WHERE", StringComparison.Ordinal);
+        var groupByIndex = sql.IndexOf("GROUP BY", StringComparison.Ordinal);
         Assert.True(whereIndex < groupByIndex, "WHERE should come before GROUP BY");
     }
 

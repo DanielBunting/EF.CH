@@ -30,6 +30,12 @@ public static class ClickHouseEngineNames
     public const string Distributed = "Distributed";
     public const string KeeperMap = "KeeperMap";
 
+    // External / integration engines.
+    public const string PostgreSQL = "PostgreSQL";
+    public const string MySQL = "MySQL";
+    public const string Redis = "Redis";
+    public const string ODBC = "ODBC";
+
     private const string ReplicatedPrefix = "Replicated";
 
     public static bool IsMergeTreeFamily(string engine)

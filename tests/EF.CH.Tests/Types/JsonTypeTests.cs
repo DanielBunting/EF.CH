@@ -18,7 +18,7 @@ public class FluentJsonEntity
 {
     public Guid Id { get; set; }
     public JsonElement Metadata { get; set; }
-    public JsonElement? OptionalData { get; set; }  // Nullable JsonElement (not JsonDocument - avoids EF snapshot issues)
+    public JsonElement? OptionalData { get; set; }
 }
 
 /// <summary>
@@ -320,6 +320,60 @@ public class JsonTypeTests
 
     #endregion
 
+    #region JsonDocument Mapping Tests
+
+    [Fact]
+    public void TypeMappingSource_JsonDocumentProperty_GetsJsonDocumentKeyedMapping()
+    {
+        using var context = CreateContext<JsonDocumentContext>();
+
+        var entityType = context.Model.FindEntityType(typeof(JsonDocumentEntity))!;
+        var property = entityType.FindProperty(nameof(JsonDocumentEntity.Data))!;
+        var mapping = property.GetTypeMapping();
+
+        Assert.Equal(typeof(JsonDocument), mapping.ClrType);
+        Assert.IsType<ClickHouseJsonDocumentValueConverter>(mapping.Converter);
+        Assert.Equal(typeof(string), mapping.Converter!.ProviderClrType);
+    }
+
+    [Fact]
+    public void JsonDocumentValueConverter_RoundTripsThroughRawJson()
+    {
+        var converter = new ClickHouseJsonDocumentValueConverter();
+        using var doc = JsonDocument.Parse("""{"name":"alpha","score":42}""");
+
+        var json = (string)converter.ConvertToProvider(doc)!;
+        using var parsed = JsonDocument.Parse(json);
+        Assert.Equal("alpha", parsed.RootElement.GetProperty("name").GetString());
+
+        var roundTripped = (JsonDocument)converter.ConvertFromProvider(json)!;
+        Assert.Equal(42, roundTripped.RootElement.GetProperty("score").GetInt32());
+    }
+
+    public class JsonDocumentEntity
+    {
+        public Guid Id { get; set; }
+        public JsonDocument Data { get; set; } = JsonDocument.Parse("{}");
+    }
+
+    public class JsonDocumentContext : DbContext
+    {
+        public JsonDocumentContext(DbContextOptions<JsonDocumentContext> options) : base(options) { }
+        public DbSet<JsonDocumentEntity> Entities => Set<JsonDocumentEntity>();
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<JsonDocumentEntity>(e =>
+            {
+                e.HasKey(x => x.Id);
+                e.ToTable("json_document_entities");
+                e.UseMergeTree(x => x.Id);
+                e.Property(x => x.Data).HasColumnType("JSON");
+            });
+        }
+    }
+
+    #endregion
+
     #region JSON Path Expression Tests
 
     [Fact]
@@ -395,7 +449,7 @@ public class JsonTypeIntegrationTests : IAsyncLifetime
         """;
 
     private readonly ClickHouseContainer _container = new ClickHouseBuilder()
-        .WithImage("clickhouse/clickhouse-server:latest")
+        .WithImage("clickhouse/clickhouse-server:25.6")
         .WithResourceMapping(
             System.Text.Encoding.UTF8.GetBytes(UsersConfig),
             "/etc/clickhouse-server/users.d/json.xml")

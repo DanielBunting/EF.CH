@@ -1,3 +1,4 @@
+using System.Linq.Expressions;
 using System.Reflection;
 using EF.CH.Extensions;
 using Microsoft.EntityFrameworkCore;
@@ -183,6 +184,32 @@ public class ClickHouseUtilityMethodTranslator : IMethodCallTranslator
                 typeof(string));
         }
 
+        // DateAdd / DateSub: ClickHouse 24+ no longer accepts the dynamic-unit
+        // form `date_add(unit, n, dt)` — the parser rewrites it to `plus(...)`
+        // which only takes 2 args. Emit `dt ± toIntervalUnit(n)` instead.
+        // The unit arg is at slot 0 by method signature, so extract it
+        // unconditionally (irrespective of how EF wrapped it in CAST/Convert).
+        if (method.DeclaringType == typeof(ClickHouseDateTruncDbFunctionsExtensions)
+            && (method.Name == nameof(ClickHouseDateTruncDbFunctionsExtensions.DateAdd)
+             || method.Name == nameof(ClickHouseDateTruncDbFunctionsExtensions.DateSub))
+            && functionArguments.Length == 3
+            && TryExtractKnownIntervalUnit(functionArguments[0], out var unitArg))
+        {
+            var op = method.Name == nameof(ClickHouseDateTruncDbFunctionsExtensions.DateAdd) ? "+" : "-";
+            var intervalFn = "toInterval" + char.ToUpperInvariant(unitArg.ToString()[0]) + unitArg.ToString().Substring(1);
+            var interval = _sqlExpressionFactory.Function(
+                intervalFn,
+                new[] { functionArguments[1] },
+                nullable: true,
+                argumentsPropagateNullability: new[] { true },
+                typeof(object));
+            return _sqlExpressionFactory.MakeBinary(
+                op == "+" ? ExpressionType.Add : ExpressionType.Subtract,
+                functionArguments[2],
+                interval,
+                typeMapping: null)!;
+        }
+
         // Convert ClickHouseIntervalUnit enum args to lowercase string constants for SQL
         if (method.DeclaringType == typeof(ClickHouseDateTruncDbFunctionsExtensions))
         {
@@ -194,24 +221,130 @@ public class ClickHouseUtilityMethodTranslator : IMethodCallTranslator
             return null;
         }
 
-        return _sqlExpressionFactory.Function(
+        var call = _sqlExpressionFactory.Function(
             clickHouseFunction,
             functionArguments,
             nullable: true,
             argumentsPropagateNullability: nullability,
             method.ReturnType);
+
+        // Some ClickHouse functions return a type that doesn't materialise to the
+        // C# method's declared return type — toUnixTimestamp/toRelativeMonthNum
+        // return UInt32/Int32 but the C# methods are declared as long;
+        // yandexConsistentHash returns UInt16 for ≤256 buckets but the C# method
+        // is uint. Wrap with the matching CH cast so the row reader sees the
+        // expected width and signedness.
+        if (NarrowingFunctions.Contains(clickHouseFunction))
+        {
+            return _sqlExpressionFactory.WrapWithClrCast(call, method.ReturnType);
+        }
+
+        return call;
     }
+
+    /// <summary>
+    /// ClickHouse functions known to return a type narrower or differently-signed
+    /// than the C# method signature declares. The wrapper cast chosen matches
+    /// <c>method.ReturnType</c>.
+    /// </summary>
+    private static readonly HashSet<string> NarrowingFunctions = new(StringComparer.Ordinal)
+    {
+        "toUnixTimestamp",
+        "toRelativeYearNum",
+        "toRelativeMonthNum",
+        "toRelativeWeekNum",
+        "toRelativeDayNum",
+        "toRelativeHourNum",
+        "toRelativeMinuteNum",
+        "toRelativeSecondNum",
+        "yandexConsistentHash",
+    };
 
     private SqlExpression[] ConvertIntervalUnitArgs(SqlExpression[] args)
     {
         for (var i = 0; i < args.Length; i++)
         {
-            if (args[i] is SqlConstantExpression { Value: ClickHouseIntervalUnit unit })
+            if (TryExtractIntervalUnit(args[i], out var unit))
             {
                 args[i] = _sqlExpressionFactory.Constant(unit.ToString().ToLowerInvariant());
             }
         }
 
         return args;
+    }
+
+    /// <summary>
+    /// Recognises a ClickHouseIntervalUnit value through the various shapes
+    /// EF Core may wrap it in: a plain SqlConstantExpression, an int constant
+    /// (when the enum was flattened by the SQL pipeline), or a Convert/CAST
+    /// wrapping either of the above (the closure-captured Theory parameter case).
+    /// </summary>
+    /// <summary>
+    /// Like <see cref="TryExtractIntervalUnit"/> but skips the unit-typing
+    /// guard, intended for slots where the method signature guarantees the
+    /// arg is a unit (e.g. DateAdd's first user arg).
+    /// </summary>
+    private static bool TryExtractKnownIntervalUnit(SqlExpression expr, out ClickHouseIntervalUnit unit)
+    {
+        unit = default;
+        var unwrap = expr;
+        // Unwrap SqlUnaryExpression(Convert) layers and any SQL "_CAST" function
+        // wrapping (EF Core uses both depending on whether the cast came from
+        // an explicit Expression.Convert vs an enum-to-int promotion).
+        while (true)
+        {
+            if (unwrap is SqlUnaryExpression { OperatorType: ExpressionType.Convert, Operand: var inner })
+            {
+                unwrap = inner;
+                continue;
+            }
+            if (unwrap is SqlFunctionExpression { Name: "_CAST" or "CAST", Arguments: { Count: >= 1 } argv })
+            {
+                unwrap = argv[0];
+                continue;
+            }
+            break;
+        }
+        if (unwrap is SqlConstantExpression { Value: ClickHouseIntervalUnit u })
+        {
+            unit = u;
+            return true;
+        }
+        if (unwrap is SqlConstantExpression { Value: int i }
+            && Enum.IsDefined(typeof(ClickHouseIntervalUnit), i))
+        {
+            unit = (ClickHouseIntervalUnit)i;
+            return true;
+        }
+        return false;
+    }
+
+    private static bool TryExtractIntervalUnit(SqlExpression expr, out ClickHouseIntervalUnit unit)
+    {
+        unit = default;
+        // Only consider expressions whose declared CLR type is ClickHouseIntervalUnit
+        // (or its underlying int after Convert) — otherwise the literal `1` argument
+        // to DateAdd(Day, 1, dt) would be misread as the unit Minute (enum value 1).
+        var unwrap = expr;
+        var isUnitTyped = expr.Type == typeof(ClickHouseIntervalUnit) || expr.Type == typeof(ClickHouseIntervalUnit?);
+        while (unwrap is SqlUnaryExpression { OperatorType: ExpressionType.Convert, Operand: var inner })
+        {
+            if (unwrap.Type == typeof(ClickHouseIntervalUnit) || unwrap.Type == typeof(ClickHouseIntervalUnit?))
+                isUnitTyped = true;
+            unwrap = inner;
+        }
+        if (unwrap is SqlConstantExpression { Value: ClickHouseIntervalUnit u })
+        {
+            unit = u;
+            return true;
+        }
+        if (isUnitTyped
+            && unwrap is SqlConstantExpression { Value: int i }
+            && Enum.IsDefined(typeof(ClickHouseIntervalUnit), i))
+        {
+            unit = (ClickHouseIntervalUnit)i;
+            return true;
+        }
+        return false;
     }
 }

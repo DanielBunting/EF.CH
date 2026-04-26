@@ -204,10 +204,13 @@ public class ClickHouseStringMethodTranslator : IMethodCallTranslator
             }
 
             // IndexOf: positionUTF8(instance, substring) - 1
-            // ClickHouse returns 1-based, .NET expects 0-based
+            // ClickHouse returns 1-based, .NET expects 0-based.
+            // positionUTF8 returns UInt64; subtracting yields a wider type that the
+            // row reader cannot deliver as Int32. Wrap the whole expression in
+            // toInt32(...) so the projection column is always Int32.
             if (method == IndexOfMethod)
             {
-                return _sqlExpressionFactory.Subtract(
+                var positionMinusOne = _sqlExpressionFactory.Subtract(
                     _sqlExpressionFactory.Function(
                         "positionUTF8",
                         new[] { instance, arguments[0] },
@@ -215,6 +218,7 @@ public class ClickHouseStringMethodTranslator : IMethodCallTranslator
                         argumentsPropagateNullability: new[] { true, true },
                         typeof(int)),
                     _sqlExpressionFactory.Constant(1));
+                return _sqlExpressionFactory.WrapWithClrCast(positionMinusOne, typeof(int));
             }
         }
 
@@ -402,15 +406,17 @@ public class ClickHouseStringMemberTranslator : IMemberTranslator
             return null;
         }
 
-        // Length: char_length(instance) or lengthUTF8(instance)
+        // Length: char_length(instance) — CH returns UInt64; wrap in toInt32 to match
+        // the .NET `int` return type the row reader expects.
         if (member == LengthMember)
         {
-            return _sqlExpressionFactory.Function(
+            var charLength = _sqlExpressionFactory.Function(
                 "char_length",
                 new[] { instance },
                 nullable: true,
                 argumentsPropagateNullability: new[] { true },
-                typeof(int));
+                typeof(ulong));
+            return _sqlExpressionFactory.WrapWithClrCast(charLength, typeof(int));
         }
 
         return null;

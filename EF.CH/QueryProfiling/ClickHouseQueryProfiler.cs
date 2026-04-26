@@ -117,12 +117,24 @@ public sealed class ClickHouseQueryProfiler : IClickHouseQueryProfiler
         var sql = query.ToQueryString();
         var stopwatch = Stopwatch.StartNew();
 
-        // Execute the actual query
+        // Open a stats-capture scope. The interceptor running deeper in the call
+        // stack will mutate this container as commands execute.
+        var statsContainer = ClickHouseQueryStatsInterceptor.Begin();
+
         var results = await query.ToListAsync(cancellationToken);
 
-        // Try to retrieve statistics from system.query_log
-        // Note: This is best-effort as ClickHouse logs asynchronously
-        var statistics = await TryGetQueryStatisticsAsync(cancellationToken);
+        // The interceptor stored the driver-level QueryStats parsed from the
+        // X-ClickHouse-Summary response header. Map it onto our public shape.
+        var driverStats = statsContainer.Value;
+        var statistics = driverStats is null
+            ? null
+            : new QueryStatistics
+            {
+                RowsRead = driverStats.ReadRows,
+                BytesRead = driverStats.ReadBytes,
+                QueryDurationMs = driverStats.ElapsedNs / 1_000_000.0,
+                // Memory stats aren't carried by X-ClickHouse-Summary; left at default 0.
+            };
 
         stopwatch.Stop();
 
@@ -405,59 +417,6 @@ public sealed class ClickHouseQueryProfiler : IClickHouseQueryProfiler
         }
 
         return settings.Count > 0 ? " " + string.Join(", ", settings) : string.Empty;
-    }
-
-    private async Task<QueryStatistics?> TryGetQueryStatisticsAsync(CancellationToken cancellationToken)
-    {
-        try
-        {
-            // Wait briefly for the query log to be flushed
-            await Task.Delay(100, cancellationToken);
-
-            await _relationalConnection.OpenAsync(cancellationToken);
-            try
-            {
-                await using var command = _relationalConnection.DbConnection.CreateCommand();
-                command.CommandText = """
-                    SELECT
-                        read_rows,
-                        read_bytes,
-                        query_duration_ms,
-                        memory_usage,
-                        peak_memory_usage
-                    FROM system.query_log
-                    WHERE type = 'QueryFinish'
-                      AND query_kind = 'Select'
-                      AND event_time >= now() - INTERVAL 5 SECOND
-                      AND query NOT LIKE '%system.query_log%'
-                    ORDER BY event_time DESC
-                    LIMIT 1
-                    """;
-
-                await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-                if (await reader.ReadAsync(cancellationToken))
-                {
-                    return new QueryStatistics
-                    {
-                        RowsRead = reader.GetInt64(0),
-                        BytesRead = reader.GetInt64(1),
-                        QueryDurationMs = reader.GetDouble(2),
-                        MemoryUsage = reader.GetInt64(3),
-                        PeakMemoryUsage = reader.GetInt64(4)
-                    };
-                }
-            }
-            finally
-            {
-                await _relationalConnection.CloseAsync();
-            }
-        }
-        catch
-        {
-            // Statistics retrieval is best-effort; swallow exceptions
-        }
-
-        return null;
     }
 
     /// <summary>

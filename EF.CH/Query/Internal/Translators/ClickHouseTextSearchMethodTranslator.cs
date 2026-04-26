@@ -1,9 +1,11 @@
 using System.Reflection;
 using EF.CH.Extensions;
+using EF.CH.Query.Internal.Expressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Query.SqlExpressions;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace EF.CH.Query.Internal.Translators;
 
@@ -13,6 +15,7 @@ namespace EF.CH.Query.Internal.Translators;
 public class ClickHouseTextSearchMethodTranslator : IMethodCallTranslator
 {
     private readonly ClickHouseSqlExpressionFactory _sqlExpressionFactory;
+    private readonly IRelationalTypeMappingSource _typeMappingSource;
 
     /// <summary>
     /// Maps C# method names to ClickHouse SQL function names.
@@ -20,11 +23,10 @@ public class ClickHouseTextSearchMethodTranslator : IMethodCallTranslator
     /// </summary>
     private static readonly Dictionary<string, string> FunctionMappings = new()
     {
-        // Token functions
+        // Token functions (HasAnyToken / HasAllTokens are special-cased — ClickHouse 25.6
+        // dropped them, so they're emitted as arrayExists / arrayAll over hasToken).
         [nameof(ClickHouseTextSearchDbFunctionsExtensions.HasToken)] = "hasToken",
         [nameof(ClickHouseTextSearchDbFunctionsExtensions.HasTokenCaseInsensitive)] = "hasTokenCaseInsensitive",
-        [nameof(ClickHouseTextSearchDbFunctionsExtensions.HasAnyToken)] = "hasAnyToken",
-        [nameof(ClickHouseTextSearchDbFunctionsExtensions.HasAllTokens)] = "hasAllTokens",
 
         // Multi-search functions
         [nameof(ClickHouseTextSearchDbFunctionsExtensions.MultiSearchAny)] = "multiSearchAny",
@@ -64,9 +66,12 @@ public class ClickHouseTextSearchMethodTranslator : IMethodCallTranslator
         [nameof(ClickHouseTextSearchDbFunctionsExtensions.SplitByNonAlpha)] = "splitByNonAlpha",
     };
 
-    public ClickHouseTextSearchMethodTranslator(ClickHouseSqlExpressionFactory sqlExpressionFactory)
+    public ClickHouseTextSearchMethodTranslator(
+        ClickHouseSqlExpressionFactory sqlExpressionFactory,
+        IRelationalTypeMappingSource typeMappingSource)
     {
         _sqlExpressionFactory = sqlExpressionFactory;
+        _typeMappingSource = typeMappingSource;
     }
 
     public SqlExpression? Translate(
@@ -78,6 +83,16 @@ public class ClickHouseTextSearchMethodTranslator : IMethodCallTranslator
         if (method.DeclaringType != typeof(ClickHouseTextSearchDbFunctionsExtensions))
         {
             return null;
+        }
+
+        if (method.Name == nameof(ClickHouseTextSearchDbFunctionsExtensions.HasAnyToken))
+        {
+            return TranslateTokenSetMembership("hasAny", arguments);
+        }
+
+        if (method.Name == nameof(ClickHouseTextSearchDbFunctionsExtensions.HasAllTokens))
+        {
+            return TranslateTokenSetMembership("hasAll", arguments);
         }
 
         if (!FunctionMappings.TryGetValue(method.Name, out var clickHouseFunction))
@@ -95,5 +110,38 @@ public class ClickHouseTextSearchMethodTranslator : IMethodCallTranslator
             nullable: true,
             argumentsPropagateNullability: nullability,
             method.ReturnType);
+    }
+
+    /// <summary>
+    /// Replacement for ClickHouse's dropped <c>hasAnyToken</c> / <c>hasAllTokens</c>:
+    /// emits <c>hasAny(splitByNonAlpha(haystack), tokens)</c> / <c>hasAll(...)</c>.
+    /// <c>splitByNonAlpha</c> produces the same token boundaries the dropped functions used,
+    /// and <c>hasAny</c> / <c>hasAll</c> accept runtime token arrays — unlike <c>hasToken</c>,
+    /// whose second argument must be a parse-time constant.
+    /// </summary>
+    private SqlExpression TranslateTokenSetMembership(string higherOrderFn, IReadOnlyList<SqlExpression> arguments)
+    {
+        // arguments[0] is the DbFunctions instance (ignored), [1] is haystack, [2] is tokens[].
+        var haystack = arguments[1];
+        var tokens = arguments[2];
+
+        var stringArrayMapping = _typeMappingSource.FindMapping(typeof(string[]));
+        var boolMapping = _typeMappingSource.FindMapping(typeof(bool));
+
+        var split = _sqlExpressionFactory.Function(
+            "splitByNonAlpha",
+            new[] { haystack },
+            nullable: true,
+            argumentsPropagateNullability: new[] { true },
+            typeof(string[]),
+            stringArrayMapping);
+
+        return _sqlExpressionFactory.Function(
+            higherOrderFn,
+            new SqlExpression[] { split, tokens },
+            nullable: true,
+            argumentsPropagateNullability: new[] { true, true },
+            typeof(bool),
+            boolMapping);
     }
 }

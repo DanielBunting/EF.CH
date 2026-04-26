@@ -1,5 +1,6 @@
 using System.Linq.Expressions;
 using EF.CH.Extensions;
+using EF.CH.Infrastructure;
 using Microsoft.EntityFrameworkCore.Query;
 
 namespace EF.CH.Query.Internal;
@@ -44,6 +45,7 @@ public class ClickHouseEvaluatableExpressionFilterPlugin : IEvaluatableExpressio
         {
             return false;
         }
+
 
         if (expression is MethodCallExpression methodCall)
         {
@@ -111,6 +113,23 @@ public class ClickHouseEvaluatableExpressionFilterPlugin : IEvaluatableExpressio
             // Never evaluate Keeper-backed scalar stubs (e.g. GenerateSerialID) -
             // they must be translated to SQL, not run client-side
             if (declaringType == typeof(ClickHouseKeeperDbFunctionsExtensions))
+            {
+                return false;
+            }
+
+            // Translation-only DbFunctions stubs: their bodies throw, so any constant-arg
+            // call must stay in the expression tree for the SQL translator to consume.
+            if (declaringType == typeof(ClickHouseUrlDbFunctionsExtensions) ||
+                declaringType == typeof(ClickHouseEncodingDbFunctionsExtensions) ||
+                declaringType == typeof(ClickHouseFormatDbFunctionsExtensions) ||
+                declaringType == typeof(ClickHouseHashDbFunctionsExtensions) ||
+                declaringType == typeof(ClickHouseIpDbFunctionsExtensions) ||
+                declaringType == typeof(ClickHouseNullDbFunctionsExtensions) ||
+                declaringType == typeof(ClickHouseStringDistanceDbFunctionsExtensions) ||
+                declaringType == typeof(ClickHouseStringSplitDbFunctionsExtensions) ||
+                declaringType == typeof(ClickHouseTextSearchDbFunctionsExtensions) ||
+                declaringType == typeof(ClickHouseTypeCheckDbFunctionsExtensions) ||
+                declaringType == typeof(ClickHouseAggregates))
             {
                 return false;
             }

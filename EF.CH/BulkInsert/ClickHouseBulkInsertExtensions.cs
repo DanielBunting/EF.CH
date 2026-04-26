@@ -92,4 +92,42 @@ public static class ClickHouseBulkInsertExtensions
         var bulkInserter = context.GetService<IClickHouseBulkInserter>();
         return bulkInserter.InsertStreamingAsync(entities, configure, cancellationToken);
     }
+
+    /// <summary>
+    /// Upserts a collection of entities. For engines that treat INSERT as an
+    /// upsert (<c>KeeperMap</c>, <c>ReplacingMergeTree</c>), this is identical
+    /// to <see cref="BulkInsertAsync{TEntity}(DbSet{TEntity}, IEnumerable{TEntity}, Action{ClickHouseBulkInsertOptions}?, CancellationToken)"/>
+    /// but the name documents the intent. Bypasses EF's change tracker so
+    /// duplicate keys don't trip <c>InvalidOperationException</c>.
+    /// </summary>
+    public static Task<ClickHouseBulkInsertResult> UpsertRangeAsync<TEntity>(
+        this DbSet<TEntity> dbSet,
+        IEnumerable<TEntity> entities,
+        CancellationToken cancellationToken = default) where TEntity : class
+        => dbSet.BulkInsertAsync(entities, configure: null, cancellationToken);
+
+    /// <summary>
+    /// Issues <c>INSERT INTO target SELECT …</c> from the given source
+    /// <see cref="IQueryable{TEntity}"/>. Stays server-side — no rows flow
+    /// through the client. Use for AMT→AMT chaining where
+    /// <see cref="ClickHouseAggregates.CountMergeState{TSource}"/> and friends
+    /// re-state merged values for the downstream target.
+    /// </summary>
+    public static Task<int> InsertFromQueryAsync<TEntity>(
+        this DbSet<TEntity> targetSet,
+        IQueryable<TEntity> sourceQuery,
+        CancellationToken cancellationToken = default) where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(sourceQuery);
+        var context = targetSet.GetService<ICurrentDbContext>().Context;
+        var entityType = context.Model.FindEntityType(typeof(TEntity))
+            ?? throw new InvalidOperationException($"Entity type '{typeof(TEntity).Name}' is not in the model.");
+        var tableName = entityType.GetTableName()
+            ?? throw new InvalidOperationException($"Entity '{typeof(TEntity).Name}' has no table name.");
+
+        var selectSql = sourceQuery.ToQueryString();
+        var helper = context.GetService<Microsoft.EntityFrameworkCore.Storage.ISqlGenerationHelper>();
+        var insertSql = $"INSERT INTO {helper.DelimitIdentifier(tableName)} {selectSql}";
+        return context.Database.ExecuteSqlRawAsync(insertSql, cancellationToken);
+    }
 }

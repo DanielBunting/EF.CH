@@ -86,37 +86,25 @@ try
     // ============================================================
     Console.WriteLine("\n--- Step 2: Creating Test Data ---\n");
 
-    // Create orders table
-    await context.Database.ExecuteSqlRawAsync("""
-        CREATE TABLE IF NOT EXISTS orders (
-            id UUID,
-            country_id UInt64,
-            currency_code String,
-            amount Decimal(18, 2),
-            order_date Date
-        )
-        ENGINE = MergeTree()
-        ORDER BY (order_date, id)
-        PARTITION BY toYYYYMM(order_date)
-        """);
+    // Create the orders table from the fluent model.
+    await context.Database.EnsureCreatedAsync();
 
-    // Clear existing data
-    await context.Database.ExecuteSqlRawAsync("TRUNCATE TABLE orders");
+    // Clear existing data from previous runs.
+    await context.Database.TruncateTableAsync<Order>();
 
-    // Insert sample orders
-    await context.Database.ExecuteSqlRawAsync("""
-        INSERT INTO orders (id, country_id, currency_code, amount, order_date) VALUES
-            (generateUUIDv4(), 1, 'USD', 1500.00, '2024-01-15'),
-            (generateUUIDv4(), 1, 'USD', 2300.50, '2024-01-16'),
-            (generateUUIDv4(), 3, 'GBP', 850.00, '2024-01-15'),
-            (generateUUIDv4(), 4, 'EUR', 1200.00, '2024-01-17'),
-            (generateUUIDv4(), 5, 'EUR', 950.75, '2024-01-17'),
-            (generateUUIDv4(), 6, 'JPY', 150000.00, '2024-01-18'),
-            (generateUUIDv4(), 7, 'AUD', 1800.00, '2024-01-18'),
-            (generateUUIDv4(), 9, 'INR', 75000.00, '2024-01-19'),
-            (generateUUIDv4(), 10, 'CNY', 8500.00, '2024-01-19'),
-            (generateUUIDv4(), 2, 'CAD', 2100.00, '2024-01-20')
-        """);
+    // Seed sample orders via EF change-tracking.
+    context.Orders.AddRange(
+        new Order { Id = Guid.NewGuid(), CountryId = 1,  CurrencyCode = "USD", Amount = 1500.00m,    OrderDate = new DateOnly(2024, 1, 15) },
+        new Order { Id = Guid.NewGuid(), CountryId = 1,  CurrencyCode = "USD", Amount = 2300.50m,    OrderDate = new DateOnly(2024, 1, 16) },
+        new Order { Id = Guid.NewGuid(), CountryId = 3,  CurrencyCode = "GBP", Amount = 850.00m,     OrderDate = new DateOnly(2024, 1, 15) },
+        new Order { Id = Guid.NewGuid(), CountryId = 4,  CurrencyCode = "EUR", Amount = 1200.00m,    OrderDate = new DateOnly(2024, 1, 17) },
+        new Order { Id = Guid.NewGuid(), CountryId = 5,  CurrencyCode = "EUR", Amount = 950.75m,     OrderDate = new DateOnly(2024, 1, 17) },
+        new Order { Id = Guid.NewGuid(), CountryId = 6,  CurrencyCode = "JPY", Amount = 150000.00m,  OrderDate = new DateOnly(2024, 1, 18) },
+        new Order { Id = Guid.NewGuid(), CountryId = 7,  CurrencyCode = "AUD", Amount = 1800.00m,    OrderDate = new DateOnly(2024, 1, 18) },
+        new Order { Id = Guid.NewGuid(), CountryId = 9,  CurrencyCode = "INR", Amount = 75000.00m,   OrderDate = new DateOnly(2024, 1, 19) },
+        new Order { Id = Guid.NewGuid(), CountryId = 10, CurrencyCode = "CNY", Amount = 8500.00m,    OrderDate = new DateOnly(2024, 1, 19) },
+        new Order { Id = Guid.NewGuid(), CountryId = 2,  CurrencyCode = "CAD", Amount = 2100.00m,    OrderDate = new DateOnly(2024, 1, 20) });
+    await context.SaveChangesAsync();
 
     Console.WriteLine("Inserted 10 sample orders.\n");
 

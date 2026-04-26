@@ -39,7 +39,19 @@ public class ClickHouseAggregateMethodCallTranslator
         // Store model for defaultForNull lookups
         _currentModel = model;
 
-        // Handle ClickHouseAggregates extension methods
+        // Merge-sentinel: the preprocessor rewrote `g.XxxMerge(sel)` into a surrogate
+        // Enumerable.Sum/Count/… with the selector wrapped in ClickHouseFunctions.MergeSentinel.
+        // The selector was translated to a ClickHouseMergeSentinelExpression; unwrap it here
+        // and emit the real xxxMerge(state) function, bypassing the outer surrogate aggregate.
+        if (source.Selector is Expressions.ClickHouseMergeSentinelExpression sentinel)
+        {
+            // Use the sentinel's own (real) return type — that's what the user declared —
+            // and ignore the outer surrogate method's return type.
+            return TranslateMergeSentinel(sentinel, sentinel.Type);
+        }
+
+        // Handle ClickHouseAggregates extension methods (primarily from MV contexts where
+        // the preprocessor rewrite does not run — those are static-form calls, not IGrouping-form).
         if (method.DeclaringType?.FullName == "EF.CH.Extensions.ClickHouseAggregates")
         {
             return TranslateClickHouseAggregate(method, source, arguments);
@@ -118,7 +130,8 @@ public class ClickHouseAggregateMethodCallTranslator
     /// <summary>
     /// Translates Sum to sumOrNull for null-safe behavior.
     /// For defaultForNull columns, uses sumOrNullIf to exclude defaultForNull values.
-    /// ClickHouse sum returns Int64, so we wrap in toInt32/toInt64 for type compatibility.
+    /// ClickHouse sumOrNull returns Nullable(Int64); we adapt to the requested .NET return type
+    /// without ever wrapping the raw NULL in a non-nullable CAST (which CH 25.6 rejects with code 349).
     /// </summary>
     private SqlExpression? TranslateSum(
         EnumerableExpression source,
@@ -131,17 +144,14 @@ public class ClickHouseAggregateMethodCallTranslator
             return null;
         }
 
-        // ClickHouse sumOrNull returns Int64/UInt64, but we need to match the expected return type
-        // The actual return type from ClickHouse for sum
+        // ClickHouse sumOrNull returns Nullable(Int64) at the server level.
         var clickHouseReturnType = typeof(long?);
 
         SqlExpression sumExpr;
 
-        // Check if this column has a defaultForNull default
         var defaultForNullCondition = TryCreateSentinelExclusionCondition(argument);
         if (defaultForNullCondition != null)
         {
-            // Use sumOrNullIf(value, condition) to exclude defaultForNull values
             sumExpr = _sqlExpressionFactory.Function(
                 "sumOrNullIf",
                 [argument, defaultForNullCondition],
@@ -151,7 +161,6 @@ public class ClickHouseAggregateMethodCallTranslator
         }
         else
         {
-            // Use sumOrNull for null-safe behavior (returns NULL for empty set)
             sumExpr = _sqlExpressionFactory.Function(
                 "sumOrNull",
                 [argument],
@@ -160,17 +169,7 @@ public class ClickHouseAggregateMethodCallTranslator
                 clickHouseReturnType);
         }
 
-        // If return type differs from Int64, wrap in conversion
-        // Use CAST for type conversion (toInt32OrNull is for string parsing)
-        var underlyingReturnType = Nullable.GetUnderlyingType(returnType) ?? returnType;
-        if (underlyingReturnType == typeof(int))
-        {
-            // Cast Int64 to Int32
-            return _sqlExpressionFactory.Convert(sumExpr, returnType);
-        }
-
-        // For long/Int64, just ensure type mapping is correct
-        return _sqlExpressionFactory.Convert(sumExpr, returnType);
+        return AdaptSumOrNullToReturnType(sumExpr, returnType, source, argument);
     }
 
     /// <summary>
@@ -798,7 +797,8 @@ public class ClickHouseAggregateMethodCallTranslator
             functionName = "sumOrNullIf";
         }
 
-        // ClickHouse sum returns Int64; wrap in Convert to match the .NET return type.
+        // ClickHouse sumIf / sumOrNullIf returns Nullable(Int64); reshape to the .NET return type
+        // without falling into the CAST(NULL, 'Int64') trap on empty groups.
         var clickHouseReturnType = typeof(long?);
         var sumExpr = _sqlExpressionFactory.Function(
             functionName,
@@ -807,8 +807,76 @@ public class ClickHouseAggregateMethodCallTranslator
             argumentsPropagateNullability: [false, false],
             clickHouseReturnType);
 
-        return _sqlExpressionFactory.Convert(sumExpr, returnType);
+        return AdaptSumOrNullToReturnType(sumExpr, returnType);
     }
+
+    /// <summary>
+    /// Adapts a <c>sumOrNull(...)</c> / <c>sumOrNullIf(...)</c> result (typed as <c>Nullable(Int64)</c>)
+    /// to the user's declared .NET return type:
+    /// <list type="bullet">
+    /// <item>Nullable target, same width (<c>long?</c>): return as-is — the inner function already
+    /// produces the right shape.</item>
+    /// <item>Nullable target, different width (<c>int?</c>, <c>short?</c>, …): emit
+    /// <c>CAST(sumOrNull(...), 'Nullable(Int32)')</c> so an empty group's NULL passes through.</item>
+    /// <item>Non-nullable target (<c>long</c>, <c>int</c>, …): coalesce the NULL to 0 first, then cast
+    /// if the width differs. This preserves <see cref="System.Linq.Enumerable.Sum"/>'s "0 for empty"
+    /// contract without ever asking ClickHouse to <c>CAST(NULL, 'Int64')</c>.</item>
+    /// </list>
+    /// </summary>
+    private SqlExpression AdaptSumOrNullToReturnType(SqlExpression sumExpr, Type returnType, EnumerableExpression? source = null, SqlExpression? argument = null)
+    {
+        var underlying = Nullable.GetUnderlyingType(returnType) ?? returnType;
+
+        // Same width as ClickHouse's natural sumOrNull return (Int64): no cast needed. EF's
+        // aggregate shaper already wraps the projection in a Nullable<T>, so a NULL from an
+        // empty group flows through to .NET as null on a Sum<long?> projection, while a
+        // populated group reads as long via the outer (long? → long) shaper convert.
+        if (underlying == typeof(long))
+        {
+            return sumExpr;
+        }
+
+        if (returnType != underlying)
+        {
+            // Narrower nullable target (e.g. int?, short?, decimal?). Cast to Nullable(<width>)
+            // so an empty group's NULL is preserved through the cast.
+            var chType = ClickHouseCastTypeNameFor(underlying) ?? "Int64";
+            return _sqlExpressionFactory.Function(
+                "CAST",
+                [sumExpr, _sqlExpressionFactory.Constant($"Nullable({chType})")],
+                nullable: true,
+                argumentsPropagateNullability: [false, false],
+                returnType);
+        }
+
+        // Narrower non-nullable target (e.g. int, short). Coalesce NULL → 0 first, then narrow.
+        // This preserves Enumerable.Sum's "0 for empty" contract without ever asking ClickHouse
+        // to CAST(NULL, '<non-nullable>') — which CH 25.6 rejects with code 349.
+        var zero = _sqlExpressionFactory.Constant(0L, _typeMappingSource.FindMapping(typeof(long)));
+        var coalesced = _sqlExpressionFactory.Function(
+            "ifNull",
+            [sumExpr, zero],
+            nullable: false,
+            argumentsPropagateNullability: [false, false],
+            typeof(long));
+        return _sqlExpressionFactory.Convert(coalesced, returnType);
+    }
+
+    private static string? ClickHouseCastTypeNameFor(Type clrType) => clrType.Name switch
+    {
+        "Int64" => "Int64",
+        "Int32" => "Int32",
+        "Int16" => "Int16",
+        "SByte" => "Int8",
+        "UInt64" => "UInt64",
+        "UInt32" => "UInt32",
+        "UInt16" => "UInt16",
+        "Byte" => "UInt8",
+        "Single" => "Float32",
+        "Double" => "Float64",
+        "Decimal" => "Decimal128(9)",
+        _ => null,
+    };
 
     /// <summary>
     /// Upgrades an If combinator function name to its OrNullIf variant for aggregates that have one.
@@ -1218,6 +1286,109 @@ public class ClickHouseAggregateMethodCallTranslator
             nullable: true,
             argumentsPropagateNullability: [false, false],
             typeof(double));
+    }
+
+    /// <summary>
+    /// Extracts the real merge function from a
+    /// <see cref="Expressions.ClickHouseMergeSentinelExpression"/> planted by the preprocessor.
+    /// Wraps the emitted merge in a ClickHouse cast when the user's declared CLR return type
+    /// doesn't match what ClickHouse natively returns — e.g. <c>countMerge</c> / <c>uniqMerge</c>
+    /// return <c>UInt64</c> but the user may declare <c>long</c>.
+    /// </summary>
+    private SqlExpression TranslateMergeSentinel(
+        Expressions.ClickHouseMergeSentinelExpression sentinel,
+        Type returnType)
+    {
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        string functionName = sentinel.FunctionName;
+        // Decide whether the parametric float is for the `fn(k)(col)` or `fn(0.5)(col)` form.
+        // Int-parametric (TopK) was stored as double; we detect via integer-valued doubles.
+        if (sentinel.MergeParameter is double p)
+        {
+            functionName = p == Math.Floor(p) && !double.IsInfinity(p)
+                ? $"{sentinel.FunctionName}({((long)p).ToString(inv)})"
+                : $"{sentinel.FunctionName}({p.ToString(inv)})";
+        }
+        else if (sentinel.Parameters is { Count: > 0 } ps)
+        {
+            functionName = $"{sentinel.FunctionName}({string.Join(", ", ps.Select(x => x.ToString(inv)))})";
+        }
+
+        SqlExpression[] funcArgs = sentinel.SecondArg is null
+            ? [sentinel.StateColumn]
+            : [sentinel.StateColumn, sentinel.SecondArg];
+        var merge = _sqlExpressionFactory.Function(
+            functionName,
+            funcArgs,
+            nullable: true,
+            argumentsPropagateNullability: Enumerable.Repeat(false, funcArgs.Length).ToArray(),
+            returnType);
+
+        // Wrap in a ClickHouse cast when the native ClickHouse return type
+        // differs from the user's declared CLR type. For scalars: countMerge /
+        // uniqMerge return UInt64 but the user may declare long. For arrays:
+        // quantilesTDigest returns Array(Float32) even with Float64 input,
+        // so a property declared as double[] must be cast or the driver's
+        // GetFieldValue<double[]> throws Single[] → Double[] InvalidCastException.
+        if (returnType.IsArray && returnType != typeof(byte[]))
+        {
+            var elementCh = ClickHouseElementTypeFor(returnType.GetElementType());
+            if (elementCh is not null)
+            {
+                return _sqlExpressionFactory.Function(
+                    "CAST",
+                    [merge, _sqlExpressionFactory.Constant($"Array({elementCh})")],
+                    nullable: true,
+                    argumentsPropagateNullability: [false, false],
+                    returnType);
+            }
+            return merge;
+        }
+        var castFn = ClickHouseCastFunctionFor(returnType);
+        return castFn is null
+            ? merge
+            : _sqlExpressionFactory.Function(
+                castFn,
+                [merge],
+                nullable: true,
+                argumentsPropagateNullability: [false],
+                returnType);
+    }
+
+    private static string? ClickHouseElementTypeFor(Type? clrElement) => clrElement?.Name switch
+    {
+        "Int64" => "Int64",
+        "Int32" => "Int32",
+        "Int16" => "Int16",
+        "SByte" => "Int8",
+        "UInt64" => "UInt64",
+        "UInt32" => "UInt32",
+        "UInt16" => "UInt16",
+        "Byte" => "UInt8",
+        "Single" => "Float32",
+        "Double" => "Float64",
+        "Boolean" => "UInt8",
+        "String" => "String",
+        _ => null,
+    };
+
+    private static string? ClickHouseCastFunctionFor(Type t)
+    {
+        var actual = Nullable.GetUnderlyingType(t) ?? t;
+        return actual switch
+        {
+            _ when actual == typeof(long) => "toInt64",
+            _ when actual == typeof(ulong) => "toUInt64",
+            _ when actual == typeof(int) => "toInt32",
+            _ when actual == typeof(uint) => "toUInt32",
+            _ when actual == typeof(short) => "toInt16",
+            _ when actual == typeof(ushort) => "toUInt16",
+            _ when actual == typeof(sbyte) => "toInt8",
+            _ when actual == typeof(byte) => "toUInt8",
+            _ when actual == typeof(double) => "toFloat64",
+            _ when actual == typeof(float) => "toFloat32",
+            _ => null,
+        };
     }
 }
 

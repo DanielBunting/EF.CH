@@ -168,7 +168,11 @@ public class DateTimeFunctionTests
             .Select(e => new { Future = EfClass.Functions.DateAdd(ClickHouseIntervalUnit.Day, 5, e.Timestamp) });
 
         var sql = query.ToQueryString();
-        Assert.Contains("date_add(", sql);
+        // Modern ClickHouse rejects the dynamic-unit `date_add(unit, n, dt)` form
+        // (it parses as plus(...) with 3 args). The provider emits the
+        // `dt + toIntervalDay(n)` form instead, which is the canonical syntax
+        // and works on every supported server version.
+        Assert.Contains("toIntervalDay(", sql);
     }
 
     [Fact]
@@ -180,7 +184,8 @@ public class DateTimeFunctionTests
             .Select(e => new { Past = EfClass.Functions.DateSub(ClickHouseIntervalUnit.Day, 5, e.Timestamp) });
 
         var sql = query.ToQueryString();
-        Assert.Contains("date_sub(", sql);
+        // See DateAdd_GeneratesCorrectSql — emit the `dt - toIntervalDay(n)` form.
+        Assert.Contains("toIntervalDay(", sql);
     }
 
     [Fact]

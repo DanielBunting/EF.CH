@@ -83,6 +83,71 @@ public static class ClickHouseAnnotationNames
     /// </summary>
     public const string MaterializedViewPopulate = Prefix + "MaterializedViewPopulate";
 
+    /// <summary>
+    /// If true, <c>EnsureCreatedAsync</c> skips emitting this MV so the caller
+    /// can deploy it manually via <c>DatabaseFacade.CreateMaterializedViewAsync</c>
+    /// after the source is seeded (useful for POPULATE backfill).
+    /// </summary>
+    public const string MaterializedViewDeferred = Prefix + "MaterializedViewDeferred";
+
+    /// <summary>
+    /// Refresh kind for refreshable materialized views. Value: "EVERY" or "AFTER".
+    /// </summary>
+    public const string MaterializedViewRefreshKind = Prefix + "MaterializedViewRefreshKind";
+
+    /// <summary>
+    /// Refresh interval literal for refreshable materialized views (e.g. "5 MINUTE").
+    /// Presence of this annotation makes the entity a refreshable MV.
+    /// </summary>
+    public const string MaterializedViewRefreshInterval = Prefix + "MaterializedViewRefreshInterval";
+
+    /// <summary>
+    /// Optional OFFSET interval literal (e.g. "1 MINUTE").
+    /// </summary>
+    public const string MaterializedViewRefreshOffset = Prefix + "MaterializedViewRefreshOffset";
+
+    /// <summary>
+    /// Optional RANDOMIZE FOR jitter interval literal (e.g. "30 SECOND").
+    /// </summary>
+    public const string MaterializedViewRefreshRandomizeFor = Prefix + "MaterializedViewRefreshRandomizeFor";
+
+    /// <summary>
+    /// Optional DEPENDS ON list (entity names; resolved to table names at DDL time).
+    /// Value type: string[]
+    /// </summary>
+    public const string MaterializedViewRefreshDependsOn = Prefix + "MaterializedViewRefreshDependsOn";
+
+    /// <summary>
+    /// Whether to emit APPEND (refresh appends rows instead of atomic replace).
+    /// Value type: bool
+    /// </summary>
+    public const string MaterializedViewRefreshAppend = Prefix + "MaterializedViewRefreshAppend";
+
+    /// <summary>
+    /// Whether to emit EMPTY (skip the initial refresh on creation).
+    /// Value type: bool
+    /// </summary>
+    public const string MaterializedViewRefreshEmpty = Prefix + "MaterializedViewRefreshEmpty";
+
+    /// <summary>
+    /// Optional refresh-level SETTINGS map (e.g. refresh_retries=3).
+    /// Value type: IReadOnlyDictionary&lt;string,string&gt;
+    /// </summary>
+    public const string MaterializedViewRefreshSettings = Prefix + "MaterializedViewRefreshSettings";
+
+    /// <summary>
+    /// Optional TO &lt;target_table&gt; — when set, ENGINE clause is omitted and the
+    /// MV writes into an existing target table.
+    /// </summary>
+    public const string MaterializedViewRefreshTarget = Prefix + "MaterializedViewRefreshTarget";
+
+    /// <summary>
+    /// Marker prefix used to tag <c>Nested(...)</c> columns that opt into
+    /// parallel-array sub-column access. Combined with the navigation's member
+    /// name to form the full annotation key (e.g. <c>…NestedParallelAccess:Participants</c>).
+    /// </summary>
+    public const string NestedParallelAccess = Prefix + "NestedParallelAccess";
+
     #endregion
 
     #region Nested Types
@@ -519,6 +584,17 @@ public static class ClickHouseAnnotationNames
 
     #endregion
 
+    #region External (integration) engines
+
+    /// <summary>
+    /// Serialised arguments (already-quoted ClickHouse literals, comma-joined) for
+    /// PostgreSQL / MySQL / Redis / ODBC engines — emitted verbatim inside
+    /// <c>ENGINE = Foo(args…)</c>.
+    /// </summary>
+    public const string ExternalEngineArguments = Prefix + "ExternalEngineArguments";
+
+    #endregion
+
     #region KeeperMap Engine
 
     /// <summary>
@@ -582,6 +658,59 @@ public static class ClickHouseAnnotationNames
     /// Value type: ParameterizedViewMetadataBase
     /// </summary>
     public const string ParameterizedViewMetadata = Prefix + "ParameterizedViewMetadata";
+
+    #endregion
+
+    #region Plain Views
+
+    /// <summary>
+    /// Marks this entity as a (non-parameterized, non-materialized) ClickHouse view.
+    /// Value type: bool
+    /// </summary>
+    public const string View = Prefix + "View";
+
+    /// <summary>
+    /// The view name in ClickHouse.
+    /// Value type: string
+    /// </summary>
+    public const string ViewName = Prefix + "ViewName";
+
+    /// <summary>
+    /// The full metadata for fluent view configuration (AsView / AsViewRaw).
+    /// Value type: ViewMetadataBase
+    /// </summary>
+    public const string ViewMetadata = Prefix + "ViewMetadata";
+
+    /// <summary>
+    /// Whether to emit IF NOT EXISTS in CREATE VIEW DDL.
+    /// Value type: bool
+    /// </summary>
+    public const string ViewIfNotExists = Prefix + "ViewIfNotExists";
+
+    /// <summary>
+    /// Whether to emit OR REPLACE in CREATE VIEW DDL.
+    /// Mutually exclusive with ViewIfNotExists.
+    /// Value type: bool
+    /// </summary>
+    public const string ViewOrReplace = Prefix + "ViewOrReplace";
+
+    /// <summary>
+    /// The cluster name for ON CLUSTER in CREATE / DROP VIEW DDL.
+    /// Value type: string
+    /// </summary>
+    public const string ViewCluster = Prefix + "ViewCluster";
+
+    /// <summary>
+    /// The schema (database) qualifier for the view.
+    /// Value type: string
+    /// </summary>
+    public const string ViewSchema = Prefix + "ViewSchema";
+
+    /// <summary>
+    /// If true, EnsureViewsAsync skips this view so the caller can deploy it manually.
+    /// Value type: bool
+    /// </summary>
+    public const string ViewDeferred = Prefix + "ViewDeferred";
 
     #endregion
 

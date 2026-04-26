@@ -316,7 +316,7 @@ public class SqlGenerationTests
         Assert.Contains("max_threads = 4", sql);
     }
 
-    [Fact(Skip = "PreWhere with chained Where requires navigation expansion support")]
+    [Fact]
     public void PreWhere_GeneratesPreWhereClause()
     {
         using var context = CreateContext();
@@ -366,7 +366,7 @@ public class SqlGenerationTests
         Assert.Contains("AND", sql);
     }
 
-    [Fact(Skip = "PreWhere with chained Where requires navigation expansion support")]
+    [Fact]
     public void PreWhere_WithFinal_GeneratesBothClauses()
     {
         using var context = CreateContext();
@@ -383,7 +383,7 @@ public class SqlGenerationTests
         Assert.Contains("\nWHERE", sql);
     }
 
-    [Fact(Skip = "PreWhere with chained Select requires navigation expansion support")]
+    [Fact]
     public void PreWhere_WithSelect_GeneratesCorrectProjection()
     {
         using var context = CreateContext();

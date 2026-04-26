@@ -23,6 +23,85 @@ public class ClickHouseModelValidator : RelationalModelValidator
         base.Validate(model, logger);
         ValidateNoIdentityColumns(model);
         ValidateComputedColumnExclusivity(model);
+        ValidateRefreshableMaterializedViews(model);
+    }
+
+    /// <summary>
+    /// Cross-validates the refreshable-MV annotations: schedule must be present
+    /// for any optional flag, POPULATE/REFRESH are mutually exclusive,
+    /// APPEND/EMPTY are mutually exclusive, and DEPENDS ON entries must resolve
+    /// to known entities.
+    /// </summary>
+    private static void ValidateRefreshableMaterializedViews(IModel model)
+    {
+        foreach (var entityType in model.GetEntityTypes())
+        {
+            if (entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedView)?.Value as bool? != true)
+                continue;
+
+            var hasInterval = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshInterval) != null;
+
+            if (!hasInterval)
+            {
+                // Non-refreshable MV: ensure refresh-only options aren't accidentally set.
+                foreach (var ann in new[]
+                {
+                    ClickHouseAnnotationNames.MaterializedViewRefreshOffset,
+                    ClickHouseAnnotationNames.MaterializedViewRefreshRandomizeFor,
+                    ClickHouseAnnotationNames.MaterializedViewRefreshDependsOn,
+                    ClickHouseAnnotationNames.MaterializedViewRefreshAppend,
+                    ClickHouseAnnotationNames.MaterializedViewRefreshEmpty,
+                    ClickHouseAnnotationNames.MaterializedViewRefreshSettings,
+                    ClickHouseAnnotationNames.MaterializedViewRefreshTarget,
+                })
+                {
+                    if (entityType.FindAnnotation(ann) != null)
+                    {
+                        var name = entityType.GetTableName() ?? entityType.Name;
+                        throw new InvalidOperationException(
+                            $"Materialized view '{name}' has refresh option '{ann}' set without a refresh schedule. " +
+                            $"Call Every(...) or After(...) on the refresh builder.");
+                    }
+                }
+                continue;
+            }
+
+            var name2 = entityType.GetTableName() ?? entityType.Name;
+
+            var populate = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewPopulate)?.Value as bool? ?? false;
+            if (populate)
+            {
+                throw new InvalidOperationException(
+                    $"Refreshable materialized view '{name2}' cannot also use POPULATE. " +
+                    $"Use the EMPTY option (skip initial refresh) instead.");
+            }
+
+            var append = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshAppend)?.Value as bool? ?? false;
+            var empty = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshEmpty)?.Value as bool? ?? false;
+            if (append && empty)
+            {
+                throw new InvalidOperationException(
+                    $"Refreshable materialized view '{name2}' has both APPEND and EMPTY set; these are mutually exclusive.");
+            }
+
+            var dependsOn = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshDependsOn)?.Value as string[];
+            if (dependsOn is { Length: > 0 })
+            {
+                foreach (var dep in dependsOn)
+                {
+                    var found = model.GetEntityTypes().Any(e =>
+                        string.Equals(e.GetTableName(), dep, StringComparison.Ordinal) ||
+                        string.Equals(e.ShortName(), dep, StringComparison.Ordinal) ||
+                        string.Equals(e.Name, dep, StringComparison.Ordinal));
+                    if (!found)
+                    {
+                        throw new InvalidOperationException(
+                            $"Refreshable materialized view '{name2}' depends on unknown entity '{dep}'. " +
+                            $"Add the entity to the model or use a fully qualified table name.");
+                    }
+                }
+            }
+        }
     }
 
     /// <summary>

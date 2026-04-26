@@ -10,7 +10,7 @@ namespace EF.CH.Tests.Core;
 public class DeleteTests : IAsyncLifetime
 {
     private readonly ClickHouseContainer _container = new ClickHouseBuilder()
-        .WithImage("clickhouse/clickhouse-server:latest")
+        .WithImage("clickhouse/clickhouse-server:25.6")
         .Build();
 
     public async Task InitializeAsync()
@@ -33,14 +33,7 @@ public class DeleteTests : IAsyncLifetime
         await using var context = CreateContext<DeleteTestContext>();
 
         // Create table
-        await context.Database.ExecuteSqlRawAsync(@"
-            CREATE TABLE IF NOT EXISTS ""DeleteEvents"" (
-                ""Id"" UUID,
-                ""Name"" String,
-                ""CreatedAt"" DateTime64(3)
-            ) ENGINE = MergeTree()
-            ORDER BY ""Id""
-        ");
+        await context.Database.EnsureCreatedAsync();
 
         // Insert an entity
         var entity = new DeleteEvent
@@ -72,14 +65,7 @@ public class DeleteTests : IAsyncLifetime
         await using var context = CreateContext<CompositeKeyDeleteContext>();
 
         // Create table
-        await context.Database.ExecuteSqlRawAsync(@"
-            CREATE TABLE IF NOT EXISTS ""OrderItems"" (
-                ""OrderId"" UUID,
-                ""ProductId"" Int32,
-                ""Quantity"" Int32
-            ) ENGINE = MergeTree()
-            ORDER BY (""OrderId"", ""ProductId"")
-        ");
+        await context.Database.EnsureCreatedAsync();
 
         var orderId = Guid.NewGuid();
         var productId = 42;
@@ -111,14 +97,7 @@ public class DeleteTests : IAsyncLifetime
     {
         await using var context = CreateContext<DeleteTestContext>();
 
-        await context.Database.ExecuteSqlRawAsync(@"
-            CREATE TABLE IF NOT EXISTS ""DeleteEvents"" (
-                ""Id"" UUID,
-                ""Name"" String,
-                ""CreatedAt"" DateTime64(3)
-            ) ENGINE = MergeTree()
-            ORDER BY ""Id""
-        ");
+        await context.Database.EnsureCreatedAsync();
 
         // Insert multiple entities
         var entities = new[]
@@ -151,14 +130,7 @@ public class DeleteTests : IAsyncLifetime
     {
         await using var context = CreateContext<DeleteTestContext>();
 
-        await context.Database.ExecuteSqlRawAsync(@"
-            CREATE TABLE IF NOT EXISTS ""DeleteEvents"" (
-                ""Id"" UUID,
-                ""Name"" String,
-                ""CreatedAt"" DateTime64(3)
-            ) ENGINE = MergeTree()
-            ORDER BY ""Id""
-        ");
+        await context.Database.EnsureCreatedAsync();
 
         var entity = new DeleteEvent
         {
@@ -217,14 +189,7 @@ public class DeleteTests : IAsyncLifetime
     {
         await using var context = CreateContext<DeleteTestContext>();
 
-        await context.Database.ExecuteSqlRawAsync(@"
-            CREATE TABLE IF NOT EXISTS ""DeleteEvents"" (
-                ""Id"" UUID,
-                ""Name"" String,
-                ""CreatedAt"" DateTime64(3)
-            ) ENGINE = MergeTree()
-            ORDER BY ""Id""
-        ");
+        await context.Database.EnsureCreatedAsync();
 
         // Insert entities with different names
         var now = DateTime.UtcNow;

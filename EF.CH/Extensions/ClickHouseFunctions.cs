@@ -203,4 +203,46 @@ public static class ClickHouseFunctions
     public static DateTime? ToStartOfMonth(this DateTime? dateTime) => Throw<DateTime?>();
 
     #endregion
+
+    #region Merge-sentinel (internal)
+
+    // These sentinel methods carry the real merge-function name through EF Core's
+    // navigation expander. ClickHouseQueryTranslationPreprocessor rewrites
+    // `g.CountMerge(s => s.State)` etc. into `g.Sum/Count/...(s => MergeSentinel...(s.State, "countMerge"))`
+    // so EF accepts the method on the grouping. The method-call translator emits a
+    // ClickHouseMergeSentinelExpression; the aggregate translator detects that and
+    // emits `countMerge(state)` directly, ignoring the outer `sum`/`count`.
+
+    // TSurrogate exists so EF's type-checker accepts Enumerable.Sum(sel) where sel returns
+    // TSurrogate (always a numeric Sum-compatible type). TReal is the user's real return
+    // type — the translator uses TReal as the SqlFunctionExpression's CLR type so EF's
+    // result reader materialises the scalar correctly.
+    public static TSurrogate MergeSentinel<TSurrogate, TReal>(byte[] state, string functionName) => Throw<TSurrogate>();
+    public static TSurrogate MergeSentinelParametric<TSurrogate, TReal>(byte[] state, string functionName, double parameter) => Throw<TSurrogate>();
+    public static TSurrogate MergeSentinelMultiParam<TSurrogate, TReal>(byte[] state, string functionName, double[] parameters) => Throw<TSurrogate>();
+
+    // Same idea, but for aggregates that operate on a column (not a state blob). Used by
+    // the preprocessor to route ClickHouseAggregates.Uniq / Median / TopK / ArgMax / …
+    // (non-merge, non-MV) through a surrogate Enumerable aggregate so EF's navigation
+    // expander accepts them.
+    public static TSurrogate AggregateSentinel<TInput, TSurrogate, TReal>(TInput input, string functionName) => Throw<TSurrogate>();
+    public static TSurrogate AggregateSentinelParametric<TInput, TSurrogate, TReal>(TInput input, string functionName, double parameter) => Throw<TSurrogate>();
+    public static TSurrogate AggregateSentinelIntParametric<TInput, TSurrogate, TReal>(TInput input, string functionName, int parameter) => Throw<TSurrogate>();
+    public static TSurrogate AggregateSentinelMultiParam<TInput, TSurrogate, TReal>(TInput input, string functionName, double[] parameters) => Throw<TSurrogate>();
+    public static TSurrogate AggregateSentinelTwoArg<TArg, TVal, TSurrogate, TReal>(TArg arg, TVal val, string functionName) => Throw<TSurrogate>();
+    public static TSurrogate AggregateSentinelTwoArgIntParam<TArg, TVal, TSurrogate, TReal>(TArg arg, TVal val, string functionName, int parameter) => Throw<TSurrogate>();
+
+    #endregion
+
+    #region PREWHERE marker (internal)
+
+    // Routes a PreWhere predicate through Where so the NavigationExpandingExpressionVisitor
+    // accepts it. ClickHouseQueryTranslationPreprocessor rewrites
+    // `source.PreWhere(x => p)` into `source.Where(x => PreWhereMarker(p))`.
+    // ClickHouseSqlTranslatingExpressionVisitor detects this call, lifts the inner SQL
+    // into ClickHouseQueryCompilationContextOptions.PreWhereExpression, and substitutes
+    // a constant true so the WHERE clause is a no-op.
+    internal static bool PreWhereMarker(bool predicate) => Throw<bool>();
+
+    #endregion
 }

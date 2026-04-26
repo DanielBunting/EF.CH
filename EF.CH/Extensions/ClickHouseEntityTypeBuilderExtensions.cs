@@ -61,6 +61,15 @@ public class ReplicatedEngineBuilder<TEntity> where TEntity : class
     }
 
     /// <summary>
+    /// Configures this entity to emit <c>ON CLUSTER '{cluster}'</c>, deferring
+    /// cluster resolution to the server's <c>&lt;macros&gt;&lt;cluster&gt;</c>
+    /// config entry. Use when the DDL should run against whichever cluster the
+    /// target node belongs to, without hardcoding a cluster name.
+    /// </summary>
+    public ReplicatedEngineBuilder<TEntity> WithCluster()
+        => WithCluster(ClickHouseClusterMacros.Cluster);
+
+    /// <summary>
     /// Configures replication settings for this entity.
     /// </summary>
     /// <param name="zooKeeperPath">The ZooKeeper/Keeper path for replication metadata. Supports placeholders: {database}, {table}, {uuid}</param>
@@ -1074,6 +1083,18 @@ public static class ClickHouseEntityTypeBuilderExtensions
     }
 
     /// <summary>
+    /// Configures this entity to emit <c>ON CLUSTER '{cluster}'</c>, deferring
+    /// cluster resolution to the server's <c>&lt;macros&gt;</c> config.
+    /// </summary>
+    public static EntityTypeBuilder UseCluster(this EntityTypeBuilder builder)
+        => builder.UseCluster(ClickHouseClusterMacros.Cluster);
+
+    /// <inheritdoc cref="UseCluster(EntityTypeBuilder)"/>
+    public static EntityTypeBuilder<TEntity> UseCluster<TEntity>(this EntityTypeBuilder<TEntity> builder)
+        where TEntity : class
+        => builder.UseCluster(ClickHouseClusterMacros.Cluster);
+
+    /// <summary>
     /// Assigns this entity to a table group.
     /// </summary>
     /// <remarks>
@@ -1590,6 +1611,132 @@ public static class ClickHouseEntityTypeBuilderExtensions
 
         return builder;
     }
+
+    #region Parameterised views
+
+    /// <summary>
+    /// Marks this entity as a ClickHouse parameterised view. The type's DbSet
+    /// can be queried via <see cref="ClickHouseQueryableParameterExtensions.WithParameter"/>.
+    /// </summary>
+    public static EntityTypeBuilder<TEntity> ToParameterizedView<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        string viewName) where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(viewName);
+        builder.HasNoKey();
+        builder.ToView(viewName);
+        builder.HasAnnotation(EF.CH.Metadata.ClickHouseAnnotationNames.ParameterizedView, true);
+        return builder;
+    }
+
+    #endregion
+
+    #region Nested columns
+
+    /// <summary>
+    /// Declares that the given collection property maps to a ClickHouse
+    /// <c>Nested(...)</c> column — parallel arrays under a shared prefix
+    /// (e.g. <c>Participants.name</c>, <c>Participants.age</c>). Call
+    /// <see cref="NestedColumnBuilder{TNested}.WithParallelAccess"/> to tag
+    /// the property for parallel-array codegen (arrayMap / arrayZip / indexed
+    /// access target the sub-columns directly).
+    /// </summary>
+    public static NestedColumnBuilder<TNested> HasNested<TEntity, TNested>(
+        this EntityTypeBuilder<TEntity> builder,
+        System.Linq.Expressions.Expression<Func<TEntity, IEnumerable<TNested>>> navigation)
+        where TEntity : class
+        where TNested : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(navigation);
+        return new NestedColumnBuilder<TNested>(builder.Metadata, navigation);
+    }
+
+    #endregion
+
+    #region External integration engines
+
+    /// <summary>
+    /// <c>ENGINE = PostgreSQL(host:port, database, table, user, password [, schema [, on_conflict]])</c>.
+    /// </summary>
+    public static EntityTypeBuilder<TEntity> UsePostgreSqlEngine<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        string hostAndPort, string database, string table, string user, string password,
+        string? schema = null) where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(hostAndPort);
+        ArgumentException.ThrowIfNullOrWhiteSpace(database);
+        ArgumentException.ThrowIfNullOrWhiteSpace(table);
+        ArgumentException.ThrowIfNullOrWhiteSpace(user);
+        var parts = new List<string> { SqlLiteral(hostAndPort), SqlLiteral(database), SqlLiteral(table), SqlLiteral(user), SqlLiteral(password ?? "") };
+        if (!string.IsNullOrEmpty(schema)) parts.Add(SqlLiteral(schema));
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, ClickHouseEngineNames.PostgreSQL);
+        builder.HasAnnotation(ClickHouseAnnotationNames.ExternalEngineArguments, string.Join(", ", parts));
+        return builder;
+    }
+
+    /// <summary>
+    /// <c>ENGINE = MySQL(host:port, database, table, user, password)</c>.
+    /// </summary>
+    public static EntityTypeBuilder<TEntity> UseMySqlEngine<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        string hostAndPort, string database, string table, string user, string password) where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(hostAndPort);
+        ArgumentException.ThrowIfNullOrWhiteSpace(database);
+        ArgumentException.ThrowIfNullOrWhiteSpace(table);
+        ArgumentException.ThrowIfNullOrWhiteSpace(user);
+        var args = string.Join(", ", new[] { hostAndPort, database, table, user, password ?? "" }.Select(SqlLiteral));
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, ClickHouseEngineNames.MySQL);
+        builder.HasAnnotation(ClickHouseAnnotationNames.ExternalEngineArguments, args);
+        return builder;
+    }
+
+    /// <summary>
+    /// <c>ENGINE = Redis(host:port [, db_index [, password [, pool_size]]])</c>.
+    /// Primary key is required — pass via <see cref="EntityTypeBuilder.HasKey"/>.
+    /// </summary>
+    public static EntityTypeBuilder<TEntity> UseRedisEngine<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        string hostAndPort, int dbIndex = 0, string? password = null, int? poolSize = null) where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(hostAndPort);
+        var parts = new List<string> { SqlLiteral(hostAndPort), dbIndex.ToString(System.Globalization.CultureInfo.InvariantCulture) };
+        if (password is not null || poolSize is not null)
+        {
+            parts.Add(SqlLiteral(password ?? ""));
+            if (poolSize is not null)
+                parts.Add(poolSize.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, ClickHouseEngineNames.Redis);
+        builder.HasAnnotation(ClickHouseAnnotationNames.ExternalEngineArguments, string.Join(", ", parts));
+        return builder;
+    }
+
+    /// <summary>
+    /// <c>ENGINE = ODBC(connection_string, database, table)</c>.
+    /// </summary>
+    public static EntityTypeBuilder<TEntity> UseOdbcEngine<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        string connectionString, string externalDatabase, string externalTable) where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+        ArgumentException.ThrowIfNullOrWhiteSpace(externalDatabase);
+        ArgumentException.ThrowIfNullOrWhiteSpace(externalTable);
+        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, ClickHouseEngineNames.ODBC);
+        builder.HasAnnotation(ClickHouseAnnotationNames.ExternalEngineArguments,
+            string.Join(", ", new[] { connectionString, externalDatabase, externalTable }.Select(SqlLiteral)));
+        return builder;
+    }
+
+    private static string SqlLiteral(string value) => "'" + value.Replace("'", "''") + "'";
+
+    #endregion
 
     /// <summary>
     /// Configures the entity to use a Distributed engine that queries across a cluster.
@@ -2204,6 +2351,129 @@ public static class ClickHouseEntityTypeBuilderExtensions
         return builder;
     }
 
+    /// <summary>
+    /// Marks the entity's materialised view as deferred: <c>EnsureCreatedAsync</c>
+    /// skips emitting it, so the caller can seed source data first and then
+    /// attach via <c>DatabaseFacade.CreateMaterializedViewAsync&lt;TEntity&gt;(populate: true)</c>.
+    /// </summary>
+    public static EntityTypeBuilder<TEntity> AsMaterializedViewDeferred<TEntity>(
+        this EntityTypeBuilder<TEntity> builder) where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewDeferred, true);
+        return builder;
+    }
+
+    /// <summary>
+    /// Configures the entity as a refreshable materialized view (LINQ form).
+    /// The view runs on a schedule (<c>REFRESH EVERY|AFTER &lt;interval&gt;</c>) instead of
+    /// on every source-table write.
+    /// </summary>
+    /// <example>
+    /// <code>
+    /// entity.AsRefreshableMaterializedView&lt;HourlySummary, RawEvent&gt;(
+    ///     q => q.GroupBy(e => e.Hour).Select(g => new HourlySummary { ... }),
+    ///     r => r.Every(TimeSpan.FromMinutes(5))
+    ///           .RandomizeFor(TimeSpan.FromSeconds(30))
+    ///           .DependsOn&lt;OtherMv&gt;());
+    /// </code>
+    /// </example>
+    public static EntityTypeBuilder<TEntity> AsRefreshableMaterializedView<TEntity, TSource>(
+        this EntityTypeBuilder<TEntity> builder,
+        Expression<Func<IQueryable<TSource>, IQueryable<TEntity>>> query,
+        Action<RefreshableMaterializedViewBuilder> configure)
+        where TEntity : class
+        where TSource : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(query);
+        ArgumentNullException.ThrowIfNull(configure);
+
+        var sourceEntityType = builder.Metadata.Model.FindEntityType(typeof(TSource));
+        var sourceTableName = sourceEntityType?.GetTableName() ?? typeof(TSource).Name;
+
+        var translator = new Query.Internal.MaterializedViewSqlTranslator(
+            (IModel)builder.Metadata.Model,
+            sourceTableName);
+        var selectSql = translator.Translate<TSource, TEntity>(query);
+
+        builder.HasNoKey();
+        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedView, true);
+        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewSource, sourceTableName);
+        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewQuery, selectSql);
+        ApplyRefreshSpec(builder, configure);
+        return builder;
+    }
+
+    /// <summary>
+    /// Configures the entity as a refreshable materialized view with a raw SQL SELECT.
+    /// </summary>
+    public static EntityTypeBuilder<TEntity> AsRefreshableMaterializedViewRaw<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        string sourceTable,
+        string selectSql,
+        Action<RefreshableMaterializedViewBuilder> configure)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentException.ThrowIfNullOrEmpty(sourceTable);
+        ArgumentException.ThrowIfNullOrEmpty(selectSql);
+        ArgumentNullException.ThrowIfNull(configure);
+
+        builder.HasNoKey();
+        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedView, true);
+        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewSource, sourceTable);
+        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewQuery, selectSql.Trim());
+        ApplyRefreshSpec(builder, configure);
+        return builder;
+    }
+
+    /// <summary>
+    /// Non-generic overload of <see cref="AsRefreshableMaterializedViewRaw{TEntity}"/>.
+    /// </summary>
+    public static EntityTypeBuilder AsRefreshableMaterializedViewRaw(
+        this EntityTypeBuilder builder,
+        string sourceTable,
+        string selectSql,
+        Action<RefreshableMaterializedViewBuilder> configure)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentException.ThrowIfNullOrEmpty(sourceTable);
+        ArgumentException.ThrowIfNullOrEmpty(selectSql);
+        ArgumentNullException.ThrowIfNull(configure);
+
+        builder.HasNoKey();
+        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedView, true);
+        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewSource, sourceTable);
+        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewQuery, selectSql.Trim());
+        ApplyRefreshSpec(builder, configure);
+        return builder;
+    }
+
+    private static void ApplyRefreshSpec(EntityTypeBuilder builder, Action<RefreshableMaterializedViewBuilder> configure)
+    {
+        var refreshBuilder = new RefreshableMaterializedViewBuilder();
+        configure(refreshBuilder);
+        var spec = refreshBuilder.Build();
+
+        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshKind, spec.Kind);
+        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshInterval, spec.Interval);
+        if (spec.Offset is not null)
+            builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshOffset, spec.Offset);
+        if (spec.RandomizeFor is not null)
+            builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshRandomizeFor, spec.RandomizeFor);
+        if (spec.DependsOn is { Length: > 0 })
+            builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshDependsOn, spec.DependsOn);
+        if (spec.Append)
+            builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshAppend, true);
+        if (spec.Empty)
+            builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshEmpty, true);
+        if (spec.Settings is { Count: > 0 })
+            builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshSettings, spec.Settings);
+        if (spec.Target is not null)
+            builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshTarget, spec.Target);
+    }
+
     #endregion
 
     #region Dictionaries
@@ -2685,4 +2955,235 @@ public static class ClickHouseEntityTypeBuilderExtensions
     }
 
     #endregion
+
+    #region Plain Views
+
+    /// <summary>
+    /// Configures the entity as a result type for a plain (non-parameterized, non-materialized)
+    /// ClickHouse view. Marks the entity keyless and stores the view name as an annotation.
+    /// </summary>
+    /// <typeparam name="TEntity">The entity type representing the view's output schema.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="viewName">The view name in ClickHouse.</param>
+    /// <param name="schema">Optional schema (database) qualifier.</param>
+    /// <example>
+    /// <code>
+    /// modelBuilder.Entity&lt;ActiveUserView&gt;(entity =>
+    /// {
+    ///     entity.HasView("active_users");
+    /// });
+    ///
+    /// var rows = await context.FromView&lt;ActiveUserView&gt;("active_users").ToListAsync();
+    /// </code>
+    /// </example>
+    public static EntityTypeBuilder<TEntity> HasView<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        string viewName,
+        string? schema = null)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(viewName);
+
+        builder.HasNoKey();
+        builder.ToView(viewName, schema);
+
+        builder.HasAnnotation(ClickHouseAnnotationNames.View, true);
+        builder.HasAnnotation(ClickHouseAnnotationNames.ViewName, viewName);
+        if (!string.IsNullOrEmpty(schema))
+        {
+            builder.HasAnnotation(ClickHouseAnnotationNames.ViewSchema, schema);
+        }
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Non-generic overload of <see cref="HasView{TEntity}(EntityTypeBuilder{TEntity}, string, string?)"/>.
+    /// </summary>
+    public static EntityTypeBuilder HasView(
+        this EntityTypeBuilder builder,
+        string viewName,
+        string? schema = null)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(viewName);
+
+        builder.HasNoKey();
+        builder.ToView(viewName, schema);
+
+        builder.HasAnnotation(ClickHouseAnnotationNames.View, true);
+        builder.HasAnnotation(ClickHouseAnnotationNames.ViewName, viewName);
+        if (!string.IsNullOrEmpty(schema))
+        {
+            builder.HasAnnotation(ClickHouseAnnotationNames.ViewSchema, schema);
+        }
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Configures the entity as a plain ClickHouse view from a raw SELECT SQL string.
+    /// </summary>
+    /// <typeparam name="TEntity">The view result entity type.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="viewName">The view name in ClickHouse.</param>
+    /// <param name="selectSql">The SELECT SQL body for the view (without CREATE VIEW prefix).</param>
+    /// <param name="ifNotExists">Emit IF NOT EXISTS in CREATE VIEW DDL.</param>
+    /// <param name="orReplace">Emit OR REPLACE in CREATE VIEW DDL. Mutually exclusive with <paramref name="ifNotExists"/>.</param>
+    /// <param name="onCluster">Optional ON CLUSTER cluster name.</param>
+    /// <param name="schema">Optional schema (database) qualifier.</param>
+    public static EntityTypeBuilder<TEntity> AsViewRaw<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        string viewName,
+        string selectSql,
+        bool ifNotExists = false,
+        bool orReplace = false,
+        string? onCluster = null,
+        string? schema = null)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(viewName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(selectSql);
+
+        if (ifNotExists && orReplace)
+        {
+            throw new ArgumentException(
+                "ClickHouse CREATE VIEW does not allow combining IF NOT EXISTS with OR REPLACE.",
+                nameof(orReplace));
+        }
+
+        builder.HasNoKey();
+        builder.ToView(viewName, schema);
+
+        var metadata = new Views.ViewMetadataBase
+        {
+            ViewName = viewName,
+            ResultType = typeof(TEntity),
+            RawSelectSql = selectSql,
+            IfNotExists = ifNotExists,
+            OrReplace = orReplace,
+            OnCluster = onCluster,
+            Schema = schema
+        };
+
+        builder.HasAnnotation(ClickHouseAnnotationNames.View, true);
+        builder.HasAnnotation(ClickHouseAnnotationNames.ViewName, viewName);
+        builder.HasAnnotation(ClickHouseAnnotationNames.ViewMetadata, metadata);
+        if (ifNotExists)
+            builder.HasAnnotation(ClickHouseAnnotationNames.ViewIfNotExists, true);
+        if (orReplace)
+            builder.HasAnnotation(ClickHouseAnnotationNames.ViewOrReplace, true);
+        if (!string.IsNullOrEmpty(onCluster))
+            builder.HasAnnotation(ClickHouseAnnotationNames.ViewCluster, onCluster);
+        if (!string.IsNullOrEmpty(schema))
+            builder.HasAnnotation(ClickHouseAnnotationNames.ViewSchema, schema);
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Configures the entity as a plain ClickHouse view using a fluent builder.
+    /// </summary>
+    /// <typeparam name="TView">The view result entity type.</typeparam>
+    /// <typeparam name="TSource">The source entity type the view selects from.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="configure">Action to configure the view.</param>
+    /// <example>
+    /// <code>
+    /// modelBuilder.Entity&lt;ActiveUserView&gt;(entity =>
+    /// {
+    ///     entity.AsView&lt;ActiveUserView, User&gt;(cfg => cfg
+    ///         .FromTable()
+    ///         .Select(u => new ActiveUserView { UserId = u.UserId, Name = u.Name })
+    ///         .Where(u => u.IsActive)
+    ///         .OrReplace());
+    /// });
+    /// </code>
+    /// </example>
+    public static EntityTypeBuilder<TView> AsView<TView, TSource>(
+        this EntityTypeBuilder<TView> builder,
+        Action<Views.ViewConfiguration<TView, TSource>> configure)
+        where TView : class
+        where TSource : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(configure);
+
+        var configuration = new Views.ViewConfiguration<TView, TSource>();
+        configure(configuration);
+
+        var viewName = configuration.ViewName ?? ConvertToSnakeCase(typeof(TView).Name);
+
+        builder.HasNoKey();
+        builder.ToView(viewName, configuration.Schema);
+
+        var metadata = configuration.BuildMetadata(viewName);
+
+        builder.HasAnnotation(ClickHouseAnnotationNames.View, true);
+        builder.HasAnnotation(ClickHouseAnnotationNames.ViewName, viewName);
+        builder.HasAnnotation(ClickHouseAnnotationNames.ViewMetadata, metadata);
+        if (metadata.IfNotExists)
+            builder.HasAnnotation(ClickHouseAnnotationNames.ViewIfNotExists, true);
+        if (metadata.OrReplace)
+            builder.HasAnnotation(ClickHouseAnnotationNames.ViewOrReplace, true);
+        if (!string.IsNullOrEmpty(metadata.OnCluster))
+            builder.HasAnnotation(ClickHouseAnnotationNames.ViewCluster, metadata.OnCluster);
+        if (!string.IsNullOrEmpty(metadata.Schema))
+            builder.HasAnnotation(ClickHouseAnnotationNames.ViewSchema, metadata.Schema);
+
+        return builder;
+    }
+
+    /// <summary>
+    /// Marks a view-mapped entity as deferred so that <c>EnsureViewsAsync</c> skips it
+    /// and the caller can deploy the view manually (e.g. after the source is seeded).
+    /// </summary>
+    public static EntityTypeBuilder<TEntity> AsViewDeferred<TEntity>(
+        this EntityTypeBuilder<TEntity> builder)
+        where TEntity : class
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        builder.HasAnnotation(ClickHouseAnnotationNames.ViewDeferred, true);
+        return builder;
+    }
+
+    #endregion
+}
+
+/// <summary>
+/// Builder returned by <c>EntityTypeBuilder&lt;T&gt;.HasNested(...)</c>. Marks the
+/// navigation as a ClickHouse <c>Nested</c> column with parallel-array access
+/// semantics. The actual column layout is already produced by the Nested type
+/// mapping; this builder is the declarative hook users call when they intend
+/// to reach the sub-columns via <c>Participants.name</c> / <c>.age</c>.
+/// </summary>
+public sealed class NestedColumnBuilder<TNested> where TNested : class
+{
+    private readonly Microsoft.EntityFrameworkCore.Metadata.IMutableEntityType _entityType;
+    private readonly System.Linq.Expressions.LambdaExpression _navigation;
+
+    internal NestedColumnBuilder(
+        Microsoft.EntityFrameworkCore.Metadata.IMutableEntityType entityType,
+        System.Linq.Expressions.LambdaExpression navigation)
+    {
+        _entityType = entityType;
+        _navigation = navigation;
+    }
+
+    /// <summary>
+    /// Tags the Nested column as parallel-array-accessible. The annotation is
+    /// read by downstream LINQ translators when generating SQL that addresses
+    /// individual sub-columns.
+    /// </summary>
+    public NestedColumnBuilder<TNested> WithParallelAccess()
+    {
+        var memberName = (_navigation.Body as System.Linq.Expressions.MemberExpression)?.Member.Name
+            ?? "Nested";
+        _entityType.AddAnnotation(
+            EF.CH.Metadata.ClickHouseAnnotationNames.NestedParallelAccess + ":" + memberName,
+            true);
+        return this;
+    }
 }
