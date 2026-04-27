@@ -493,9 +493,7 @@ public class AnalyticsDbContext(string connectionString) : DbContext
         {
             entity.ToTable("user_sessions");
             entity.HasNoKey();
-            entity.UseReplacingMergeTree(
-                x => x.Version,
-                x => new { x.UserId });
+            entity.UseReplacingMergeTree(x => new { x.UserId }).WithVersion(x => x.Version);
 
             entity.Property(e => e.UserId).HasLowCardinality();
         });

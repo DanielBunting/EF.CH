@@ -427,7 +427,7 @@ public class EventsContext(string connectionString) : DbContext
         modelBuilder.Entity<Event>(entity =>
         {
             entity.HasNoKey();
-            entity.UseReplacingMergeTree(x => x.Version, x => new { x.Id })
+            entity.UseReplacingMergeTree(x => new { x.Id }).WithVersion(x => x.Version)
                 .HasSampleBy("Id");
         });
     }

@@ -56,7 +56,7 @@ public class UpsertReplacingMergeTreeTests
             {
                 e.ToTable("UpsertReplacing_Items");
                 e.HasKey(x => new { x.Id, x.Version });
-                e.UseReplacingMergeTree(x => x.Version, x => x.Id);
+                e.UseReplacingMergeTree(x => x.Id).WithVersion(x => x.Version);
             });
     }
 }

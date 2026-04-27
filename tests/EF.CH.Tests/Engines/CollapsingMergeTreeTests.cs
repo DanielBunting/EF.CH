@@ -104,7 +104,7 @@ public class CollapsingMergeTreeTests : IAsyncLifetime
         {
             entity.ToTable("collapsing_test");
             entity.HasKey(e => e.Id);
-            entity.UseCollapsingMergeTree(x => x.Sign, x => x.Id);
+            entity.UseCollapsingMergeTree(x => x.Id).WithSign(x => x.Sign);
         });
 
         var model = builder.FinalizeModel();
@@ -124,7 +124,7 @@ public class CollapsingMergeTreeTests : IAsyncLifetime
         {
             entity.ToTable("versioned_test");
             entity.HasKey(e => e.Id);
-            entity.UseVersionedCollapsingMergeTree(x => x.Sign, x => x.Version, x => x.Id);
+            entity.UseVersionedCollapsingMergeTree(x => x.Id).WithSign(x => x.Sign).WithVersion(x => x.Version);
         });
 
         var model = builder.FinalizeModel();
@@ -145,7 +145,7 @@ public class CollapsingMergeTreeTests : IAsyncLifetime
         {
             entity.ToTable("multi_order");
             entity.HasKey(e => e.Id);
-            entity.UseCollapsingMergeTree(x => x.Sign, x => new { x.UserId, x.EventTime });
+            entity.UseCollapsingMergeTree(x => new { x.UserId, x.EventTime }).WithSign(x => x.Sign);
         });
 
         var model = builder.FinalizeModel();

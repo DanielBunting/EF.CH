@@ -66,7 +66,7 @@ public class MvTargetVersionedCollapsingMergeTreeTests
                 mb.Entity<Target>(e =>
                 {
                     e.ToTable("MtToVerCollapsingTarget"); e.HasNoKey();
-                    e.UseVersionedCollapsingMergeTree(x => x.Sign, x => x.Version, x => x.AccountId);
+                    e.UseVersionedCollapsingMergeTree(x => x.AccountId).WithSign(x => x.Sign).WithVersion(x => x.Version);
                     e.AsMaterializedView<Target, Row>(rows => rows
                         .Select(r => new Target { AccountId = r.AccountId, Sign = r.Sign, Version = r.Version, Score = r.Score }));
                 });
@@ -88,7 +88,7 @@ public class MvTargetVersionedCollapsingMergeTreeTests
                 mb.Entity<Target>(e =>
                 {
                     e.ToTable("NullToVerCollapsingTarget"); e.HasNoKey();
-                    e.UseVersionedCollapsingMergeTree(x => x.Sign, x => x.Version, x => x.AccountId);
+                    e.UseVersionedCollapsingMergeTree(x => x.AccountId).WithSign(x => x.Sign).WithVersion(x => x.Version);
                     e.AsMaterializedView<Target, Row>(rows => rows
                         .Select(r => new Target { AccountId = r.AccountId, Sign = r.Sign, Version = r.Version, Score = r.Score }));
                 });

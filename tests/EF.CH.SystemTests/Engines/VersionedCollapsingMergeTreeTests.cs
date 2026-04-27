@@ -59,7 +59,7 @@ public class VersionedCollapsingMergeTreeTests
             {
                 e.ToTable("VerCollapsing_Rows");
                 e.HasKey(x => new { x.Id, x.Sign, x.Version });
-                e.UseVersionedCollapsingMergeTree(x => x.Sign, x => x.Version, x => x.Id);
+                e.UseVersionedCollapsingMergeTree(x => x.Id).WithSign(x => x.Sign).WithVersion(x => x.Version);
             });
     }
 }

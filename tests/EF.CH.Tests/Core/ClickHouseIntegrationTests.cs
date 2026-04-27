@@ -916,7 +916,7 @@ public class CustomersDbContext : DbContext
         {
             entity.ToTable("Customers");
             entity.HasKey(e => e.Id);
-            entity.UseReplacingMergeTree(x => x.UpdatedAt, x => x.Id);
+            entity.UseReplacingMergeTree(x => x.Id).WithVersion(x => x.UpdatedAt);
         });
     }
 }
@@ -997,10 +997,9 @@ public class DeletableUsersDbContext : DbContext
         {
             entity.ToTable("DeletableUsers");
             entity.HasKey(e => e.Id);
-            entity.UseReplacingMergeTree(
-                x => x.Version,
-                x => x.IsDeleted,
-                x => x.Id);
+            entity.UseReplacingMergeTree(x => x.Id)
+                .WithVersion(x => x.Version)
+                .WithIsDeleted(x => x.IsDeleted);
         });
     }
 }

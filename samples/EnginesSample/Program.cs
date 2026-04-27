@@ -374,7 +374,7 @@ public class ReplacingMergeTreeContext(string connectionString) : DbContext
         modelBuilder.Entity<UserProfile>(entity =>
         {
             entity.HasNoKey();
-            entity.UseReplacingMergeTree(x => x.Version, x => new { x.UserId });
+            entity.UseReplacingMergeTree(x => new { x.UserId }).WithVersion(x => x.Version);
         });
     }
 }
@@ -498,7 +498,7 @@ public class CollapsingMergeTreeContext(string connectionString) : DbContext
         modelBuilder.Entity<UserBalance>(entity =>
         {
             entity.HasNoKey();
-            entity.UseCollapsingMergeTree(x => x.Sign, x => new { x.UserId });
+            entity.UseCollapsingMergeTree(x => new { x.UserId }).WithSign(x => x.Sign);
         });
     }
 }

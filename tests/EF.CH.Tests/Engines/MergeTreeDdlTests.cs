@@ -233,10 +233,9 @@ public class MergeTreeDdlTests
         {
             entity.ToTable("deletable");
             entity.HasKey(e => e.Id);
-            entity.UseReplacingMergeTree(
-                x => x.Version,
-                x => x.IsDeleted,
-                x => x.Id);
+            entity.UseReplacingMergeTree(x => x.Id)
+                .WithVersion(x => x.Version)
+                .WithIsDeleted(x => x.IsDeleted);
         });
 
         var model = builder.FinalizeModel();

@@ -1228,9 +1228,7 @@ public class SimpleProjectionMaterializedViewContext : DbContext
         modelBuilder.Entity<MvProcessedEvent>(entity =>
         {
             entity.ToTable("ProcessedEvents_MV");
-            entity.UseReplacingMergeTree(
-                x => x.Version,
-                x => new { x.EventNameId, x.EventTime });
+            entity.UseReplacingMergeTree(x => new { x.EventNameId, x.EventTime }).WithVersion(x => x.Version);
 
             entity.AsMaterializedView<MvProcessedEvent, MvRawEvent>(
                 query: raw => raw.Select(r => new MvProcessedEvent

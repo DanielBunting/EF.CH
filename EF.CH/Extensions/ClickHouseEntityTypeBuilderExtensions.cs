@@ -356,89 +356,15 @@ public static class ClickHouseEntityTypeBuilderExtensions
     /// entity.UseReplacingMergeTree(x => new { x.UserId, x.Timestamp });
     /// </code>
     /// </example>
-    public static EntityTypeBuilder<TEntity> UseReplacingMergeTree<TEntity>(
+    public static Engines.ReplacingMergeTreeBuilder<TEntity> UseReplacingMergeTree<TEntity>(
         this EntityTypeBuilder<TEntity> builder,
         Expression<Func<TEntity, object>> orderByExpression)
         where TEntity : class
     {
         ArgumentNullException.ThrowIfNull(orderByExpression);
         var columns = ExpressionExtensions.GetPropertyNames(orderByExpression);
-        return builder.UseReplacingMergeTree(columns);
-    }
-
-    /// <summary>
-    /// Configures the entity to use a ReplacingMergeTree engine with a version column.
-    /// </summary>
-    /// <typeparam name="TEntity">The entity type.</typeparam>
-    /// <param name="builder">The entity type builder.</param>
-    /// <param name="versionColumnExpression">Expression selecting the version column for deduplication.</param>
-    /// <param name="orderByExpression">Expression selecting the ORDER BY columns.</param>
-    /// <returns>The entity type builder for chaining.</returns>
-    /// <example>
-    /// <code>
-    /// entity.UseReplacingMergeTree(x => x.UpdatedAt, x => new { x.Id });
-    /// </code>
-    /// </example>
-    public static EntityTypeBuilder<TEntity> UseReplacingMergeTree<TEntity, TVersion>(
-        this EntityTypeBuilder<TEntity> builder,
-        Expression<Func<TEntity, TVersion>> versionColumnExpression,
-        Expression<Func<TEntity, object>> orderByExpression)
-        where TEntity : class
-    {
-        ArgumentNullException.ThrowIfNull(versionColumnExpression);
-        ArgumentNullException.ThrowIfNull(orderByExpression);
-        var versionColumn = ExpressionExtensions.GetPropertyName(versionColumnExpression);
-        var columns = ExpressionExtensions.GetPropertyNames(orderByExpression);
-        return builder.UseReplacingMergeTree(versionColumn, columns);
-    }
-
-    /// <summary>
-    /// Configures the entity to use a ReplacingMergeTree engine with version and is_deleted columns.
-    /// </summary>
-    /// <typeparam name="TEntity">The entity type.</typeparam>
-    /// <typeparam name="TVersion">The version column type.</typeparam>
-    /// <typeparam name="TIsDeleted">The is_deleted column type (should be byte/UInt8).</typeparam>
-    /// <param name="builder">The entity type builder.</param>
-    /// <param name="versionColumnExpression">Expression selecting the version column.</param>
-    /// <param name="isDeletedColumnExpression">Expression selecting the is_deleted column (UInt8).</param>
-    /// <param name="orderByExpression">Expression selecting the ORDER BY columns.</param>
-    /// <returns>The entity type builder for chaining.</returns>
-    /// <remarks>
-    /// <para>
-    /// Requires ClickHouse 23.2+. When is_deleted is specified, rows where the winning version
-    /// has is_deleted=1 are physically removed during background merges.
-    /// </para>
-    /// <para>
-    /// With FINAL, deleted rows are automatically excluded from query results.
-    /// </para>
-    /// </remarks>
-    /// <example>
-    /// <code>
-    /// entity.UseReplacingMergeTree(
-    ///     x => x.Version,      // Version column
-    ///     x => x.IsDeleted,    // IsDeleted column (UInt8)
-    ///     x => new { x.Id });  // ORDER BY
-    /// </code>
-    /// </example>
-    public static EntityTypeBuilder<TEntity> UseReplacingMergeTree<TEntity, TVersion, TIsDeleted>(
-        this EntityTypeBuilder<TEntity> builder,
-        Expression<Func<TEntity, TVersion>> versionColumnExpression,
-        Expression<Func<TEntity, TIsDeleted>> isDeletedColumnExpression,
-        Expression<Func<TEntity, object>> orderByExpression)
-        where TEntity : class
-    {
-        ArgumentNullException.ThrowIfNull(versionColumnExpression);
-        ArgumentNullException.ThrowIfNull(isDeletedColumnExpression);
-        ArgumentNullException.ThrowIfNull(orderByExpression);
-
-        var versionColumn = ExpressionExtensions.GetPropertyName(versionColumnExpression);
-        var isDeletedColumn = ExpressionExtensions.GetPropertyName(isDeletedColumnExpression);
-        var columns = ExpressionExtensions.GetPropertyNames(orderByExpression);
-
-        builder.UseReplacingMergeTree(versionColumn, columns);
-        builder.HasAnnotation(ClickHouseAnnotationNames.IsDeletedColumn, isDeletedColumn);
-
-        return builder;
+        builder.UseReplacingMergeTree(columns);
+        return new Engines.ReplacingMergeTreeBuilder<TEntity>(builder);
     }
 
     /// <summary>
@@ -526,14 +452,15 @@ public static class ClickHouseEntityTypeBuilderExtensions
     /// <param name="builder">The entity type builder.</param>
     /// <param name="orderByExpression">Expression selecting the ORDER BY columns.</param>
     /// <returns>The entity type builder for chaining.</returns>
-    public static EntityTypeBuilder<TEntity> UseSummingMergeTree<TEntity>(
+    public static Engines.SummingMergeTreeBuilder<TEntity> UseSummingMergeTree<TEntity>(
         this EntityTypeBuilder<TEntity> builder,
         Expression<Func<TEntity, object>> orderByExpression)
         where TEntity : class
     {
         ArgumentNullException.ThrowIfNull(orderByExpression);
         var columns = ExpressionExtensions.GetPropertyNames(orderByExpression);
-        return builder.UseSummingMergeTree(columns);
+        builder.UseSummingMergeTree(columns);
+        return new Engines.SummingMergeTreeBuilder<TEntity>(builder);
     }
 
     /// <summary>
@@ -543,14 +470,15 @@ public static class ClickHouseEntityTypeBuilderExtensions
     /// <param name="builder">The entity type builder.</param>
     /// <param name="orderByExpression">Expression selecting the ORDER BY columns.</param>
     /// <returns>The entity type builder for chaining.</returns>
-    public static EntityTypeBuilder<TEntity> UseAggregatingMergeTree<TEntity>(
+    public static Engines.AggregatingMergeTreeBuilder<TEntity> UseAggregatingMergeTree<TEntity>(
         this EntityTypeBuilder<TEntity> builder,
         Expression<Func<TEntity, object>> orderByExpression)
         where TEntity : class
     {
         ArgumentNullException.ThrowIfNull(orderByExpression);
         var columns = ExpressionExtensions.GetPropertyNames(orderByExpression);
-        return builder.UseAggregatingMergeTree(columns);
+        builder.UseAggregatingMergeTree(columns);
+        return new Engines.AggregatingMergeTreeBuilder<TEntity>(builder);
     }
 
     #region CollapsingMergeTree
@@ -572,22 +500,18 @@ public static class ClickHouseEntityTypeBuilderExtensions
     /// <returns>The entity type builder for chaining.</returns>
     /// <example>
     /// <code>
-    /// entity.UseCollapsingMergeTree(
-    ///     signColumn: x => x.Sign,
-    ///     orderBy: x => new { x.UserId, x.EventTime });
+    /// entity.UseCollapsingMergeTree(x => new { x.UserId, x.EventTime })
+    ///       .WithSign(x => x.Sign);
     /// </code>
     /// </example>
-    public static EntityTypeBuilder<TEntity> UseCollapsingMergeTree<TEntity>(
+    public static Engines.CollapsingMergeTreeBuilder<TEntity> UseCollapsingMergeTree<TEntity>(
         this EntityTypeBuilder<TEntity> builder,
-        Expression<Func<TEntity, sbyte>> signColumnExpression,
         Expression<Func<TEntity, object>> orderByExpression)
         where TEntity : class
     {
         ArgumentNullException.ThrowIfNull(builder);
-        ArgumentNullException.ThrowIfNull(signColumnExpression);
         ArgumentNullException.ThrowIfNull(orderByExpression);
 
-        var signColumn = ExpressionExtensions.GetPropertyName(signColumnExpression);
         var orderByColumns = ExpressionExtensions.GetPropertyNames(orderByExpression);
 
         if (orderByColumns.Length == 0)
@@ -596,10 +520,9 @@ public static class ClickHouseEntityTypeBuilderExtensions
         }
 
         builder.HasAnnotation(ClickHouseAnnotationNames.Engine, ClickHouseEngineNames.CollapsingMergeTree);
-        builder.HasAnnotation(ClickHouseAnnotationNames.SignColumn, signColumn);
         builder.HasAnnotation(ClickHouseAnnotationNames.OrderBy, orderByColumns);
 
-        return builder;
+        return new Engines.CollapsingMergeTreeBuilder<TEntity>(builder);
     }
 
     /// <summary>
@@ -649,26 +572,19 @@ public static class ClickHouseEntityTypeBuilderExtensions
     /// <returns>The entity type builder for chaining.</returns>
     /// <example>
     /// <code>
-    /// entity.UseVersionedCollapsingMergeTree(
-    ///     signColumn: x => x.Sign,
-    ///     versionColumn: x => x.Version,
-    ///     orderBy: x => new { x.UserId, x.EventTime });
+    /// entity.UseVersionedCollapsingMergeTree(x => new { x.UserId, x.EventTime })
+    ///       .WithSign(x => x.Sign)
+    ///       .WithVersion(x => x.Version);
     /// </code>
     /// </example>
-    public static EntityTypeBuilder<TEntity> UseVersionedCollapsingMergeTree<TEntity, TVersion>(
+    public static Engines.VersionedCollapsingMergeTreeBuilder<TEntity> UseVersionedCollapsingMergeTree<TEntity>(
         this EntityTypeBuilder<TEntity> builder,
-        Expression<Func<TEntity, sbyte>> signColumnExpression,
-        Expression<Func<TEntity, TVersion>> versionColumnExpression,
         Expression<Func<TEntity, object>> orderByExpression)
         where TEntity : class
     {
         ArgumentNullException.ThrowIfNull(builder);
-        ArgumentNullException.ThrowIfNull(signColumnExpression);
-        ArgumentNullException.ThrowIfNull(versionColumnExpression);
         ArgumentNullException.ThrowIfNull(orderByExpression);
 
-        var signColumn = ExpressionExtensions.GetPropertyName(signColumnExpression);
-        var versionColumn = ExpressionExtensions.GetPropertyName(versionColumnExpression);
         var orderByColumns = ExpressionExtensions.GetPropertyNames(orderByExpression);
 
         if (orderByColumns.Length == 0)
@@ -677,11 +593,9 @@ public static class ClickHouseEntityTypeBuilderExtensions
         }
 
         builder.HasAnnotation(ClickHouseAnnotationNames.Engine, ClickHouseEngineNames.VersionedCollapsingMergeTree);
-        builder.HasAnnotation(ClickHouseAnnotationNames.SignColumn, signColumn);
-        builder.HasAnnotation(ClickHouseAnnotationNames.VersionColumn, versionColumn);
         builder.HasAnnotation(ClickHouseAnnotationNames.OrderBy, orderByColumns);
 
-        return builder;
+        return new Engines.VersionedCollapsingMergeTreeBuilder<TEntity>(builder);
     }
 
     /// <summary>
