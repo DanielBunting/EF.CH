@@ -428,7 +428,7 @@ public class EventsContext(string connectionString) : DbContext
         {
             entity.HasNoKey();
             entity.UseReplacingMergeTree(x => new { x.Id }).WithVersion(x => x.Version)
-                .HasSampleBy("Id");
+                .And().HasSampleBy("Id");
         });
     }
 }
