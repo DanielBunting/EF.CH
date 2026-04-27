@@ -389,20 +389,15 @@ public static class ClickHouseServiceCollectionExtensions
             ServiceDescriptor.Singleton<IEvaluatableExpressionFilterPlugin, ClickHouseEvaluatableExpressionFilterPlugin>());
 
         // Register external config resolver for postgresql() table function support.
-        // Optionally injects IConfiguration for connection profile support.
-        services.TryAddSingleton<IExternalConfigResolver>(sp =>
-        {
-            var configuration = sp.GetService<IConfiguration>();
-            return new ExternalConfigResolver(configuration);
-        });
+        // Scoped so we can read IConfiguration off the per-context IDbContextOptions —
+        // a Singleton would receive a null IDbContextOptions from the root scope.
+        services.TryAddScoped<IExternalConfigResolver>(sp =>
+            new ExternalConfigResolver(ResolveApplicationConfiguration(sp)));
 
         // Register dictionary config resolver for external dictionary sources (PostgreSQL, MySQL, HTTP).
-        // Resolves credentials from environment variables or IConfiguration at runtime.
-        services.TryAddSingleton<IDictionaryConfigResolver>(sp =>
-        {
-            var configuration = sp.GetService<IConfiguration>();
-            return new DictionaryConfigResolver(configuration);
-        });
+        // See lifetime note above.
+        services.TryAddScoped<IDictionaryConfigResolver>(sp =>
+            new DictionaryConfigResolver(ResolveApplicationConfiguration(sp)));
 
         AddClickHouseFeatureServices(services);
 
@@ -415,5 +410,17 @@ public static class ClickHouseServiceCollectionExtensions
         services.TryAddScoped<IClickHouseInsertSelectExecutor, ClickHouseInsertSelectExecutor>();
         services.TryAddScoped<IClickHouseQueryProfiler, ClickHouseQueryProfiler>();
         services.TryAddScoped<IClickHouseTempTableManager, ClickHouseTempTableManager>();
+    }
+
+    // EF Core's internal service provider does not register IConfiguration. The
+    // application's configuration is reachable via CoreOptionsExtension.ApplicationServiceProvider,
+    // which AddDbContext (and friends) populates with the host's IServiceProvider.
+    internal static IConfiguration? ResolveApplicationConfiguration(IServiceProvider efServices)
+    {
+        var appServices = efServices
+            .GetService<IDbContextOptions>()
+            ?.FindExtension<CoreOptionsExtension>()
+            ?.ApplicationServiceProvider;
+        return appServices?.GetService<IConfiguration>();
     }
 }

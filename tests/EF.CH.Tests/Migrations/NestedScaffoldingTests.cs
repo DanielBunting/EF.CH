@@ -1,4 +1,5 @@
 using ClickHouse.Driver.ADO;
+using EF.CH.Design.Internal;
 using EF.CH.Extensions;
 using EF.CH.Metadata;
 using EF.CH.Scaffolding.Internal;
@@ -7,9 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Scaffolding;
 using Microsoft.EntityFrameworkCore.Scaffolding.Metadata;
 using Microsoft.EntityFrameworkCore.Storage;
-using Microsoft.EntityFrameworkCore.Storage.Json;
-using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
-using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.DependencyInjection;
 using Testcontainers.ClickHouse;
 using Xunit;
 
@@ -232,37 +231,12 @@ public class NestedScaffoldingTests : IAsyncLifetime
 
     private DatabaseModel Scaffold()
     {
-        var logger = NullLogger<ClickHouseDatabaseModelFactory>.Instance;
-
-        // Create type mapping source with required dependencies
-        var typeMappingSource = CreateTypeMappingSource();
-
-        var factory = new ClickHouseDatabaseModelFactory(logger, typeMappingSource);
+        var services = new ServiceCollection();
+        new ClickHouseDesignTimeServices().ConfigureDesignTimeServices(services);
+        var factory = services.BuildServiceProvider().GetRequiredService<IDatabaseModelFactory>();
 
         return factory.Create(
             GetConnectionString(),
             new DatabaseModelFactoryOptions());
-    }
-
-    private static ClickHouseTypeMappingSource CreateTypeMappingSource()
-    {
-        // Create minimal dependencies for type mapping source
-        var valueConverterSelector = new ValueConverterSelector(
-            new ValueConverterSelectorDependencies());
-
-        var jsonValueReaderWriterSource = new JsonValueReaderWriterSource(
-            new JsonValueReaderWriterSourceDependencies());
-
-        var typeMappingSourceDependencies = new TypeMappingSourceDependencies(
-            valueConverterSelector,
-            jsonValueReaderWriterSource,
-            Array.Empty<ITypeMappingSourcePlugin>());
-
-        var relationalTypeMappingSourceDependencies = new RelationalTypeMappingSourceDependencies(
-            Array.Empty<IRelationalTypeMappingSourcePlugin>());
-
-        return new ClickHouseTypeMappingSource(
-            typeMappingSourceDependencies,
-            relationalTypeMappingSourceDependencies);
     }
 }

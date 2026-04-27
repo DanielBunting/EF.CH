@@ -4,6 +4,8 @@ using System.Text.RegularExpressions;
 using ClickHouse.Driver.ADO;
 using EF.CH.Metadata;
 using EF.CH.Storage.Internal;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Scaffolding;
 using Microsoft.EntityFrameworkCore.Scaffolding.Metadata;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -17,7 +19,7 @@ namespace EF.CH.Scaffolding.Internal;
 /// </summary>
 public partial class ClickHouseDatabaseModelFactory : IDatabaseModelFactory
 {
-    private readonly ILogger<ClickHouseDatabaseModelFactory> _logger;
+    private readonly IDiagnosticsLogger<DbLoggerCategory.Scaffolding> _logger;
     private readonly IRelationalTypeMappingSource _typeMappingSource;
     private readonly ClickHouseEngineParser _engineParser;
 
@@ -25,7 +27,7 @@ public partial class ClickHouseDatabaseModelFactory : IDatabaseModelFactory
     private readonly Dictionary<string, string> _enumDefinitions = new();
 
     public ClickHouseDatabaseModelFactory(
-        ILogger<ClickHouseDatabaseModelFactory> logger,
+        IDiagnosticsLogger<DbLoggerCategory.Scaffolding> logger,
         IRelationalTypeMappingSource typeMappingSource)
     {
         _logger = logger;
@@ -53,7 +55,7 @@ public partial class ClickHouseDatabaseModelFactory : IDatabaseModelFactory
         var database = GetDatabaseName(connection);
         databaseModel.DatabaseName = database;
 
-        _logger.LogDebug("Scaffolding database: {Database}", database);
+        _logger.Logger.LogDebug("Scaffolding database: {Database}", database);
 
         // Query tables (filtered by options if specified)
         var tables = GetTables(connection, database, options);
@@ -63,7 +65,7 @@ public partial class ClickHouseDatabaseModelFactory : IDatabaseModelFactory
         var refreshableMvs = GetRefreshableMaterializedViews(connection, database, options);
         tables.AddRange(refreshableMvs);
 
-        _logger.LogDebug("Found {Count} tables", tables.Count);
+        _logger.Logger.LogDebug("Found {Count} tables", tables.Count);
 
         if (tables.Count == 0)
         {
@@ -528,7 +530,7 @@ public partial class ClickHouseDatabaseModelFactory : IDatabaseModelFactory
         {
             // Fallback for unknown types
             clrType = typeof(string);
-            _logger.LogWarning("Unknown ClickHouse type '{Type}' for column '{Column}', mapping to string",
+            _logger.Logger.LogWarning("Unknown ClickHouse type '{Type}' for column '{Column}', mapping to string",
                 innerType, column.Name);
         }
 

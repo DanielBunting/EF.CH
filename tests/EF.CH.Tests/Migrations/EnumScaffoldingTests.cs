@@ -8,7 +8,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Scaffolding;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging.Abstractions;
 using Testcontainers.ClickHouse;
 using Xunit;
 
@@ -255,17 +254,11 @@ public class EnumScaffoldingTests : IAsyncLifetime
         return new EnumScaffoldingTestContext(options);
     }
 
-    private ClickHouseDatabaseModelFactory CreateDatabaseModelFactory()
+    private static IDatabaseModelFactory CreateDatabaseModelFactory()
     {
         var services = new ServiceCollection();
-        services.AddEntityFrameworkClickHouse();
-
-        var serviceProvider = services.BuildServiceProvider();
-        var typeMappingSource = serviceProvider.GetRequiredService<IRelationalTypeMappingSource>();
-
-        return new ClickHouseDatabaseModelFactory(
-            NullLogger<ClickHouseDatabaseModelFactory>.Instance,
-            typeMappingSource);
+        new ClickHouseDesignTimeServices().ConfigureDesignTimeServices(services);
+        return services.BuildServiceProvider().GetRequiredService<IDatabaseModelFactory>();
     }
 
     #endregion
