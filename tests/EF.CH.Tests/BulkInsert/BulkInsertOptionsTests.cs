@@ -50,10 +50,11 @@ public class BulkInsertOptionsTests
     }
 
     [Fact]
-    public void WithAsyncInsert_WithWait_EnablesWaiting()
+    public void WaitForCompletion_EnablesBothFlags()
     {
         var options = new ClickHouseBulkInsertOptions()
-            .WithAsyncInsert(wait: true);
+            .WithAsyncInsert()
+            .WaitForCompletion();
 
         Assert.True(options.UseAsyncInsert);
         Assert.True(options.WaitForAsyncInsert);
@@ -130,7 +131,8 @@ public class BulkInsertOptionsTests
         var options = new ClickHouseBulkInsertOptions()
             .WithBatchSize(5000)
             .WithFormat(ClickHouseBulkInsertFormat.JsonEachRow)
-            .WithAsyncInsert(wait: true)
+            .WithAsyncInsert()
+            .WaitForCompletion()
             .WithParallelism(4)
             .WithMaxInsertThreads(8)
             .WithSetting("custom", "value")

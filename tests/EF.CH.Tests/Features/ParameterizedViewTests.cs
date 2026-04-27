@@ -458,7 +458,7 @@ public class ParameterizedViewTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task DropParameterizedViewAsync_DropsView()
+    public async Task DropParameterizedViewAsync_StrictDropsThenIfExistsIsSilent()
     {
         await using var context = CreateContext();
 
@@ -467,42 +467,34 @@ public class ParameterizedViewTests : IAsyncLifetime
             "temp_view",
             "SELECT 1 AS value");
 
-        // Verify the view exists by querying system.tables
-        var existsBefore = await context.Database.ExecuteSqlRawAsync(
-            "SELECT 1 FROM system.tables WHERE name = 'temp_view' AND database = currentDatabase()");
-
-        // Drop the view
+        // Drop the view (strict).
         await context.Database.DropParameterizedViewAsync("temp_view");
 
-        // Verify the view is dropped (query should not fail)
-        // Drop again with ifExists=true should not throw
-        await context.Database.DropParameterizedViewAsync("temp_view", ifExists: true);
+        // Strict drop on a missing view throws.
+        await Assert.ThrowsAsync<ClickHouse.Driver.ClickHouseServerException>(() =>
+            context.Database.DropParameterizedViewAsync("temp_view"));
 
-        // This should succeed (view doesn't exist, but ifExists=true)
-        Assert.True(true);
+        // The IF EXISTS variant is silent on missing views.
+        await context.Database.DropParameterizedViewIfExistsAsync("temp_view");
     }
 
     [Fact]
-    public async Task CreateParameterizedViewAsync_WithIfNotExists_DoesNotThrow()
+    public async Task CreateParameterizedViewAsync_IsIdempotent()
     {
         await using var context = CreateContext();
 
-        // Create a view
+        // CreateParameterizedViewAsync always emits IF NOT EXISTS — calls are
+        // idempotent.
         await context.Database.CreateParameterizedViewAsync(
             "reusable_view",
             "SELECT 1 AS value");
 
-        // Creating again without IF NOT EXISTS would throw
-        // But with ifNotExists=true, it should not throw
         await context.Database.CreateParameterizedViewAsync(
             "reusable_view",
-            "SELECT 1 AS value",
-            ifNotExists: true);
+            "SELECT 1 AS value");
 
         // Clean up
-        await context.Database.DropParameterizedViewAsync("reusable_view");
-
-        Assert.True(true);
+        await context.Database.DropParameterizedViewIfExistsAsync("reusable_view");
     }
 
     #endregion
@@ -549,8 +541,7 @@ public class ParameterizedViewTests : IAsyncLifetime
                      timestamp AS ""Timestamp"",
                      value AS ""Value""
               FROM typed_events
-              WHERE user_id = {user_id:UInt64}",
-            ifNotExists: true);
+              WHERE user_id = {user_id:UInt64}");
 
         // Insert test data
         await context.Database.ExecuteSqlRawAsync(@"
@@ -597,8 +588,7 @@ public class ParameterizedViewTests : IAsyncLifetime
                      timestamp AS ""Timestamp"",
                      value AS ""Value""
               FROM conv_events
-              WHERE user_id = {user_id:UInt64}",
-            ifNotExists: true);
+              WHERE user_id = {user_id:UInt64}");
 
         // Insert test data
         await context.Database.ExecuteSqlRawAsync(@"
@@ -695,7 +685,7 @@ public class ParameterizedViewTests : IAsyncLifetime
         ");
 
         // Ensure view is created
-        await context.Database.EnsureParameterizedViewAsync<FluentEventView>(ifNotExists: true);
+        await context.Database.EnsureParameterizedViewAsync<FluentEventView>();
 
         // Insert test data
         await context.Database.ExecuteSqlRawAsync(@"

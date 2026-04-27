@@ -120,9 +120,9 @@ public sealed class RefreshableMaterializedViewBuilder
     /// Emits <c>APPEND</c> — refresh appends rows instead of atomically replacing
     /// the target. Mutually exclusive with <see cref="Empty"/>.
     /// </summary>
-    public RefreshableMaterializedViewBuilder Append(bool value = true)
+    public RefreshableMaterializedViewBuilder Append()
     {
-        _append = value;
+        _append = true;
         return this;
     }
 
@@ -130,9 +130,9 @@ public sealed class RefreshableMaterializedViewBuilder
     /// Emits <c>EMPTY</c> — skip the initial refresh on creation. Mutually
     /// exclusive with <see cref="Append"/>.
     /// </summary>
-    public RefreshableMaterializedViewBuilder Empty(bool value = true)
+    public RefreshableMaterializedViewBuilder Empty()
     {
-        _empty = value;
+        _empty = true;
         return this;
     }
 

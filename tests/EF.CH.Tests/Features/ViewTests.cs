@@ -246,8 +246,7 @@ public class ViewTests : IAsyncLifetime
 
         await context.Database.CreateViewAsync(
             "basic_view",
-            "SELECT id AS \"Id\", name AS \"Name\" FROM source_rows",
-            ifNotExists: true);
+            "SELECT id AS \"Id\", name AS \"Name\" FROM source_rows");
 
         var rows = await context.FromView<BasicView>("basic_view")
             .OrderBy(r => r.Id)
@@ -339,27 +338,23 @@ public class ViewTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task CreateViewAsync_OrReplaceAndIfNotExists_Throws()
+    public async Task DropViewIfExistsAsync_IsSilent_DropViewAsync_Throws()
     {
         await using var context = CreateHasViewContext();
 
-        await Assert.ThrowsAsync<ArgumentException>(() =>
-            context.Database.CreateViewAsync(
-                "v",
-                "SELECT 1",
-                ifNotExists: true,
-                orReplace: true));
-    }
+        // CreateViewAsync emits IF NOT EXISTS by default — idempotent.
+        await context.Database.CreateViewAsync("temp_v", "SELECT 1 AS x");
+        await context.Database.CreateViewAsync("temp_v", "SELECT 1 AS x");
 
-    [Fact]
-    public async Task DropViewAsync_DropsThenIdempotent()
-    {
-        await using var context = CreateHasViewContext();
-
-        await context.Database.CreateViewAsync("temp_v", "SELECT 1 AS x", ifNotExists: true);
+        // DropViewAsync (strict) drops the view.
         await context.Database.DropViewAsync("temp_v");
-        // Second drop with ifExists=true should not throw.
-        await context.Database.DropViewAsync("temp_v", ifExists: true);
+
+        // Second strict drop throws because the view is gone.
+        await Assert.ThrowsAsync<ClickHouse.Driver.ClickHouseServerException>(() =>
+            context.Database.DropViewAsync("temp_v"));
+
+        // The IfExists variant is silent on missing views.
+        await context.Database.DropViewIfExistsAsync("temp_v");
     }
 
     #endregion
