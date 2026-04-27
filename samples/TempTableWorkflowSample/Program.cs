@@ -239,17 +239,19 @@ static async Task LoadToFinalAsync(EtlDbContext context)
 
     // INSERT...SELECT from source to final table
     // This moves data server-side without client round-trips
-    var insertResult = await context.FinalRecords.ExecuteInsertFromQueryAsync(
-        context.RawImports.Where(r => r.Status == "valid"),
-        raw => new FinalRecord
-        {
-            ExternalId = raw.ExternalId,
-            CategoryCode = raw.CategoryCode,
-            RegionCode = raw.RegionCode,
-            Amount = raw.RawAmount,
-            ImportDate = raw.RawDate,
-            ProcessedAt = DateTime.UtcNow
-        });
+    var insertResult = await context.RawImports
+        .Where(r => r.Status == "valid")
+        .InsertIntoAsync(
+            context.FinalRecords,
+            raw => new FinalRecord
+            {
+                ExternalId = raw.ExternalId,
+                CategoryCode = raw.CategoryCode,
+                RegionCode = raw.RegionCode,
+                Amount = raw.RawAmount,
+                ImportDate = raw.RawDate,
+                ProcessedAt = DateTime.UtcNow
+            });
 
     Console.WriteLine($"INSERT...SELECT completed in {insertResult.Elapsed.TotalMilliseconds:F0}ms");
 
@@ -340,17 +342,18 @@ static async Task ScopedWorkflowAsync(EtlDbContext context)
         // Clear existing final records for clean demo
         await context.Database.TruncateTableAsync("final_records");
 
-        var loadResult = await context.FinalRecords.ExecuteInsertFromQueryAsync(
-            filterTemp.Query(),
-            raw => new FinalRecord
-            {
-                ExternalId = raw.ExternalId,
-                CategoryCode = raw.CategoryCode,
-                RegionCode = raw.RegionCode,
-                Amount = raw.RawAmount,
-                ImportDate = raw.RawDate,
-                ProcessedAt = DateTime.UtcNow
-            });
+        var loadResult = await filterTemp.Query()
+            .InsertIntoAsync(
+                context.FinalRecords,
+                raw => new FinalRecord
+                {
+                    ExternalId = raw.ExternalId,
+                    CategoryCode = raw.CategoryCode,
+                    RegionCode = raw.RegionCode,
+                    Amount = raw.RawAmount,
+                    ImportDate = raw.RawDate,
+                    ProcessedAt = DateTime.UtcNow
+                });
 
         var finalCount = await context.FinalRecords.CountAsync();
         Console.WriteLine($"[Load] Loaded {finalCount:N0} records to final table " +

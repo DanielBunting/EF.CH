@@ -112,7 +112,8 @@ public static class ClickHouseQueryableExtensions
             .First(m => m.Name == nameof(Sample) && m.GetParameters().Length == 3);
 
     /// <summary>
-    /// Applies ClickHouse query settings to the query.
+    /// Applies a single ClickHouse query setting to the query.
+    /// Chain calls to apply multiple settings.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -128,36 +129,6 @@ public static class ClickHouseQueryableExtensions
     /// - max_execution_time: Query timeout in seconds
     /// </para>
     /// </remarks>
-    /// <typeparam name="TEntity">The entity type.</typeparam>
-    /// <param name="source">The source queryable.</param>
-    /// <param name="settings">Dictionary of setting names and values.</param>
-    /// <returns>A queryable with SETTINGS applied.</returns>
-    public static IQueryable<TEntity> WithSettings<TEntity>(
-        this IQueryable<TEntity> source,
-        IDictionary<string, object> settings)
-    {
-        ArgumentNullException.ThrowIfNull(source);
-        ArgumentNullException.ThrowIfNull(settings);
-
-        if (settings.Count == 0)
-        {
-            return source;
-        }
-
-        // Create a copy of the settings dictionary to avoid mutations
-        var settingsCopy = new Dictionary<string, object>(settings);
-
-        return source.Provider.CreateQuery<TEntity>(
-            Expression.Call(
-                null,
-                WithSettingsMethodInfo.MakeGenericMethod(typeof(TEntity)),
-                source.Expression,
-                WrapInEfConstant(settingsCopy)));
-    }
-
-    /// <summary>
-    /// Applies a single ClickHouse query setting to the query.
-    /// </summary>
     /// <typeparam name="TEntity">The entity type.</typeparam>
     /// <param name="source">The source queryable.</param>
     /// <param name="name">The setting name.</param>
@@ -203,10 +174,6 @@ public static class ClickHouseQueryableExtensions
         ArgumentNullException.ThrowIfNull(setting);
         return source.WithSetting(setting.Name, value!);
     }
-
-    internal static readonly MethodInfo WithSettingsMethodInfo =
-        typeof(ClickHouseQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
-            .First(m => m.Name == nameof(WithSettings));
 
     internal static readonly MethodInfo WithSettingMethodInfo =
         typeof(ClickHouseQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)

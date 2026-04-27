@@ -8,7 +8,7 @@ Demonstrates high-throughput data operations supported by EF.CH for ClickHouse.
 
 2. **BulkInsertStreamingAsync** - Stream records from an `IAsyncEnumerable<T>` without loading all data into memory. Ideal for large datasets or data pipeline scenarios.
 
-3. **INSERT...SELECT** - Server-side data movement between tables using `ExecuteInsertFromQueryAsync`. The data never leaves ClickHouse, making this efficient for archiving or ETL operations.
+3. **INSERT...SELECT** - Server-side data movement between tables using `InsertIntoAsync`. The data never leaves ClickHouse, making this efficient for archiving or ETL operations.
 
 4. **OPTIMIZE TABLE** - Force background merges to consolidate data parts. Supports fluent configuration with `WithFinal()`, `WithPartition()`, and `WithDeduplicate()`.
 

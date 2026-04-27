@@ -168,7 +168,7 @@ modelBuilder.Entity<AuditLog>(entity =>
 
     // Timestamp codec for compression
     entity.Property(x => x.Timestamp)
-        .HasTimestampCodec();
+        .HasCodec(c => c.DoubleDelta().LZ4());
 
     // LowCardinality for action type
     entity.Property(x => x.Action)

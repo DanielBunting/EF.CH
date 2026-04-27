@@ -60,28 +60,6 @@ SELECT "OrderId", "Total", "CompletedAt" FROM (
 
 The mapping expression is translated to SQL, so all standard LINQ operators and ClickHouse functions are available in the projection.
 
-## Reverse Fluent API
-
-The same operations are available starting from the target DbSet instead of the source query:
-
-```csharp
-// Same entity type
-await context.ArchivedEvents.ExecuteInsertFromQueryAsync(
-    context.Events.Where(e => e.Timestamp < cutoff));
-
-// With mapping
-await context.OrderSummaries.ExecuteInsertFromQueryAsync(
-    context.Orders.Where(o => o.Status == "completed"),
-    order => new OrderSummary
-    {
-        OrderId = order.Id,
-        Total = order.Amount * order.Quantity,
-        CompletedAt = order.UpdatedAt
-    });
-```
-
-Both styles produce identical SQL. Choose whichever reads better for your use case.
-
 ## Composing with Query Features
 
 The source query supports all standard LINQ operators and ClickHouse-specific extensions:
@@ -103,7 +81,7 @@ var result = await context.Events
 
 ## Result Object
 
-Both `InsertIntoAsync` and `ExecuteInsertFromQueryAsync` return a `ClickHouseInsertSelectResult`:
+`InsertIntoAsync` returns a `ClickHouseInsertSelectResult`:
 
 | Property | Type | Description |
 |----------|------|-------------|

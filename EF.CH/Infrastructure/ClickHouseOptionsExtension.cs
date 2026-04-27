@@ -383,7 +383,7 @@ public static class ClickHouseServiceCollectionExtensions
         builder.TryAddCoreServices();
 
         // Register the evaluatable expression filter plugin to prevent parameterization
-        // of arguments to Sample(), WithSetting(), and WithSettings() methods.
+        // of arguments to Sample() and WithSetting() methods.
         // This must be registered as an enumerable service since multiple plugins can exist.
         services.TryAddEnumerable(
             ServiceDescriptor.Singleton<IEvaluatableExpressionFilterPlugin, ClickHouseEvaluatableExpressionFilterPlugin>());

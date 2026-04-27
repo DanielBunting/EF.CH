@@ -472,14 +472,9 @@ public class ClickHouseIntegrationTests : IAsyncLifetime
         });
         await context.SaveChangesAsync();
 
-        var settings = new Dictionary<string, object>
-        {
-            { "max_threads", 2 },
-            { "max_block_size", 1000 }
-        };
-
         var results = await context.Events
-            .WithSettings(settings)
+            .WithSetting("max_threads", 2)
+            .WithSetting("max_block_size", 1000)
             .ToListAsync();
 
         Assert.Single(results);

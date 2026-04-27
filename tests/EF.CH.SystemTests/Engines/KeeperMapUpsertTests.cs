@@ -8,7 +8,7 @@ namespace EF.CH.SystemTests.Engines;
 
 /// <summary>
 /// KeeperMap's same-key overwrite semantic expressed through
-/// <c>DbSet&lt;T&gt;.UpsertRangeAsync</c>. Bypasses EF's change-tracker so
+/// <c>DbSet&lt;T&gt;.BulkInsertAsync</c>. Bypasses EF's change-tracker so
 /// successive writes with the same key collapse into a single row — the
 /// KeeperMap engine does the replace server-side.
 /// </summary>
@@ -21,7 +21,7 @@ public class KeeperMapUpsertTests
     public KeeperMapUpsertTests(ReplicatedClusterFixture fx) => _fixture = fx;
 
     [Fact]
-    public async Task UpsertRangeAsync_SameKey_CollapsesToLatestValue()
+    public async Task BulkInsertAsync_SameKey_CollapsesToLatestValue()
     {
         await using var ctx = TestContextFactory.Create<Ctx>(_fixture.Node1ConnectionString);
         // Use a unique keeper path per test run so re-runs don't collide.
@@ -29,8 +29,8 @@ public class KeeperMapUpsertTests
         await RawClickHouse.ExecuteAsync(cs, "DROP TABLE IF EXISTS \"FeatureFlags\"");
         await ctx.Database.EnsureCreatedAsync();
 
-        await ctx.Flags.UpsertRangeAsync([new Flag { Name = "beta-search", Enabled = false, RolloutPct = 0 }]);
-        await ctx.Flags.UpsertRangeAsync([new Flag { Name = "beta-search", Enabled = true, RolloutPct = 100 }]);
+        await ctx.Flags.BulkInsertAsync([new Flag { Name = "beta-search", Enabled = false, RolloutPct = 0 }]);
+        await ctx.Flags.BulkInsertAsync([new Flag { Name = "beta-search", Enabled = true, RolloutPct = 100 }]);
 
         var rowCount = await RawClickHouse.ScalarAsync<ulong>(
             cs, "SELECT count() FROM \"FeatureFlags\"");

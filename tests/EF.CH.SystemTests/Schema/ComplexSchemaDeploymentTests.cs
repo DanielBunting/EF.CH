@@ -73,7 +73,7 @@ public class ComplexSchemaDeploymentTests
                 e.HasPartitionBy(x => x.EventTime, PartitionGranularity.Month);
                 e.Property(x => x.Category).HasColumnType("LowCardinality(String)");
                 e.Property(x => x.Tags).HasColumnType("Array(String)");
-                e.Property(x => x.Payload).HasCodec("ZSTD(3)");
+                e.Property(x => x.Payload).HasCodec(c => c.ZSTD(3));
                 e.HasTtl("toDateTime(EventTime) + INTERVAL 6 MONTH");
             });
 

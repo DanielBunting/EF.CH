@@ -85,16 +85,14 @@ public class FluentCodecContext : DbContext
             entity.Property(e => e.SensorId)
                 .HasCodec(c => c.Delta().ZSTD(3));
 
-            // Raw string API
             entity.Property(e => e.Value)
-                .HasCodec("Gorilla, ZSTD(1)");
+                .HasCodec(c => c.Gorilla().ZSTD(1));
 
-            // Convenience methods
             entity.Property(e => e.RawPayload)
-                .HasHighCompressionCodec();
+                .HasCodec(c => c.ZSTD(9));
 
             entity.Property(e => e.UncompressedData)
-                .HasNoCompression();
+                .HasCodec(c => c.None());
         });
     }
 }
@@ -134,7 +132,7 @@ public class OverrideCodecContext : DbContext
 
             // Fluent API should override the [HighCompressionCodec] attribute
             entity.Property(e => e.Data)
-                .HasCodec("LZ4");
+                .HasCodec(c => c.LZ4());
         });
     }
 }
@@ -146,7 +144,7 @@ public class CompressionCodecTests
     #region Fluent API Annotation Tests
 
     [Fact]
-    public void HasCodec_RawString_SetsAnnotation()
+    public void HasCodec_GorillaZstd_SetsAnnotation()
     {
         using var context = CreateContext<FluentCodecContext>();
 
@@ -185,7 +183,7 @@ public class CompressionCodecTests
     }
 
     [Fact]
-    public void HasHighCompressionCodec_AppliesZstd9()
+    public void HasCodec_Zstd9_AppliesZstd9()
     {
         using var context = CreateContext<FluentCodecContext>();
 
@@ -198,7 +196,7 @@ public class CompressionCodecTests
     }
 
     [Fact]
-    public void HasNoCompression_AppliesNone()
+    public void HasCodec_None_AppliesNone()
     {
         using var context = CreateContext<FluentCodecContext>();
 

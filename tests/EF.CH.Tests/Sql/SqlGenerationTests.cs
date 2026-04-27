@@ -259,16 +259,12 @@ public class SqlGenerationTests
     }
 
     [Fact]
-    public void WithSettings_GeneratesMultipleSettingsClause()
+    public void WithSetting_ChainedMultipleSettings_GeneratesMultipleSettingsClause()
     {
         using var context = CreateContext();
-        var settings = new Dictionary<string, object>
-        {
-            { "max_threads", 4 },
-            { "optimize_read_in_order", 1 }
-        };
         var query = context.TestEntities
-            .WithSettings(settings)
+            .WithSetting("max_threads", 4)
+            .WithSetting("optimize_read_in_order", 1)
             .Where(e => e.Value > 0);
         var sql = query.ToQueryString();
         Assert.Contains("SETTINGS", sql);

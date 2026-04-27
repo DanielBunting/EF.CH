@@ -8,71 +8,39 @@ All column features are configured via `PropertyBuilder` extension methods in `O
 
 ## Compression Codecs
 
-ClickHouse supports codec chains that preprocess and compress column data. EF.CH provides both preset methods and a fluent builder for custom chains.
-
-### Preset Codecs
+ClickHouse supports codec chains that preprocess and compress column data. EF.CH exposes them via a single fluent builder that validates codec combinations and covers every ClickHouse codec.
 
 ```csharp
 modelBuilder.Entity<SensorReading>(entity =>
 {
-    // Timestamps: DoubleDelta + LZ4
+    // Timestamps with regular intervals
     entity.Property(x => x.Timestamp)
-        .HasTimestampCodec();
+        .HasCodec(c => c.DoubleDelta().LZ4());
 
-    // Sequential IDs or counters: Delta + ZSTD
+    // Sequential IDs or counters
     entity.Property(x => x.SequenceNumber)
-        .HasSequentialCodec();
+        .HasCodec(c => c.Delta().ZSTD());
 
-    // Floating-point sensor values: Gorilla + ZSTD(1)
+    // Floating-point sensor values
     entity.Property(x => x.Temperature)
-        .HasFloatCodec();
+        .HasCodec(c => c.Gorilla().ZSTD(1));
 
-    // Large text or binary payloads: ZSTD(9)
+    // Large text or binary payloads
     entity.Property(x => x.Payload)
-        .HasHighCompressionCodec();
+        .HasCodec(c => c.ZSTD(9));
 
-    // Integers with sparse value ranges: T64 + LZ4
+    // Integers with sparse value ranges
     entity.Property(x => x.StatusCode)
-        .HasIntegerCodec();
+        .HasCodec(c => c.T64().LZ4());
 
     // Disable compression entirely
     entity.Property(x => x.PreCompressedData)
-        .HasNoCompression();
+        .HasCodec(c => c.None());
+
+    // Custom level
+    entity.Property(x => x.Value)
+        .HasCodec(c => c.FPC(12).ZSTD());
 });
-```
-
-| Method | Codec Chain | Best For |
-|---|---|---|
-| `HasTimestampCodec()` | DoubleDelta, LZ4 | Timestamps with regular intervals |
-| `HasSequentialCodec()` | Delta, ZSTD | Monotonically increasing IDs, counters |
-| `HasFloatCodec()` | Gorilla, ZSTD(1) | Slowly changing float values (sensors) |
-| `HasHighCompressionCodec()` | ZSTD(9) | JSON, XML, binary payloads |
-| `HasIntegerCodec()` | T64, LZ4 | Integers that don't use their full range |
-| `HasNoCompression()` | NONE | Already-compressed data |
-
-### Custom Codec Chain (String)
-
-```csharp
-entity.Property(x => x.Timestamp)
-    .HasCodec("DoubleDelta, LZ4");
-
-entity.Property(x => x.RawData)
-    .HasCodec("ZSTD(9)");
-```
-
-### Custom Codec Chain (Fluent Builder)
-
-The fluent builder validates codec combinations and supports all ClickHouse codecs.
-
-```csharp
-entity.Property(x => x.Timestamp)
-    .HasCodec(c => c.DoubleDelta().LZ4());
-
-entity.Property(x => x.SensorId)
-    .HasCodec(c => c.Delta().ZSTD(3));
-
-entity.Property(x => x.Value)
-    .HasCodec(c => c.FPC(12).ZSTD());
 ```
 
 Available builder methods: `Delta()`, `DoubleDelta()`, `Gorilla()`, `T64()`, `FPC(level)`, `LZ4()`, `ZSTD(level)`, `None()`.
@@ -491,10 +459,10 @@ modelBuilder.Entity<SensorReading>(entity =>
 
     // Compression codecs
     entity.Property(x => x.Timestamp)
-        .HasTimestampCodec();
+        .HasCodec(c => c.DoubleDelta().LZ4());
 
     entity.Property(x => x.Temperature)
-        .HasFloatCodec();
+        .HasCodec(c => c.Gorilla().ZSTD(1));
 
     // LowCardinality for repeated string values
     entity.Property(x => x.DeviceType)

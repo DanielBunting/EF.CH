@@ -167,7 +167,7 @@ public class ComputedWithCodecContext : DbContext
             // MATERIALIZED with CODEC
             entity.Property(e => e.EventYear)
                 .HasMaterializedExpression("toYear(\"EventDate\")")
-                .HasCodec("Delta, ZSTD");
+                .HasCodec(c => c.Delta().ZSTD());
         });
     }
 }

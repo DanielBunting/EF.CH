@@ -31,8 +31,9 @@ Copy data between tables of the same entity type:
 using EF.CH.Extensions;
 
 // Copy all events from Events to ArchivedEvents
-var result = await context.ArchivedEvents.ExecuteInsertFromQueryAsync(
-    context.Events.Where(e => e.Status == "Completed"));
+var result = await context.Events
+    .Where(e => e.Status == "Completed")
+    .InsertIntoAsync(context.ArchivedEvents);
 
 Console.WriteLine($"Inserted rows in {result.Elapsed.TotalMilliseconds}ms");
 Console.WriteLine($"SQL: {result.Sql}");
@@ -43,27 +44,10 @@ Console.WriteLine($"SQL: {result.Sql}");
 Copy data between different entity types using a mapping expression:
 
 ```csharp
-// Copy from Event to ArchivedEvent (different types)
-var result = await context.ArchivedEvents.ExecuteInsertFromQueryAsync(
-    context.Events.Where(e => e.Category == "Important"),
-    e => new ArchivedEvent
-    {
-        Id = e.Id,
-        Timestamp = e.Timestamp,
-        Category = e.Category,
-        Amount = e.Amount
-    });
-```
-
-### Reverse Fluent API
-
-Use the `.InsertIntoAsync()` extension on any `IQueryable`:
-
-```csharp
-// More fluent syntax
 var result = await context.Events
-    .Where(e => e.Category == "Electronics")
-    .InsertIntoAsync(context.ArchivedEvents,
+    .Where(e => e.Category == "Important")
+    .InsertIntoAsync(
+        context.ArchivedEvents,
         e => new ArchivedEvent
         {
             Id = e.Id,
@@ -95,15 +79,17 @@ Move old records to an archive table:
 ```csharp
 var cutoffDate = DateTime.UtcNow.AddMonths(-6);
 
-await context.ArchivedOrders.ExecuteInsertFromQueryAsync(
-    context.Orders.Where(o => o.CreatedAt < cutoffDate),
-    o => new ArchivedOrder
-    {
-        Id = o.Id,
-        CreatedAt = o.CreatedAt,
-        Total = o.Total,
-        ArchivedAt = DateTime.UtcNow
-    });
+await context.Orders
+    .Where(o => o.CreatedAt < cutoffDate)
+    .InsertIntoAsync(
+        context.ArchivedOrders,
+        o => new ArchivedOrder
+        {
+            Id = o.Id,
+            CreatedAt = o.CreatedAt,
+            Total = o.Total,
+            ArchivedAt = DateTime.UtcNow
+        });
 
 // Then delete the archived records from the source table
 await context.Orders.Where(o => o.CreatedAt < cutoffDate)
@@ -116,14 +102,16 @@ Copy specific records based on criteria:
 
 ```csharp
 // Copy high-value orders to a separate table
-await context.HighValueOrders.ExecuteInsertFromQueryAsync(
-    context.Orders.Where(o => o.Total > 10000),
-    o => new HighValueOrder
-    {
-        OrderId = o.Id,
-        Amount = o.Total,
-        Customer = o.CustomerName
-    });
+await context.Orders
+    .Where(o => o.Total > 10000)
+    .InsertIntoAsync(
+        context.HighValueOrders,
+        o => new HighValueOrder
+        {
+            OrderId = o.Id,
+            Amount = o.Total,
+            Customer = o.CustomerName
+        });
 ```
 
 ### Table Cloning
@@ -132,8 +120,8 @@ Copy all records from one table to another:
 
 ```csharp
 // Clone entire table
-await context.BackupEvents.ExecuteInsertFromQueryAsync(
-    context.Events,
+await context.Events.InsertIntoAsync(
+    context.BackupEvents,
     e => new BackupEvent
     {
         Id = e.Id,
@@ -155,15 +143,15 @@ modelBuilder.Entity<Summary>(entity =>
 });
 
 // INSERT...SELECT will exclude Total from INSERT columns
-// It will be computed automatically
-await context.Summaries.ExecuteInsertFromQueryAsync(
-    context.LineItems.Select(l => new Summary
+await context.LineItems
+    .Select(l => new Summary
     {
         Id = l.Id,
         Quantity = l.Quantity,
         Price = l.Price
         // Total is computed, not inserted
-    }));
+    })
+    .InsertIntoAsync(context.Summaries);
 ```
 
 ## Parameterized Queries
@@ -173,16 +161,16 @@ INSERT...SELECT fully supports captured variables in your LINQ queries:
 ```csharp
 // DateTime parameters
 var cutoff = DateTime.UtcNow.AddDays(-7);
-await context.Archive.ExecuteInsertFromQueryAsync(
-    context.Events.Where(e => e.Timestamp < cutoff),
-    e => new ArchivedEvent { ... });
+await context.Events
+    .Where(e => e.Timestamp < cutoff)
+    .InsertIntoAsync(context.Archive, e => new ArchivedEvent { ... });
 
 // Multiple captured variables
 var category = "Important";
 var minAmount = 100m;
-await context.Archive.ExecuteInsertFromQueryAsync(
-    context.Events.Where(e => e.Category == category && e.Amount > minAmount),
-    e => new ArchivedEvent { ... });
+await context.Events
+    .Where(e => e.Category == category && e.Amount > minAmount)
+    .InsertIntoAsync(context.Archive, e => new ArchivedEvent { ... });
 ```
 
 Parameters are automatically extracted from your LINQ expressions and inlined as SQL literals in the generated INSERT...SELECT statement.
@@ -195,9 +183,10 @@ When source and target are different entity types, you must provide a mapping ex
 
 ```csharp
 // Different types - mapping required
-await context.TargetTable.ExecuteInsertFromQueryAsync(
-    context.SourceTable,
-    s => new TargetEntity { ... });  // Mapping required
+await context.SourceTable
+    .InsertIntoAsync(
+        context.TargetTable,
+        s => new TargetEntity { ... });  // Mapping required
 ```
 
 ## Generated SQL
