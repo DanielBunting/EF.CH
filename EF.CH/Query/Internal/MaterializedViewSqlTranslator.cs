@@ -1922,6 +1922,11 @@ internal class MaterializedViewExpressionVisitor<TSource> : ExpressionVisitor
             "TopKStateIf" => TranslateTopKStateIf(methodExpr),
             "TopKWeightedStateIf" => TranslateTopKWeightedStateIf(methodExpr),
 
+            // Typed-return aggregates — emit the bare ClickHouse aggregates;
+            // count() returns UInt64, sum() returns the natural numeric type.
+            "CountUInt64" => "count()",
+            "SumUInt64" => TranslateSimpleClickHouseAggregate("sum", methodExpr),
+
             _ => throw new NotSupportedException($"ClickHouse aggregate {methodName} is not supported.")
         };
     }

@@ -230,7 +230,175 @@ internal class ClickHouseMethodRewritingVisitor : ExpressionVisitor
         ["ArgMax"] = e => RewriteTwoSelectorAggregate(e, "argMax"),
         ["ArgMin"] = e => RewriteTwoSelectorAggregate(e, "argMin"),
         ["QuantileDD"] = e => RewriteTwoParamQuantile(e, "quantileDD"),
+
+        // -If combinators on runtime groupings. Each rewrites
+        // `g.SumIf(sel, p)` into `g.Sum(s => AggregateSentinelTwoArg(sel(s), p(s), "sumIf"))`
+        // (or no-arg sentinel for CountIf which has only a predicate). The aggregate
+        // translator detects the sentinel selector and emits the real -If aggregate.
+        ["CountIf"] = e => RewritePredicateOnlyAggregate(e, "countIf"),
+        ["SumIf"] = e => RewriteSelectorPredicateAggregate(e, "sumIf"),
+        ["AvgIf"] = e => RewriteSelectorPredicateAggregate(e, "avgIf"),
+        ["MinIf"] = e => RewriteSelectorPredicateAggregate(e, "minIf"),
+        ["MaxIf"] = e => RewriteSelectorPredicateAggregate(e, "maxIf"),
+        ["UniqIf"] = e => RewriteSelectorPredicateAggregate(e, "uniqIf"),
+        ["UniqExactIf"] = e => RewriteSelectorPredicateAggregate(e, "uniqExactIf"),
+        ["UniqCombinedIf"] = e => RewriteSelectorPredicateAggregate(e, "uniqCombinedIf"),
+        ["UniqCombined64If"] = e => RewriteSelectorPredicateAggregate(e, "uniqCombined64If"),
+        ["UniqHLL12If"] = e => RewriteSelectorPredicateAggregate(e, "uniqHLL12If"),
+        ["UniqThetaIf"] = e => RewriteSelectorPredicateAggregate(e, "uniqThetaIf"),
+        ["AnyIf"] = e => RewriteSelectorPredicateAggregate(e, "anyIf"),
+        ["AnyLastIf"] = e => RewriteSelectorPredicateAggregate(e, "anyLastIf"),
+        ["MedianIf"] = e => RewriteSelectorPredicateAggregate(e, "medianIf"),
+        ["StddevPopIf"] = e => RewriteSelectorPredicateAggregate(e, "stddevPopIf"),
+        ["StddevSampIf"] = e => RewriteSelectorPredicateAggregate(e, "stddevSampIf"),
+        ["VarPopIf"] = e => RewriteSelectorPredicateAggregate(e, "varPopIf"),
+        ["VarSampIf"] = e => RewriteSelectorPredicateAggregate(e, "varSampIf"),
+
+        // Typed-return aggregates — emit count() / sum() with the user's declared ulong return.
+        ["CountUInt64"] = e => RewriteCountUInt64(e),
+        ["SumUInt64"] = e => RewriteSumUInt64(e),
     };
+
+    /// <summary>
+    /// Rewrites <c>g.CountIf(predicate)</c> into
+    /// <c>g.Sum(s =&gt; AggregateSentinel&lt;bool, long, long&gt;(predicate(s), "countIf"))</c>.
+    /// The sentinel carries the predicate body as the aggregate input; the translator emits
+    /// <c>countIf(predicate)</c> directly.
+    /// </summary>
+    private static Expression? RewritePredicateOnlyAggregate(MethodCallExpression call, string sqlFunctionName)
+    {
+        if (call.Arguments.Count != 2) return null;
+        var groupingArg = call.Arguments[0];
+        var predicate = UnwrapLambda(call.Arguments[1]);
+        var sourceType = call.Method.GetGenericArguments()[1]; // [TKey, TElement]; element at [1]
+        var returnType = call.Method.ReturnType;
+
+        var sentinel = typeof(ClickHouseFunctions)
+            .GetMethod(nameof(ClickHouseFunctions.AggregateSentinel))!
+            .MakeGenericMethod(typeof(bool), typeof(long), returnType);
+        var newBody = Expression.Call(sentinel, predicate.Body, Expression.Constant(sqlFunctionName));
+        var newSelector = Expression.Lambda(
+            typeof(Func<,>).MakeGenericType(sourceType, typeof(long)),
+            newBody, predicate.Parameters);
+
+        var sumLong = FindSumWithReturnType(sourceType, typeof(long));
+        Expression agg = Expression.Call(null, sumLong, groupingArg, newSelector);
+        if (returnType != typeof(long)) agg = Expression.Convert(agg, returnType);
+        return agg;
+    }
+
+    /// <summary>
+    /// Rewrites <c>g.SumIf(selector, predicate)</c> (and other selector+predicate -If
+    /// combinators) into <c>g.Sum/Max(s =&gt; AggregateSentinelTwoArg(sel(s), pred(s), "sumIf"))</c>.
+    /// The sentinel emits <c>sumIf(selector, predicate)</c> directly.
+    /// </summary>
+    private static Expression? RewriteSelectorPredicateAggregate(MethodCallExpression call, string sqlFunctionName)
+    {
+        if (call.Arguments.Count != 3) return null;
+        var groupingArg = call.Arguments[0];
+        var selector = UnwrapLambda(call.Arguments[1]);
+        var predicate = UnwrapLambda(call.Arguments[2]);
+        var sourceType = call.Method.GetGenericArguments()[1]; // TElement at index 1
+        var selType = selector.Body.Type;
+        var returnType = call.Method.ReturnType;
+
+        // Unify both lambdas under the selector's parameter so the rebuilt body
+        // references a single free parameter.
+        var predBody = new ParameterReplacer(predicate.Parameters[0], selector.Parameters[0])
+            .Visit(predicate.Body)!;
+
+        var useSumSurrogate = IsSummableType(returnType);
+        var surrogateType = useSumSurrogate ? typeof(long) : returnType;
+
+        var sentinel = typeof(ClickHouseFunctions)
+            .GetMethod(nameof(ClickHouseFunctions.AggregateSentinelTwoArg))!
+            .MakeGenericMethod(selType, typeof(bool), surrogateType, returnType);
+        var newBody = Expression.Call(sentinel, selector.Body, predBody, Expression.Constant(sqlFunctionName));
+        var newSelector = Expression.Lambda(
+            typeof(Func<,>).MakeGenericType(sourceType, surrogateType),
+            newBody, selector.Parameters);
+
+        Expression agg;
+        if (useSumSurrogate)
+        {
+            var sumLong = FindSumWithReturnType(sourceType, typeof(long));
+            agg = Expression.Call(null, sumLong, groupingArg, newSelector);
+            if (returnType != typeof(long)) agg = Expression.Convert(agg, returnType);
+        }
+        else
+        {
+            var maxMethod = FindMaxWithGenericReturn(sourceType, returnType);
+            agg = Expression.Call(null, maxMethod, groupingArg, newSelector);
+        }
+        return agg;
+    }
+
+    /// <summary>
+    /// Rewrites <c>g.CountUInt64()</c> into
+    /// <c>g.Max(s =&gt; AggregateSentinel&lt;int, ulong, ulong&gt;(1, "count"))</c>.
+    /// The sentinel emits <c>count(1)</c> wrapped in <c>toUInt64</c> (semantically identical
+    /// to <c>count()</c> in ClickHouse, returning UInt64), bypassing the <c>toInt32</c>-wrapping
+    /// standard Count path. We use <see cref="Enumerable.Max{TSource, TResult}"/> as the
+    /// surrogate carrier so EF's aggregate whitelist accepts the call without the
+    /// <c>CAST(NULL, 'UInt64')</c> pitfall that affects Sum on unsigned types.
+    /// </summary>
+    private static Expression? RewriteCountUInt64(MethodCallExpression call)
+    {
+        if (call.Arguments.Count != 1) return null;
+        var groupingArg = call.Arguments[0];
+        var sourceType = call.Method.GetGenericArguments()[1]; // TElement at index 1
+
+        var paramExpr = Expression.Parameter(sourceType, "s");
+        var sentinel = typeof(ClickHouseFunctions)
+            .GetMethod(nameof(ClickHouseFunctions.AggregateSentinel))!
+            .MakeGenericMethod(typeof(int), typeof(ulong), typeof(ulong));
+        // Pass any non-null member access as input — count's actual SQL is count(arg)
+        // counting non-nulls; for an entity-property reference all values are non-null.
+        // Using a constant 1 would also work but we use the entity to mirror the
+        // SumUInt64 / UniqCombined column-reference path for consistency.
+        var newBody = Expression.Call(sentinel, Expression.Constant(1), Expression.Constant("count"));
+        var newSelector = Expression.Lambda(
+            typeof(Func<,>).MakeGenericType(sourceType, typeof(ulong)),
+            newBody, paramExpr);
+
+        var maxMethod = FindMaxWithGenericReturn(sourceType, typeof(ulong));
+        return Expression.Call(null, maxMethod, groupingArg, newSelector);
+    }
+
+    /// <summary>
+    /// Rewrites <c>g.SumUInt64(selector)</c> into <c>(ulong)g.Sum(selector)</c>.
+    /// The standard <see cref="Enumerable.Sum{TSource}"/> path with an outer Convert is the
+    /// simplest route — at SQL time it emits <c>toUInt64(sumOrNull(selector) ?? 0)</c>
+    /// which materialises correctly to <see cref="ulong"/>. The sentinel-based path
+    /// (which would emit bare <c>sum(...)</c>) hits an EF Core auto-coercion bug for
+    /// <c>sum</c> + non-default numeric return types.
+    /// </summary>
+    private static Expression? RewriteSumUInt64(MethodCallExpression call)
+    {
+        if (call.Arguments.Count != 2) return null;
+        var groupingArg = call.Arguments[0];
+        var selector = UnwrapLambda(call.Arguments[1]);
+        var sourceType = call.Method.GetGenericArguments()[1]; // TElement at index 1
+        var selType = selector.Body.Type;
+
+        // Only proceed if the selector returns a Sum-friendly numeric type. We promote
+        // to a long-typed selector and lean on EF's standard Sum translator.
+        if (!IsSummableType(selType)) return null;
+
+        // Build: g.Sum(s => (long)selector(s)) → typed long
+        // then Convert the final result to ulong at the LINQ level.
+        var castedBody = selType == typeof(long)
+            ? selector.Body
+            : (Expression)Expression.Convert(selector.Body, typeof(long));
+        var castedSelector = Expression.Lambda(
+            typeof(Func<,>).MakeGenericType(sourceType, typeof(long)),
+            castedBody,
+            selector.Parameters);
+
+        var sumLong = FindSumWithReturnType(sourceType, typeof(long));
+        Expression agg = Expression.Call(null, sumLong, groupingArg, castedSelector);
+        return Expression.Convert(agg, typeof(ulong));
+    }
 
     private static Expression? RewriteTwoParamQuantile(MethodCallExpression call, string sqlFunctionName)
     {
@@ -240,7 +408,9 @@ internal class ClickHouseMethodRewritingVisitor : ExpressionVisitor
         var p1 = call.Arguments[1];
         var p2 = call.Arguments[2];
         var selector = UnwrapLambda(call.Arguments[3]);
-        var sourceType = call.Method.GetGenericArguments()[0];
+        // After the shift to IGrouping<TKey, TElement>, generic args are [TKey, TElement, ...]
+        // and the source/element type is at index 1.
+        var sourceType = call.Method.GetGenericArguments()[1];
         var inputType = selector.Body.Type;
         var returnType = call.Method.ReturnType;
 
@@ -268,7 +438,7 @@ internal class ClickHouseMethodRewritingVisitor : ExpressionVisitor
         var kArg = call.Arguments[1];
         var valueSel = UnwrapLambda(call.Arguments[2]);
         var weightSel = UnwrapLambda(call.Arguments[3]);
-        var sourceType = call.Method.GetGenericArguments()[0];
+        var sourceType = call.Method.GetGenericArguments()[1];
         var valueType = valueSel.Body.Type;
         var weightType = weightSel.Body.Type;
         var returnType = call.Method.ReturnType;
@@ -315,7 +485,7 @@ internal class ClickHouseMethodRewritingVisitor : ExpressionVisitor
 
         var groupingArg = call.Arguments[0];
         var selector = UnwrapLambda(call.Arguments[1]);
-        var sourceType = call.Method.GetGenericArguments()[0];
+        var sourceType = call.Method.GetGenericArguments()[1];
         var userReturnType = call.Method.ReturnType;
 
         // Numerics ride through Enumerable.Sum<TSource> (which is in EF Core's
@@ -378,7 +548,7 @@ internal class ClickHouseMethodRewritingVisitor : ExpressionVisitor
         var groupingArg = call.Arguments[0];
         var levelArg = call.Arguments[1];
         var selector = UnwrapLambda(call.Arguments[2]);
-        var sourceType = call.Method.GetGenericArguments()[0];
+        var sourceType = call.Method.GetGenericArguments()[1];
         var userReturnType = call.Method.ReturnType;
 
         var sentinelMethod = typeof(ClickHouseFunctions)
@@ -414,7 +584,7 @@ internal class ClickHouseMethodRewritingVisitor : ExpressionVisitor
         if (call.Arguments.Count != 2) return null;
         var groupingArg = call.Arguments[0];
         var selector = UnwrapLambda(call.Arguments[1]);
-        var sourceType = call.Method.GetGenericArguments()[0];
+        var sourceType = call.Method.GetGenericArguments()[1];
         var inputType = selector.Body.Type;
         var returnType = call.Method.ReturnType;
 
@@ -441,7 +611,7 @@ internal class ClickHouseMethodRewritingVisitor : ExpressionVisitor
         var groupingArg = call.Arguments[0];
         var levelArg = call.Arguments[1];
         var selector = UnwrapLambda(call.Arguments[2]);
-        var sourceType = call.Method.GetGenericArguments()[0];
+        var sourceType = call.Method.GetGenericArguments()[1];
         var inputType = selector.Body.Type;
         var returnType = call.Method.ReturnType;
 
@@ -466,7 +636,7 @@ internal class ClickHouseMethodRewritingVisitor : ExpressionVisitor
         var groupingArg = call.Arguments[0];
         var levelsArg = call.Arguments[1];
         var selector = UnwrapLambda(call.Arguments[2]);
-        var sourceType = call.Method.GetGenericArguments()[0];
+        var sourceType = call.Method.GetGenericArguments()[1];
         var inputType = selector.Body.Type;
         var returnType = call.Method.ReturnType; // double[]
 
@@ -501,7 +671,7 @@ internal class ClickHouseMethodRewritingVisitor : ExpressionVisitor
         }
         else return null;
 
-        var sourceType = call.Method.GetGenericArguments()[0];
+        var sourceType = call.Method.GetGenericArguments()[1];
         var inputType = selector.Body.Type;
         var returnType = call.Method.ReturnType;
 
@@ -535,7 +705,7 @@ internal class ClickHouseMethodRewritingVisitor : ExpressionVisitor
         var groupingArg = call.Arguments[0];
         var kArg = call.Arguments[1];
         var selector = UnwrapLambda(call.Arguments[2]);
-        var sourceType = call.Method.GetGenericArguments()[0];
+        var sourceType = call.Method.GetGenericArguments()[1];
         var inputType = selector.Body.Type;
         var returnType = call.Method.ReturnType;
 
@@ -558,7 +728,7 @@ internal class ClickHouseMethodRewritingVisitor : ExpressionVisitor
         var groupingArg = call.Arguments[0];
         var argSelector = UnwrapLambda(call.Arguments[1]);
         var valSelector = UnwrapLambda(call.Arguments[2]);
-        var sourceType = call.Method.GetGenericArguments()[0];
+        var sourceType = call.Method.GetGenericArguments()[1];
         var argType = argSelector.Body.Type;
         var valType = valSelector.Body.Type;
         var returnType = call.Method.ReturnType;
