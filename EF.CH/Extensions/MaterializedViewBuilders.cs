@@ -1,4 +1,5 @@
 using System.Linq.Expressions;
+using System.Reflection;
 using EF.CH.Internal.Intervals;
 using EF.CH.Metadata;
 using EF.CH.Query.Internal;
@@ -577,6 +578,18 @@ internal static class MaterializedViewSpecApplier
             ?? throw new InvalidOperationException(
                 $"No MaterializedViewSqlTranslator.Translate overload for arity {queryableArgs.Count}.");
         var generic = method.MakeGenericMethod(typeArgs);
-        return (string)generic.Invoke(translator, new object[] { lambda })!;
+        try
+        {
+            return (string)generic.Invoke(translator, new object[] { lambda })!;
+        }
+        catch (TargetInvocationException tie) when (tie.InnerException is not null)
+        {
+            // Reflection wraps user-meaningful exceptions (e.g. NotSupportedException
+            // for unsupported MV LINQ operators) in TargetInvocationException. Rethrow
+            // the inner exception preserving its stack trace so callers see the
+            // original type and message.
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+            throw; // unreachable
+        }
     }
 }
