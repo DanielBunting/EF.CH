@@ -102,24 +102,9 @@ internal sealed class WindowBuilder<T>
     public WindowBuilder<T> Following(int n) => this;
 
     /// <summary>
-    /// Builds and returns the window function result value.
-    /// Use this method at the end of the window function chain in LINQ projections
-    /// to ensure the correct result type is used.
+    /// Translator marker — the method name is matched via <c>nameof</c> by the SQL
+    /// translator. Public callers never reach this type; they use the lambda
+    /// overloads on <see cref="Window"/>.
     /// </summary>
-    /// <example>
-    /// <code>
-    /// var query = context.Orders.Select(o => new
-    /// {
-    ///     RowNum = Window.RowNumber()
-    ///         .PartitionBy(o.Region)
-    ///         .OrderBy(o.OrderDate)
-    ///         .Build()
-    /// });
-    /// </code>
-    /// </example>
-    /// <remarks>
-    /// This method returns default(T?) - the actual value is computed by the database.
-    /// The method exists to ensure the correct type is captured in the expression tree.
-    /// </remarks>
-    public T? Build() => default;
+    internal T? Build() => default;
 }
