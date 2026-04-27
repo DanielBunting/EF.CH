@@ -80,7 +80,9 @@ public class SummingMergeTreeMaterializationTests
             {
                 e.ToTable("DailyProductTotals"); e.HasNoKey();
                 e.UseSummingMergeTree(x => new { x.Day, x.ProductId });
-                e.AsMaterializedView<DailyProductTotal, Order>(orders => orders
+
+            });
+            mb.MaterializedView<DailyProductTotal>().From<Order>().DefinedAs(orders => orders
                     .GroupBy(o => new { Day = o.OrderDate.Date, o.ProductId })
                     .Select(g => new DailyProductTotal
                     {
@@ -89,7 +91,6 @@ public class SummingMergeTreeMaterializationTests
                         TotalQuantity = g.Sum(o => o.Quantity),
                         TotalRevenue = g.Sum(o => o.Revenue),
                     }));
-            });
         }
     }
 

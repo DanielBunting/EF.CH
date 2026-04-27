@@ -51,9 +51,10 @@ public class MvMapRoundTripTests
                 e.ToTable("MvMapTarget"); e.HasNoKey();
                 e.UseMergeTree(x => x.N);
                 e.Property(x => x.Counts).HasColumnType("Map(String, Int32)");
-                e.AsMaterializedView<Tgt, Src>(rows => rows
-                    .Select(r => new Tgt { Counts = r.Counts, N = r.N }));
+
             });
+            mb.MaterializedView<Tgt>().From<Src>().DefinedAs(rows => rows
+                    .Select(r => new Tgt { Counts = r.Counts, N = r.N }));
         }
     }
 }

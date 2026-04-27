@@ -10,13 +10,10 @@ namespace EF.CH.Query.Internal;
 /// Translates LINQ expressions into ClickHouse SQL for materialized view definitions.
 /// This is a design-time translator that processes expressions during OnModelCreating.
 /// </summary>
-public class MaterializedViewSqlTranslator
+internal class MaterializedViewSqlTranslator
 {
     private readonly IModel _model;
     private readonly string _sourceTableName;
-    private readonly StringBuilder _sql = new();
-    private readonly List<string> _selectColumns = [];
-    private readonly List<string> _groupByColumns = [];
 
     /// <summary>
     /// Creates a new translator for the given model and source table.
@@ -28,30 +25,76 @@ public class MaterializedViewSqlTranslator
     }
 
     /// <summary>
-    /// Translates a LINQ query expression into a ClickHouse SELECT statement.
+    /// Translates a single-source LINQ query expression into a ClickHouse SELECT statement.
     /// </summary>
-    /// <typeparam name="TSource">The source entity type.</typeparam>
-    /// <typeparam name="TResult">The result entity type.</typeparam>
-    /// <param name="queryExpression">The LINQ query expression.</param>
-    /// <returns>The translated SELECT SQL.</returns>
-    public string Translate<TSource, TResult>(
-        Expression<Func<IQueryable<TSource>, IQueryable<TResult>>> queryExpression)
-        where TSource : class
+    public string Translate<T1, TResult>(
+        Expression<Func<IQueryable<T1>, IQueryable<TResult>>> queryExpression)
+        where T1 : class
         where TResult : class
-    {
-        var visitor = new MaterializedViewExpressionVisitor<TSource>(
-            _model,
-            _sourceTableName);
+        => TranslateLambda(queryExpression);
 
-        return visitor.Translate(queryExpression);
+    /// <summary>
+    /// Translates a two-source LINQ query expression. T1 is the INSERT trigger.
+    /// </summary>
+    public string Translate<T1, T2, TResult>(
+        Expression<Func<IQueryable<T1>, IQueryable<T2>, IQueryable<TResult>>> queryExpression)
+        where T1 : class where T2 : class where TResult : class
+        => TranslateLambda(queryExpression);
+
+    /// <summary>
+    /// Translates a three-source LINQ query expression. T1 is the INSERT trigger.
+    /// </summary>
+    public string Translate<T1, T2, T3, TResult>(
+        Expression<Func<IQueryable<T1>, IQueryable<T2>, IQueryable<T3>, IQueryable<TResult>>> queryExpression)
+        where T1 : class where T2 : class where T3 : class where TResult : class
+        => TranslateLambda(queryExpression);
+
+    /// <summary>
+    /// Translates a four-source LINQ query expression. T1 is the INSERT trigger.
+    /// </summary>
+    public string Translate<T1, T2, T3, T4, TResult>(
+        Expression<Func<IQueryable<T1>, IQueryable<T2>, IQueryable<T3>, IQueryable<T4>, IQueryable<TResult>>> queryExpression)
+        where T1 : class where T2 : class where T3 : class where T4 : class where TResult : class
+        => TranslateLambda(queryExpression);
+
+    /// <summary>
+    /// Translates a five-source LINQ query expression. T1 is the INSERT trigger.
+    /// </summary>
+    public string Translate<T1, T2, T3, T4, T5, TResult>(
+        Expression<Func<IQueryable<T1>, IQueryable<T2>, IQueryable<T3>, IQueryable<T4>, IQueryable<T5>, IQueryable<TResult>>> queryExpression)
+        where T1 : class where T2 : class where T3 : class where T4 : class where T5 : class where TResult : class
+        => TranslateLambda(queryExpression);
+
+    /// <summary>
+    /// Shared translation entry point. Reflects over the first lambda parameter
+    /// (the trigger <c>IQueryable&lt;T1&gt;</c>) to construct the typed visitor,
+    /// then visits the lambda body directly.
+    /// </summary>
+    private string TranslateLambda(LambdaExpression queryExpression)
+    {
+        // T1 (the first generic argument) is the trigger table.
+        var triggerType = queryExpression.Parameters[0].Type.GetGenericArguments()[0];
+        var visitorType = typeof(MaterializedViewExpressionVisitor<>).MakeGenericType(triggerType);
+        var visitor = (IMaterializedViewVisitor)Activator.CreateInstance(
+            visitorType, _model, _sourceTableName)!;
+        return visitor.TranslateBody(queryExpression.Body);
     }
+}
+
+/// <summary>
+/// Internal interface used by <see cref="MaterializedViewSqlTranslator.TranslateLambda"/>
+/// to invoke the typed visitor without per-arity duplication.
+/// </summary>
+internal interface IMaterializedViewVisitor
+{
+    string TranslateBody(Expression body);
 }
 
 /// <summary>
 /// Visits LINQ expression trees and builds ClickHouse SQL.
 /// </summary>
 /// <typeparam name="TSource">The source entity type.</typeparam>
-internal class MaterializedViewExpressionVisitor<TSource> : ExpressionVisitor
+internal class MaterializedViewExpressionVisitor<TSource> : ExpressionVisitor, IMaterializedViewVisitor
     where TSource : class
 {
     private readonly IModel _model;
@@ -124,9 +167,17 @@ internal class MaterializedViewExpressionVisitor<TSource> : ExpressionVisitor
     /// </summary>
     public string Translate<TResult>(
         Expression<Func<IQueryable<TSource>, IQueryable<TResult>>> queryExpression)
+        => TranslateBody(queryExpression.Body);
+
+    /// <summary>
+    /// Translates the body of a (possibly multi-arg) LINQ query lambda. T1 (the
+    /// first lambda parameter) was used to construct this typed visitor, so any
+    /// reference to the trigger source resolves to the correct alias/entity.
+    /// </summary>
+    public string TranslateBody(Expression body)
     {
         // The expression body should be a method chain on the IQueryable parameter
-        Visit(queryExpression.Body);
+        Visit(body);
 
         var sql = new StringBuilder();
         sql.Append("SELECT ");

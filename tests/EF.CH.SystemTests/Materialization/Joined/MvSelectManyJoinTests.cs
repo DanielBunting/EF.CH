@@ -92,13 +92,14 @@ public class MvSelectManyJoinTests
             {
                 e.ToTable("MvSelectManyJoinTarget"); e.HasNoKey();
                 e.UseSummingMergeTree(x => x.Region);
-                e.AsMaterializedView<Tgt, Order>(orders => orders
+
+            });
+            mb.MaterializedView<Tgt>().From<Order>().DefinedAs(orders => orders
                     .SelectMany(
                         o => _customers.Where(c => c.Id == o.CustomerId),
                         (o, c) => new { o.Amount, c.Region })
                     .GroupBy(x => x.Region)
                     .Select(g => new Tgt { Region = g.Key, Total = g.Sum(x => x.Amount) }));
-            });
         }
     }
 
@@ -115,13 +116,14 @@ public class MvSelectManyJoinTests
             {
                 e.ToTable("MvSelectManyCrossTarget"); e.HasNoKey();
                 e.UseSummingMergeTree(x => x.Region);
-                e.AsMaterializedView<Tgt, Order>(orders => orders
+
+            });
+            mb.MaterializedView<Tgt>().From<Order>().DefinedAs(orders => orders
                     .SelectMany(
                         _ => _customers,
                         (o, c) => new { o.Amount, c.Region })
                     .GroupBy(x => x.Region)
                     .Select(g => new Tgt { Region = g.Key, Total = g.Sum(x => x.Amount) }));
-            });
         }
     }
 }

@@ -62,9 +62,10 @@ public class MvEnum8RoundTripTests
                 e.ToTable("MvEnum8Target"); e.HasNoKey();
                 e.UseMergeTree(x => x.N);
                 e.Property(x => x.Status).HasColumnType(enumColumn).HasConversion<string>();
-                e.AsMaterializedView<Tgt, Src>(rows => rows
-                    .Select(r => new Tgt { Status = r.Status, N = r.N }));
+
             });
+            mb.MaterializedView<Tgt>().From<Src>().DefinedAs(rows => rows
+                    .Select(r => new Tgt { Status = r.Status, N = r.N }));
         }
     }
 }

@@ -322,8 +322,8 @@ public static class ClickHouseDatabaseExtensions
     #region Deferred materialised views
 
     /// <summary>
-    /// Creates a materialised view that was declared with
-    /// <see cref="ClickHouseEntityTypeBuilderExtensions.AsMaterializedViewDeferred{TEntity}"/>.
+    /// Creates a materialised view that was declared via
+    /// <c>modelBuilder.MaterializedView&lt;TEntity&gt;().…Deferred()</c>.
     /// The view's target table must already exist
     /// (normally created via <c>EnsureCreatedAsync</c>). Use <paramref name="populate"/>
     /// to backfill from the source table at attach time.
@@ -342,7 +342,7 @@ public static class ClickHouseDatabaseExtensions
         var selectSql = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewQuery)?.Value as string
             ?? throw new InvalidOperationException(
                 $"Entity '{typeof(TEntity).Name}' is not configured as a materialised view. " +
-                "Call AsMaterializedView(…) or AsMaterializedViewRaw(…) first.");
+                "Declare it via modelBuilder.MaterializedView<T>().From<S>().DefinedAs(...) (or .DefinedAsRaw(...)) first.");
 
         var helper = database.GetService<ISqlGenerationHelper>();
         var engineSql = BuildEngineClauseForEntity(entityType);
@@ -370,9 +370,9 @@ public static class ClickHouseDatabaseExtensions
     }
 
     /// <summary>
-    /// Issues <c>CREATE MATERIALIZED VIEW … REFRESH …</c> for an entity declared with
-    /// <see cref="ClickHouseEntityTypeBuilderExtensions.AsRefreshableMaterializedView"/>.
-    /// Intended to back the deferred-creation path the same way
+    /// Issues <c>CREATE MATERIALIZED VIEW … REFRESH …</c> for an entity declared via
+    /// <c>modelBuilder.MaterializedView&lt;TEntity&gt;().…RefreshEvery(…)</c> /
+    /// <c>RefreshAfter(…)</c>. Intended to back the deferred-creation path the same way
     /// <see cref="CreateMaterializedViewAsync{TEntity}"/> does for non-refreshable MVs.
     /// </summary>
     public static Task<int> CreateRefreshableMaterializedViewAsync<TEntity>(
@@ -387,7 +387,7 @@ public static class ClickHouseDatabaseExtensions
         var kind = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshKind)?.Value as string ?? "EVERY";
         var interval = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshInterval)?.Value as string
             ?? throw new InvalidOperationException(
-                $"Entity '{typeof(TEntity).Name}' has no refresh interval — was it declared with AsRefreshableMaterializedView?");
+                $"Entity '{typeof(TEntity).Name}' has no refresh interval — was it declared with modelBuilder.MaterializedView<T>()...RefreshEvery(...) or .RefreshAfter(...)?");
         var offset = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshOffset)?.Value as string;
         var randomize = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshRandomizeFor)?.Value as string;
         var append = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshAppend)?.Value as bool? ?? false;

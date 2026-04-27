@@ -82,13 +82,12 @@ public class MvNestedTypeTests
                 e.HasNested<Tgt, Player>(x => x.Players);
                 // Nested produces parallel-array columns ("Players.Name", "Players.Score") that
                 // the LINQ translator can't address — use raw SQL for the SELECT.
-                e.AsMaterializedViewRaw(
-                    sourceTable: "MvNestedSource",
-                    selectSql: """
+
+            });
+            mb.MaterializedView<Tgt>().FromTable("MvNestedSource").DefinedAsRaw("""
                     SELECT Id, "Players.Name" AS "Players.Name", "Players.Score" AS "Players.Score"
                     FROM "MvNestedSource"
                     """);
-            });
         }
     }
 }

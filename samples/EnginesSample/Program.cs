@@ -210,7 +210,7 @@ static async Task DemoAggregatingMergeTree(string connectionString)
     await using var context = new AggregatingMergeTreeContext(connectionString);
 
     // EnsureCreatedAsync generates the source table, target table, and materialized view.
-    // The AsMaterializedView<TEntity, TSource>(LINQ) in the model wires them together:
+    // The MaterializedView<T>().From<S>().DefinedAs(...) in the model wires them together:
     //   CREATE TABLE RawEventsAgg (...) ENGINE = MergeTree() ORDER BY (EventType, Timestamp)
     //   CREATE TABLE EventStats (...) ENGINE = AggregatingMergeTree() ORDER BY (EventType)
     //   CREATE MATERIALIZED VIEW ... TO EventStats AS SELECT ... FROM RawEventsAgg ...
@@ -458,7 +458,9 @@ public class AggregatingMergeTreeContext(string connectionString) : DbContext
 
             // Define the materialized view that populates this table from RawEventsAgg
             // using the typed LINQ overload with -State combinators.
-            entity.AsMaterializedView<EventStat, RawEvent>(events => events
+
+        });
+        modelBuilder.MaterializedView<EventStat>().From<RawEvent>().DefinedAs(events => events
                 .GroupBy(x => x.EventType)
                 .Select(g => new EventStat
                 {
@@ -466,7 +468,6 @@ public class AggregatingMergeTreeContext(string connectionString) : DbContext
                     EventCount = g.CountState(),
                     TotalAmount = g.SumState(x => x.Amount),
                 }));
-        });
 
         modelBuilder.Entity<AggResult>(entity =>
         {

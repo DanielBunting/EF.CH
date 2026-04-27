@@ -72,9 +72,10 @@ public class MvTargetMemoryEngineTests
                 {
                     e.ToTable("MvMemoryPassThroughTarget"); e.HasNoKey();
                     e.UseMemoryEngine();
-                    e.AsMaterializedView<Target, Row>(rows => rows
-                        .Select(r => new Target { Tag = r.Tag, Value = r.Value }));
+
                 });
+                mb.MaterializedView<Target>().From<Row>().DefinedAs(rows => rows
+                        .Select(r => new Target { Tag = r.Tag, Value = r.Value }));
             }
         }
         public class Row { public long Id { get; set; } public string Tag { get; set; } = ""; public long Value { get; set; } }
@@ -94,10 +95,11 @@ public class MvTargetMemoryEngineTests
                 {
                     e.ToTable("MvMemoryAggregatedTarget"); e.HasNoKey();
                     e.UseMemoryEngine();
-                    e.AsMaterializedView<Target, Row>(rows => rows
+
+                });
+                mb.MaterializedView<Target>().From<Row>().DefinedAs(rows => rows
                         .GroupBy(r => r.Tag)
                         .Select(g => new Target { Tag = g.Key, Total = g.Sum(r => r.Value) }));
-                });
             }
         }
         public class Row { public long Id { get; set; } public string Tag { get; set; } = ""; public long Value { get; set; } }

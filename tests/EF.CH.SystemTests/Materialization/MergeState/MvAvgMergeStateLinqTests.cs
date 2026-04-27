@@ -57,10 +57,11 @@ public class MvAvgMergeStateLinqTests
                 e.ToTable("MsAvgDaily"); e.HasNoKey();
                 e.UseAggregatingMergeTree(x => x.Bucket);
                 e.Property(x => x.Total).HasAggregateFunction("avg", typeof(double));
-                e.AsMaterializedView<DailyRow, HourlyRow>(rows => rows
+
+            });
+            mb.MaterializedView<DailyRow>().From<HourlyRow>().DefinedAs(rows => rows
                     .GroupBy(r => r.Bucket)
                     .Select(g => new DailyRow { Bucket = g.Key, Total = g.AvgMergeState(r => r.Total) }));
-            });
         }
     }
 

@@ -107,13 +107,14 @@ public class MvAsofJoinSourceLinqTests
             {
                 e.ToTable("LinqAsofInnerTarget"); e.HasNoKey();
                 e.UseMergeTree(x => x.TradeId);
-                e.AsMaterializedView<TradeWithQuote, Trade>(trades => trades
+
+            });
+            mb.MaterializedView<TradeWithQuote>().From<Trade>().DefinedAs(trades => trades
                     .AsofJoin(_quotes,
                         t => t.Symbol,
                         q => q.Symbol,
                         (t, q) => t.T >= q.T,
                         (t, q) => new TradeWithQuote { TradeId = t.Id, TradeT = t.T, QuotePrice = q.Price }));
-            });
         }
     }
 
@@ -130,13 +131,14 @@ public class MvAsofJoinSourceLinqTests
             {
                 e.ToTable("LinqAsofLeftTarget"); e.HasNoKey();
                 e.UseMergeTree(x => x.TradeId);
-                e.AsMaterializedView<TradeWithQuote, Trade>(trades => trades
+
+            });
+            mb.MaterializedView<TradeWithQuote>().From<Trade>().DefinedAs(trades => trades
                     .AsofLeftJoin(_quotes,
                         t => t.Symbol,
                         q => q.Symbol,
                         (t, q) => t.T >= q.T,
                         (t, q) => new TradeWithQuote { TradeId = t.Id, TradeT = t.T, QuotePrice = q.Price }));
-            });
         }
     }
 }

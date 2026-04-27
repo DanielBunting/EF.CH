@@ -187,10 +187,9 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         {
             case CreateTableOperation createOp:
                 // MVs and Dictionaries depend on their source tables
-                var sourceDep = GetSourceTableDependency(createOp, model);
-                if (!string.IsNullOrEmpty(sourceDep))
+                foreach (var src in GetSourceTableDependencies(createOp, model))
                 {
-                    deps.Add(sourceDep);
+                    deps.Add(src);
                 }
                 // Refreshable-MV explicit dependencies
                 var refreshDeps = GetAnnotation<string[]>(createOp, ClickHouseAnnotationNames.MaterializedViewRefreshDependsOn);
@@ -277,39 +276,49 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
     }
 
     /// <summary>
-    /// Gets the source table that a CreateTableOperation depends on, if any.
-    /// Materialized views depend on their source table.
-    /// Dictionaries sourced from ClickHouse tables depend on that table.
+    /// Gets the source tables that a CreateTableOperation depends on.
+    /// Materialized views depend on their trigger source AND any joined sources
+    /// (T2..Tn). Dictionaries sourced from ClickHouse tables depend on that table.
     /// </summary>
-    private string? GetSourceTableDependency(CreateTableOperation operation, IModel? model)
+    private IReadOnlyList<string> GetSourceTableDependencies(CreateTableOperation operation, IModel? model)
     {
+        var sources = new List<string>();
+
         // Get entity type for additional annotation lookup
         var entityType = model?.GetEntityTypes()
             .FirstOrDefault(e => e.GetTableName() == operation.Name
                               && (e.GetSchema() ?? model.GetDefaultSchema()) == operation.Schema);
 
-        // Check for materialized view source
+        // Materialized view trigger source (T1)
         var mvSource = GetAnnotation<string>(operation, ClickHouseAnnotationNames.MaterializedViewSource)
                     ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.MaterializedViewSource);
         if (!string.IsNullOrEmpty(mvSource))
         {
-            return mvSource;
+            sources.Add(mvSource!);
         }
 
-        // Check for dictionary source (only for ClickHouse-sourced dictionaries)
+        // Materialized view joined sources (T2..Tn)
+        var joined = GetAnnotation<string[]>(operation, ClickHouseAnnotationNames.MaterializedViewJoinedSources)
+                  ?? GetEntityAnnotation<string[]>(entityType, ClickHouseAnnotationNames.MaterializedViewJoinedSources);
+        if (joined is { Length: > 0 })
+        {
+            foreach (var j in joined)
+                if (!string.IsNullOrEmpty(j)) sources.Add(j);
+        }
+
+        // Dictionary source (only for ClickHouse-sourced dictionaries)
         var dictSource = GetAnnotation<string>(operation, ClickHouseAnnotationNames.DictionarySource)
                       ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.DictionarySource);
         var sourceProvider = GetAnnotation<string>(operation, ClickHouseAnnotationNames.DictionarySourceProvider)
                           ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.DictionarySourceProvider)
                           ?? "clickhouse";
 
-        // Only consider dependency if dictionary is sourced from a ClickHouse table
         if (!string.IsNullOrEmpty(dictSource) && sourceProvider == "clickhouse")
         {
-            return dictSource;
+            sources.Add(dictSource!);
         }
 
-        return null;
+        return sources;
     }
 
     /// <summary>
@@ -344,19 +353,19 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         var deferredMv = GetAnnotation<bool?>(operation, ClickHouseAnnotationNames.MaterializedViewDeferred)
                       ?? GetEntityAnnotation<bool?>(entityType, ClickHouseAnnotationNames.MaterializedViewDeferred)
                       ?? false;
-        var markedAsMaterializedView = GetAnnotation<bool?>(operation, ClickHouseAnnotationNames.MaterializedView)
+        var isMaterializedView = GetAnnotation<bool?>(operation, ClickHouseAnnotationNames.MaterializedView)
                                     ?? GetEntityAnnotation<bool?>(entityType, ClickHouseAnnotationNames.MaterializedView)
                                     ?? false;
 
         // Deferred MV: skip both the MV creation AND the base-table creation. The caller
         // is responsible for issuing CREATE MATERIALIZED VIEW … POPULATE via
         // DatabaseFacade.CreateMaterializedViewAsync<T>().
-        if (deferredMv && markedAsMaterializedView)
+        if (deferredMv && isMaterializedView)
         {
             return;
         }
 
-        if (!deferredMv && markedAsMaterializedView)
+        if (!deferredMv && isMaterializedView)
         {
             var refreshInterval = GetAnnotation<string>(operation, ClickHouseAnnotationNames.MaterializedViewRefreshInterval)
                                ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.MaterializedViewRefreshInterval);
@@ -475,11 +484,18 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         if (string.IsNullOrEmpty(viewQuery))
         {
             throw new InvalidOperationException(
-                $"Materialized view '{operation.Name}' must have a view query defined via AsMaterializedViewRaw() or AsMaterializedView().");
+                $"Materialized view '{operation.Name}' must have a view query defined via modelBuilder.MaterializedView<T>().DefinedAsRaw(...) or .DefinedAs(query).");
         }
 
         // Get ON CLUSTER clause
         var onClusterClause = GetOnClusterClause(operation.Name, operation.Schema, entityType, model, operation);
+
+        // TO <target> takes priority over ENGINE — when set, the MV writes
+        // into an existing target table and skips its own engine clause.
+        // This conditional was previously refreshable-only; lift here so
+        // ToTarget<T>() works on non-refreshable MVs too.
+        var target = GetAnnotation<string>(operation, ClickHouseAnnotationNames.MaterializedViewRefreshTarget)
+                  ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.MaterializedViewRefreshTarget);
 
         builder
             .Append("CREATE MATERIALIZED VIEW IF NOT EXISTS ")
@@ -488,8 +504,15 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
 
         builder.AppendLine();
 
-        // Add ENGINE clause (materialized views need storage engine too)
-        GenerateEngineClauseForView(operation, entityType, model, builder);
+        if (!string.IsNullOrEmpty(target))
+        {
+            builder.Append("TO ").Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(target!));
+        }
+        else
+        {
+            // Add ENGINE clause (materialized views need storage engine too)
+            GenerateEngineClauseForView(operation, entityType, model, builder);
+        }
 
         // POPULATE clause - backfills existing data from source table
         if (populate)
@@ -530,7 +553,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         {
             throw new InvalidOperationException(
                 $"Refreshable materialized view '{operation.Name}' must have a view query defined " +
-                $"via AsRefreshableMaterializedViewRaw() or AsRefreshableMaterializedView().");
+                $"via modelBuilder.MaterializedView<T>()...RefreshEvery(...) or .RefreshAfter(...).");
         }
 
         var kind = GetAnnotation<string>(operation, ClickHouseAnnotationNames.MaterializedViewRefreshKind)

@@ -95,9 +95,10 @@ public class MvClrTypeCastTests
             mb.Entity<BoolTgt>(e =>
             {
                 e.ToTable("MvCastBoolTarget"); e.HasNoKey(); e.UseMergeTree(x => x.Id);
-                e.AsMaterializedView<BoolTgt, Row>(rows => rows
-                    .Select(r => new BoolTgt { Id = r.Id, Flag = true }));
+
             });
+            mb.MaterializedView<BoolTgt>().From<Row>().DefinedAs(rows => rows
+                    .Select(r => new BoolTgt { Id = r.Id, Flag = true }));
         }
     }
 
@@ -110,9 +111,10 @@ public class MvClrTypeCastTests
             mb.Entity<SByteTgt>(e =>
             {
                 e.ToTable("MvCastSByteTarget"); e.HasNoKey(); e.UseMergeTree(x => x.Id);
-                e.AsMaterializedView<SByteTgt, Row>(rows => rows
-                    .Select(r => new SByteTgt { Id = r.Id, Small = (sbyte)1 }));
+
             });
+            mb.MaterializedView<SByteTgt>().From<Row>().DefinedAs(rows => rows
+                    .Select(r => new SByteTgt { Id = r.Id, Small = (sbyte)1 }));
         }
     }
 
@@ -125,9 +127,10 @@ public class MvClrTypeCastTests
             mb.Entity<UInt32Tgt>(e =>
             {
                 e.ToTable("MvCastUInt32Target"); e.HasNoKey(); e.UseMergeTree(x => x.Id);
-                e.AsMaterializedView<UInt32Tgt, Row>(rows => rows
-                    .Select(r => new UInt32Tgt { Id = r.Id, Big = 1u }));
+
             });
+            mb.MaterializedView<UInt32Tgt>().From<Row>().DefinedAs(rows => rows
+                    .Select(r => new UInt32Tgt { Id = r.Id, Big = 1u }));
         }
     }
 
@@ -140,9 +143,10 @@ public class MvClrTypeCastTests
             mb.Entity<SingleTgt>(e =>
             {
                 e.ToTable("MvCastSingleTarget"); e.HasNoKey(); e.UseMergeTree(x => x.Id);
-                e.AsMaterializedView<SingleTgt, Row>(rows => rows
-                    .Select(r => new SingleTgt { Id = r.Id, Ratio = 1f }));
+
             });
+            mb.MaterializedView<SingleTgt>().From<Row>().DefinedAs(rows => rows
+                    .Select(r => new SingleTgt { Id = r.Id, Ratio = 1f }));
         }
     }
 
@@ -155,9 +159,10 @@ public class MvClrTypeCastTests
             mb.Entity<Int16Tgt>(e =>
             {
                 e.ToTable("MvCastInt16Target"); e.HasNoKey(); e.UseMergeTree(x => x.Id);
-                e.AsMaterializedView<Int16Tgt, Row>(rows => rows
-                    .Select(r => new Int16Tgt { Id = r.Id, Small = (short)1 }));
+
             });
+            mb.MaterializedView<Int16Tgt>().From<Row>().DefinedAs(rows => rows
+                    .Select(r => new Int16Tgt { Id = r.Id, Small = (short)1 }));
         }
     }
 }

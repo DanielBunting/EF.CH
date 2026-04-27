@@ -2,7 +2,7 @@ namespace EF.CH.Extensions;
 
 /// <summary>
 /// Provides ClickHouse-specific aggregate functions for use in projection definitions and materialized-view
-/// query expressions (<c>HasProjection().Select(...)</c>, <c>AsMaterializedView(...)</c>). These methods are
+/// query expressions (<c>HasProjection().Select(...)</c>, <c>MaterializedView&lt;T&gt;().From&lt;S&gt;().DefinedAs(...)</c>). These methods are
 /// translation stubs — they throw if invoked directly, and are converted to ClickHouse SQL by the
 /// projection-DDL translator. They are not currently recognized as aggregates by EF Core's runtime LINQ
 /// pipeline, so <c>ctx.DbSet.GroupBy(...).Select(g => g.SumIf(...))</c> will not translate.
@@ -947,7 +947,7 @@ public static class ClickHouseAggregates
 
     // These complete the -State surface so every aggregate recognised by
     // MaterializedViewSqlTranslator has a matching -State variant. They all
-    // translate to their ClickHouse equivalents inside AsMaterializedView(...)
+    // translate to their ClickHouse equivalents inside materialized-view definitions
     // LINQ expressions; direct invocation throws.
 
     /// <summary>Intermediate state of median(). Translates to medianState(column).</summary>
@@ -1084,7 +1084,7 @@ public static class ClickHouseAggregates
     #region StateIf Combinators
 
     // -StateIf = -State + -If. Store a partial aggregate restricted to rows
-    // matching a predicate — used inside AsMaterializedView to land conditional
+    // matching a predicate — used inside materialized-view definitions to land conditional
     // rollups into AggregatingMergeTree targets.
 
     /// <summary>countStateIf(condition).</summary>

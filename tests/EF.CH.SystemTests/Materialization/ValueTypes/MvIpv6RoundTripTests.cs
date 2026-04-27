@@ -57,9 +57,10 @@ public class MvIpv6RoundTripTests
                 e.ToTable("MvIpv6Target"); e.HasNoKey();
                 e.UseMergeTree(x => x.N);
                 e.Property(x => x.Address).HasColumnType("IPv6");
-                e.AsMaterializedView<Tgt, Src>(rows => rows
-                    .Select(r => new Tgt { Address = r.Address, N = r.N }));
+
             });
+            mb.MaterializedView<Tgt>().From<Src>().DefinedAs(rows => rows
+                    .Select(r => new Tgt { Address = r.Address, N = r.N }));
         }
     }
 }

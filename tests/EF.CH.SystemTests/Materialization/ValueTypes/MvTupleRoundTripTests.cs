@@ -51,9 +51,10 @@ public class MvTupleRoundTripTests
                 e.ToTable("MvTupleTarget"); e.HasNoKey();
                 e.UseMergeTree(x => x.N);
                 e.Property(x => x.Pair).HasColumnType("Tuple(String, Int32)");
-                e.AsMaterializedView<Tgt, Src>(rows => rows
-                    .Select(r => new Tgt { Pair = r.Pair, N = r.N }));
+
             });
+            mb.MaterializedView<Tgt>().From<Src>().DefinedAs(rows => rows
+                    .Select(r => new Tgt { Pair = r.Pair, N = r.N }));
         }
     }
 }

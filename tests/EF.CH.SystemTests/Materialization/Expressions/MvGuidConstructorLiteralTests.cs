@@ -47,13 +47,14 @@ public class MvGuidConstructorLiteralTests
             mb.Entity<Tgt>(e =>
             {
                 e.ToTable("MvGuidCtorTarget"); e.HasNoKey(); e.UseMergeTree(x => x.Id);
-                e.AsMaterializedView<Tgt, Row>(rows => rows
+
+            });
+            mb.MaterializedView<Tgt>().From<Row>().DefinedAs(rows => rows
                     .Select(r => new Tgt
                     {
                         Id = r.Id,
                         V = new Guid("11111111-1111-1111-1111-111111111111"),
                     }));
-            });
         }
     }
 }

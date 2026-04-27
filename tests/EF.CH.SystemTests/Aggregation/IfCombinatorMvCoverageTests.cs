@@ -136,7 +136,9 @@ public class IfCombinatorMvCoverageTests
             {
                 e.ToTable("if_mv_target"); e.HasNoKey();
                 e.UseAggregatingMergeTree(x => x.Region);
-                e.AsMaterializedView<Target, Sale>(src => src
+
+            });
+            mb.MaterializedView<Target>().From<Sale>().DefinedAs(src => src
                     .GroupBy(s => s.Region)
                     .Select(g => new Target
                     {
@@ -175,7 +177,6 @@ public class IfCombinatorMvCoverageTests
                         PaidQuantilesArray = ClickHouseAggregates.QuantilesIf(g, new[] { 0.5, 0.9, 0.99 }, s => s.Amount, s => s.Status == "paid"),
                         PaidQuantilesTDigestArray = ClickHouseAggregates.QuantilesTDigestIf(g, new[] { 0.5, 0.9, 0.99 }, s => s.Amount, s => s.Status == "paid"),
                     }));
-            });
         }
     }
 }

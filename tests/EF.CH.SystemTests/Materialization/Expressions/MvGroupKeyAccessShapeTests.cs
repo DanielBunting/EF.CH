@@ -112,10 +112,11 @@ public class MvGroupKeyAccessShapeTests
             mb.Entity<CompTgt>(e =>
             {
                 e.ToTable("MvKeyCompTarget"); e.HasNoKey(); e.UseSummingMergeTree(x => new { x.A, x.B });
-                e.AsMaterializedView<CompTgt, Row>(rows => rows
+
+            });
+            mb.MaterializedView<CompTgt>().From<Row>().DefinedAs(rows => rows
                     .GroupBy(r => new { r.A, r.B })
                     .Select(g => new CompTgt { A = g.Key.A, B = g.Key.B, Total = g.Sum(r => r.N) }));
-            });
         }
     }
 
@@ -128,10 +129,11 @@ public class MvGroupKeyAccessShapeTests
             mb.Entity<MemTgt>(e =>
             {
                 e.ToTable("MvKeyMemTarget"); e.HasNoKey(); e.UseSummingMergeTree(x => x.A);
-                e.AsMaterializedView<MemTgt, Row>(rows => rows
+
+            });
+            mb.MaterializedView<MemTgt>().From<Row>().DefinedAs(rows => rows
                     .GroupBy(r => r.A)
                     .Select(g => new MemTgt { A = g.Key, Total = g.Sum(r => r.N) }));
-            });
         }
     }
 
@@ -144,10 +146,11 @@ public class MvGroupKeyAccessShapeTests
             mb.Entity<MethodTgt>(e =>
             {
                 e.ToTable("MvKeyMethodTarget"); e.HasNoKey(); e.UseSummingMergeTree(x => x.Bucket);
-                e.AsMaterializedView<MethodTgt, Row>(rows => rows
+
+            });
+            mb.MaterializedView<MethodTgt>().From<Row>().DefinedAs(rows => rows
                     .GroupBy(r => ClickHouseFunctions.ToStartOfHour(r.At))
                     .Select(g => new MethodTgt { Bucket = g.Key, Total = g.Sum(r => r.N) }));
-            });
         }
     }
 
@@ -160,10 +163,11 @@ public class MvGroupKeyAccessShapeTests
             mb.Entity<ConstTgt>(e =>
             {
                 e.ToTable("MvKeyConstTarget"); e.HasNoKey(); e.UseSummingMergeTree(x => x.Bucket);
-                e.AsMaterializedView<ConstTgt, Row>(rows => rows
+
+            });
+            mb.MaterializedView<ConstTgt>().From<Row>().DefinedAs(rows => rows
                     .GroupBy(_ => 1L)
                     .Select(g => new ConstTgt { Bucket = g.Key, Total = g.Sum(r => r.N) }));
-            });
         }
     }
 }

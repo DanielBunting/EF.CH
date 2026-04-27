@@ -61,10 +61,11 @@ public class MvLowCardinalityKeyTests
                 e.ToTable("MvLcTarget"); e.HasNoKey();
                 e.UseSummingMergeTree(x => x.Country);
                 e.Property(x => x.Country).HasLowCardinality();
-                e.AsMaterializedView<Tgt, Src>(rows => rows
+
+            });
+            mb.MaterializedView<Tgt>().From<Src>().DefinedAs(rows => rows
                     .GroupBy(r => r.Country)
                     .Select(g => new Tgt { Country = g.Key, Total = g.Sum(r => r.Amount) }));
-            });
         }
     }
 }

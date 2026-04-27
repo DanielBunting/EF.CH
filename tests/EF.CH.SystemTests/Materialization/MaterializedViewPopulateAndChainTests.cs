@@ -129,7 +129,9 @@ public class MaterializedViewPopulateAndChainTests
                 e.UseAggregatingMergeTree(x => x.HourBucket);
                 e.Property(x => x.ClickCount).HasAggregateFunction("count", typeof(ulong));
                 e.Property(x => x.UniqUsers).HasAggregateFunction("uniq", typeof(long));
-                e.AsMaterializedView<HourlyClick, RawClick>(clicks => clicks
+
+            });
+            mb.MaterializedView<HourlyClick>().From<RawClick>().DefinedAs(clicks => clicks
                     .GroupBy(r => EF.CH.Extensions.ClickHouseFunctions.ToStartOfHour(r.At))
                     .Select(g => new HourlyClick
                     {
@@ -137,7 +139,6 @@ public class MaterializedViewPopulateAndChainTests
                         ClickCount = g.CountState(),
                         UniqUsers = g.UniqState(r => r.UserId),
                     }));
-            });
 
             mb.Entity<DailyClick>(e =>
             {

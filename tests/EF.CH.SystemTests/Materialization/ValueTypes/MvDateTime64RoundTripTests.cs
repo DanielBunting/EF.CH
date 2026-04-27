@@ -62,9 +62,10 @@ public class MvDateTime64RoundTripTests
                 e.ToTable("MvDateTime64Target"); e.HasNoKey();
                 e.UseMergeTree(x => x.N);
                 e.Property(x => x.At).HasColumnType("DateTime64(3, 'UTC')");
-                e.AsMaterializedView<Tgt, Src>(rows => rows
-                    .Select(r => new Tgt { At = r.At, N = r.N }));
+
             });
+            mb.MaterializedView<Tgt>().From<Src>().DefinedAs(rows => rows
+                    .Select(r => new Tgt { At = r.At, N = r.N }));
         }
     }
 }

@@ -49,9 +49,10 @@ public class MvBigIntegerRoundTripTests
             {
                 e.ToTable("MvBigIntTarget"); e.HasNoKey();
                 e.UseMergeTree(x => x.N);
-                e.AsMaterializedView<Tgt, Src>(rows => rows
-                    .Select(r => new Tgt { Big = r.Big, Big2 = r.Big2, N = r.N }));
+
             });
+            mb.MaterializedView<Tgt>().From<Src>().DefinedAs(rows => rows
+                    .Select(r => new Tgt { Big = r.Big, Big2 = r.Big2, N = r.N }));
         }
     }
 }

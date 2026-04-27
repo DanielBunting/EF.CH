@@ -64,10 +64,11 @@ public class MvQuantileMergeStateLinqTests
                 e.ToTable("MsQuantileDaily"); e.HasNoKey();
                 e.UseAggregatingMergeTree(x => x.Bucket);
                 e.Property(x => x.P50).HasAggregateFunction("quantile(0.5)", typeof(double));
-                e.AsMaterializedView<DailyRow, HourlyRow>(rows => rows
+
+            });
+            mb.MaterializedView<DailyRow>().From<HourlyRow>().DefinedAs(rows => rows
                     .GroupBy(r => r.Bucket)
                     .Select(g => new DailyRow { Bucket = g.Key, P50 = g.QuantileMergeState(0.5, r => r.P50) }));
-            });
         }
     }
 

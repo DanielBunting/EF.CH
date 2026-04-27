@@ -125,7 +125,9 @@ public class StateCombinatorMvCoverageTests
                 e.Property(x => x.AnyLastSt).HasAggregateFunction("anyLast", typeof(string));
                 e.Property(x => x.QuantileSt).HasAggregateFunction("quantile(0.5)", typeof(double));
 
-                e.AsMaterializedView<Target, Event>(src => src
+
+            });
+            mb.MaterializedView<Target>().From<Event>().DefinedAs(src => src
                     .GroupBy(s => s.Region)
                     .Select(g => new Target
                     {
@@ -141,7 +143,6 @@ public class StateCombinatorMvCoverageTests
                         AnyLastSt = g.AnyLastState(s => s.Customer),
                         QuantileSt = g.QuantileState(0.5, s => s.Amount),
                     }));
-            });
         }
     }
 }

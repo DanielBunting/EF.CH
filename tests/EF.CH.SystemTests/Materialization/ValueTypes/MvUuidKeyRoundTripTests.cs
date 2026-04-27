@@ -59,10 +59,11 @@ public class MvUuidKeyRoundTripTests
             {
                 e.ToTable("MvUuidKeyTarget"); e.HasNoKey();
                 e.UseSummingMergeTree(x => x.Tenant);
-                e.AsMaterializedView<Tgt, Src>(rows => rows
+
+            });
+            mb.MaterializedView<Tgt>().From<Src>().DefinedAs(rows => rows
                     .GroupBy(r => r.Tenant)
                     .Select(g => new Tgt { Tenant = g.Key, Hits = g.Sum(r => r.Hits) }));
-            });
         }
     }
 }

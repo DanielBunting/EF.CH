@@ -85,7 +85,9 @@ public class MvBoolGuidLowCardinalityTests
                 e.Property(x => x.AnyActive).HasSimpleAggregateFunction("any");
                 e.Property(x => x.AnyOwner).HasSimpleAggregateFunction("any");
                 e.Property(x => x.Total).HasSimpleAggregateFunction("sum");
-                e.AsMaterializedView<Tgt, Src>(src => src
+
+            });
+            mb.MaterializedView<Tgt>().From<Src>().DefinedAs(src => src
                     .GroupBy(s => s.Region)
                     .Select(g => new Tgt
                     {
@@ -94,7 +96,6 @@ public class MvBoolGuidLowCardinalityTests
                         AnyOwner = g.AnyValue(x => x.Owner),
                         Total = g.Sum(x => x.Amount),
                     }));
-            });
         }
     }
 }

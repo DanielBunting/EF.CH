@@ -53,9 +53,10 @@ public class MvTargetStripeLogTests
                 {
                     e.ToTable("MtToStripeLogTarget"); e.HasNoKey();
                     e.UseStripeLogEngine();
-                    e.AsMaterializedView<Target, Row>(rows => rows
-                        .Select(r => new Target { Bucket = r.Bucket, Hits = r.Hits }));
+
                 });
+                mb.MaterializedView<Target>().From<Row>().DefinedAs(rows => rows
+                        .Select(r => new Target { Bucket = r.Bucket, Hits = r.Hits }));
             }
         }
         public class Row { public long Id { get; set; } public string Bucket { get; set; } = ""; public long Hits { get; set; } }

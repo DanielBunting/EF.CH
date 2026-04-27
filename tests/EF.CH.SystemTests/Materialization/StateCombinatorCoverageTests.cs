@@ -9,7 +9,7 @@ namespace EF.CH.SystemTests.Materialization;
 /// <summary>
 /// Dense coverage for every <c>-State</c> and <c>-StateIf</c> combinator
 /// declared on <see cref="ClickHouseAggregates"/>. Each test deploys an AMT
-/// with state columns populated via the typed <c>AsMaterializedView</c> —
+/// with state columns populated via the typed <c>MaterializedView&lt;T&gt;().From&lt;S&gt;().DefinedAs(...)</c> —
 /// so any missing wiring in <c>MaterializedViewSqlTranslator</c> throws at
 /// <c>EnsureCreatedAsync</c> time — and reads back via raw SQL + matching
 /// <c>-Merge</c>, comparing to in-memory ground truth where feasible.
@@ -357,7 +357,9 @@ public class StateCombinatorCoverageTests
                 e.Property(x => x.VarPop_s).HasAggregateFunction("varPop", typeof(double));
                 e.Property(x => x.VarSamp_s).HasAggregateFunction("varSamp", typeof(double));
 
-                e.AsMaterializedView<AllStatesRow, Row>(src => src
+
+            });
+            mb.MaterializedView<AllStatesRow>().From<Row>().DefinedAs(src => src
                     .GroupBy(x => x.Bucket)
                     .Select(g => new AllStatesRow
                     {
@@ -381,7 +383,6 @@ public class StateCombinatorCoverageTests
                         VarPop_s = g.VarPopState(x => x.Value),
                         VarSamp_s = g.VarSampState(x => x.Value),
                     }));
-            });
         }
     }
 
@@ -404,7 +405,9 @@ public class StateCombinatorCoverageTests
                 e.Property(x => x.Qs_s).HasColumnType("AggregateFunction(quantiles(0.5, 0.95), Float64)");
                 e.Property(x => x.QsTD_s).HasColumnType("AggregateFunction(quantilesTDigest(0.5, 0.95), Float64)");
 
-                e.AsMaterializedView<ParametricRow, Row>(src => src
+
+            });
+            mb.MaterializedView<ParametricRow>().From<Row>().DefinedAs(src => src
                     .GroupBy(x => x.Bucket)
                     .Select(g => new ParametricRow
                     {
@@ -417,7 +420,6 @@ public class StateCombinatorCoverageTests
                         Qs_s = g.QuantilesState(new[] { 0.5, 0.95 }, x => x.Value),
                         QsTD_s = g.QuantilesTDigestState(new[] { 0.5, 0.95 }, x => x.Value),
                     }));
-            });
         }
     }
 
@@ -439,7 +441,9 @@ public class StateCombinatorCoverageTests
                 e.Property(x => x.AM_s).HasAggregateFunction("argMax", typeof(long));
                 e.Property(x => x.AN_s).HasAggregateFunction("argMin", typeof(long));
 
-                e.AsMaterializedView<ArrayArgRow, Row>(src => src
+
+            });
+            mb.MaterializedView<ArrayArgRow>().From<Row>().DefinedAs(src => src
                     .GroupBy(x => x.Bucket)
                     .Select(g => new ArrayArgRow
                     {
@@ -451,7 +455,6 @@ public class StateCombinatorCoverageTests
                         AM_s = g.ArgMaxState(x => x.UserId, x => x.Value),
                         AN_s = g.ArgMinState(x => x.UserId, x => x.Value),
                     }));
-            });
         }
     }
 
@@ -474,7 +477,9 @@ public class StateCombinatorCoverageTests
                 e.Property(x => x.Uniq_sif).HasAggregateFunction("uniqIf", typeof(long));
                 e.Property(x => x.UniqExact_sif).HasAggregateFunction("uniqExactIf", typeof(long));
 
-                e.AsMaterializedView<AllStateIfsRow, Row>(src => src
+
+            });
+            mb.MaterializedView<AllStateIfsRow>().From<Row>().DefinedAs(src => src
                     .GroupBy(x => x.Bucket)
                     .Select(g => new AllStateIfsRow
                     {
@@ -487,7 +492,6 @@ public class StateCombinatorCoverageTests
                         Uniq_sif = g.UniqStateIf(x => x.UserId, x => x.IsError),
                         UniqExact_sif = g.UniqExactStateIf(x => x.UserId, x => x.IsError),
                     }));
-            });
         }
     }
 
@@ -506,7 +510,9 @@ public class StateCombinatorCoverageTests
                 e.Property(x => x.GA_sif).HasColumnType("AggregateFunction(groupArrayIf, Int64, UInt8)");
                 e.Property(x => x.TK_sif).HasColumnType("AggregateFunction(topKIf(3), Int64, UInt8)");
 
-                e.AsMaterializedView<ParametricIfRow, Row>(src => src
+
+            });
+            mb.MaterializedView<ParametricIfRow>().From<Row>().DefinedAs(src => src
                     .GroupBy(x => x.Bucket)
                     .Select(g => new ParametricIfRow
                     {
@@ -515,7 +521,6 @@ public class StateCombinatorCoverageTests
                         GA_sif = g.GroupArrayStateIf(x => x.UserId, x => x.IsError),
                         TK_sif = g.TopKStateIf(3, x => x.UserId, x => x.IsError),
                     }));
-            });
         }
     }
 
@@ -530,11 +535,12 @@ public class StateCombinatorCoverageTests
             {
                 e.ToTable("ErrsOnlySum"); e.HasNoKey();
                 e.UseSummingMergeTree(x => x.Bucket);
-                e.AsMaterializedView<WhereRow, Row>(src => src
+
+            });
+            mb.MaterializedView<WhereRow>().From<Row>().DefinedAs(src => src
                     .Where(x => x.IsError)
                     .GroupBy(x => x.Bucket)
                     .Select(g => new WhereRow { Bucket = g.Key, Total = g.Sum(x => x.Value) }));
-            });
         }
     }
 
@@ -550,11 +556,12 @@ public class StateCombinatorCoverageTests
                 e.ToTable("Unsupported"); e.HasNoKey();
                 e.UseSummingMergeTree(x => x.Bucket);
                 // OrderBy inside an MV is not supported — the translator must throw.
-                e.AsMaterializedView<WhereRow, Row>(src => src
+
+            });
+            mb.MaterializedView<WhereRow>().From<Row>().DefinedAs(src => src
                     .OrderBy(x => x.Id)
                     .GroupBy(x => x.Bucket)
                     .Select(g => new WhereRow { Bucket = g.Key, Total = g.Sum(x => x.Value) }));
-            });
         }
     }
 }

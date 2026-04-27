@@ -75,14 +75,15 @@ public class MvConditionalExpressionTests
                 {
                     e.ToTable("MvTernarySelectorTarget"); e.HasNoKey();
                     e.UseSummingMergeTree(x => x.Bucket);
-                    e.AsMaterializedView<Target, Row>(rows => rows
+
+                });
+                mb.MaterializedView<Target>().From<Row>().DefinedAs(rows => rows
                         .GroupBy(r => r.Bucket)
                         .Select(g => new Target
                         {
                             Bucket = g.Key,
                             NetTotal = g.Sum(r => r.IsRefund ? -r.Amount : r.Amount),
                         }));
-                });
             }
         }
         public class Row { public long Id { get; set; } public string Bucket { get; set; } = ""; public long Amount { get; set; } public bool IsRefund { get; set; } }
@@ -102,10 +103,11 @@ public class MvConditionalExpressionTests
                 {
                     e.ToTable("MvTernaryKeyTarget"); e.HasNoKey();
                     e.UseSummingMergeTree(x => x.Tier);
-                    e.AsMaterializedView<Target, Row>(rows => rows
+
+                });
+                mb.MaterializedView<Target>().From<Row>().DefinedAs(rows => rows
                         .GroupBy(r => r.Score >= 50 ? "high" : "low")
                         .Select(g => new Target { Tier = g.Key, Total = g.Sum(r => r.Hits) }));
-                });
             }
         }
         public class Row { public long Id { get; set; } public int Score { get; set; } public long Hits { get; set; } }

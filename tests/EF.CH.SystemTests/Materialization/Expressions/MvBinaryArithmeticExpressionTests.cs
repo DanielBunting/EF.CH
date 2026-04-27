@@ -108,10 +108,11 @@ public class MvBinaryArithmeticExpressionTests
             mb.Entity<Target>(e =>
             {
                 e.ToTable("MvArithAddTarget"); e.HasNoKey(); e.UseSummingMergeTree(x => x.Bucket);
-                e.AsMaterializedView<Target, Row>(rows => rows
+
+            });
+            mb.MaterializedView<Target>().From<Row>().DefinedAs(rows => rows
                     .GroupBy(r => r.Bucket)
                     .Select(g => new Target { Bucket = g.Key, Value = g.Sum(r => r.A + r.B) }));
-            });
         }
     }
     public sealed class SubCtx(DbContextOptions<SubCtx> o) : DbContext(o)
@@ -123,10 +124,11 @@ public class MvBinaryArithmeticExpressionTests
             mb.Entity<Target>(e =>
             {
                 e.ToTable("MvArithSubTarget"); e.HasNoKey(); e.UseSummingMergeTree(x => x.Bucket);
-                e.AsMaterializedView<Target, Row>(rows => rows
+
+            });
+            mb.MaterializedView<Target>().From<Row>().DefinedAs(rows => rows
                     .GroupBy(r => r.Bucket)
                     .Select(g => new Target { Bucket = g.Key, Value = g.Sum(r => r.A - r.B) }));
-            });
         }
     }
     public sealed class MulCtx(DbContextOptions<MulCtx> o) : DbContext(o)
@@ -138,10 +140,11 @@ public class MvBinaryArithmeticExpressionTests
             mb.Entity<Target>(e =>
             {
                 e.ToTable("MvArithMulTarget"); e.HasNoKey(); e.UseSummingMergeTree(x => x.Bucket);
-                e.AsMaterializedView<Target, Row>(rows => rows
+
+            });
+            mb.MaterializedView<Target>().From<Row>().DefinedAs(rows => rows
                     .GroupBy(r => r.Bucket)
                     .Select(g => new Target { Bucket = g.Key, Value = g.Sum(r => r.A * r.B) }));
-            });
         }
     }
     public sealed class DivCtx(DbContextOptions<DivCtx> o) : DbContext(o)
@@ -153,10 +156,11 @@ public class MvBinaryArithmeticExpressionTests
             mb.Entity<Target>(e =>
             {
                 e.ToTable("MvArithDivTarget"); e.HasNoKey(); e.UseSummingMergeTree(x => x.Bucket);
-                e.AsMaterializedView<Target, Row>(rows => rows
+
+            });
+            mb.MaterializedView<Target>().From<Row>().DefinedAs(rows => rows
                     .GroupBy(r => r.Bucket)
                     .Select(g => new Target { Bucket = g.Key, Value = g.Sum(r => r.A / r.B) }));
-            });
         }
     }
     public sealed class ModCtx(DbContextOptions<ModCtx> o) : DbContext(o)
@@ -168,10 +172,11 @@ public class MvBinaryArithmeticExpressionTests
             mb.Entity<Target>(e =>
             {
                 e.ToTable("MvArithModTarget"); e.HasNoKey(); e.UseSummingMergeTree(x => x.Bucket);
-                e.AsMaterializedView<Target, Row>(rows => rows
+
+            });
+            mb.MaterializedView<Target>().From<Row>().DefinedAs(rows => rows
                     .GroupBy(r => r.Bucket)
                     .Select(g => new Target { Bucket = g.Key, Value = g.Sum(r => r.A % r.B) }));
-            });
         }
     }
 }

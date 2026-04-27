@@ -57,11 +57,12 @@ public class MvFullOuterJoinSourceLinqTests
             {
                 e.ToTable("FullOuterTarget"); e.HasNoKey();
                 e.UseSummingMergeTree(x => x.Region);
-                e.AsMaterializedView<Revenue, Order>(orders => orders
+
+            });
+            mb.MaterializedView<Revenue>().From<Order>().DefinedAs(orders => orders
                     .FullOuterJoin(_customers, o => o.CustomerId, c => c.Id, (o, c) => new { o.Amount, c.Region })
                     .GroupBy(x => x.Region)
                     .Select(g => new Revenue { Region = g.Key, Total = g.Sum(x => x.Amount) }));
-            });
         }
     }
 }

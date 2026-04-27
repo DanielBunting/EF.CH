@@ -127,9 +127,10 @@ public class MvNonNullConstantLiteralTests
             mb.Entity<StringTgt>(e =>
             {
                 e.ToTable("MvLitStringTarget"); e.HasNoKey(); e.UseMergeTree(x => x.Id);
-                e.AsMaterializedView<StringTgt, Row>(rows => rows
-                    .Select(r => new StringTgt { Id = r.Id, V = "hello" }));
+
             });
+            mb.MaterializedView<StringTgt>().From<Row>().DefinedAs(rows => rows
+                    .Select(r => new StringTgt { Id = r.Id, V = "hello" }));
         }
     }
 
@@ -142,9 +143,10 @@ public class MvNonNullConstantLiteralTests
             mb.Entity<BoolTgt>(e =>
             {
                 e.ToTable("MvLitBoolTarget"); e.HasNoKey(); e.UseMergeTree(x => x.Id);
-                e.AsMaterializedView<BoolTgt, Row>(rows => rows
-                    .Select(r => new BoolTgt { Id = r.Id, V = true }));
+
             });
+            mb.MaterializedView<BoolTgt>().From<Row>().DefinedAs(rows => rows
+                    .Select(r => new BoolTgt { Id = r.Id, V = true }));
         }
     }
 
@@ -157,9 +159,10 @@ public class MvNonNullConstantLiteralTests
             mb.Entity<SByteTgt>(e =>
             {
                 e.ToTable("MvLitSByteTarget"); e.HasNoKey(); e.UseMergeTree(x => x.Id);
-                e.AsMaterializedView<SByteTgt, Row>(rows => rows
-                    .Select(r => new SByteTgt { Id = r.Id, V = (sbyte)-7 }));
+
             });
+            mb.MaterializedView<SByteTgt>().From<Row>().DefinedAs(rows => rows
+                    .Select(r => new SByteTgt { Id = r.Id, V = (sbyte)-7 }));
         }
     }
 
@@ -172,9 +175,10 @@ public class MvNonNullConstantLiteralTests
             mb.Entity<ByteTgt>(e =>
             {
                 e.ToTable("MvLitByteTarget"); e.HasNoKey(); e.UseMergeTree(x => x.Id);
-                e.AsMaterializedView<ByteTgt, Row>(rows => rows
-                    .Select(r => new ByteTgt { Id = r.Id, V = (byte)7 }));
+
             });
+            mb.MaterializedView<ByteTgt>().From<Row>().DefinedAs(rows => rows
+                    .Select(r => new ByteTgt { Id = r.Id, V = (byte)7 }));
         }
     }
 
@@ -187,9 +191,10 @@ public class MvNonNullConstantLiteralTests
             mb.Entity<LongTgt>(e =>
             {
                 e.ToTable("MvLitLongTarget"); e.HasNoKey(); e.UseMergeTree(x => x.Id);
-                e.AsMaterializedView<LongTgt, Row>(rows => rows
-                    .Select(r => new LongTgt { Id = r.Id, V = 9_999_999_999L }));
+
             });
+            mb.MaterializedView<LongTgt>().From<Row>().DefinedAs(rows => rows
+                    .Select(r => new LongTgt { Id = r.Id, V = 9_999_999_999L }));
         }
     }
 
@@ -202,9 +207,10 @@ public class MvNonNullConstantLiteralTests
             mb.Entity<ULongTgt>(e =>
             {
                 e.ToTable("MvLitULongTarget"); e.HasNoKey(); e.UseMergeTree(x => x.Id);
-                e.AsMaterializedView<ULongTgt, Row>(rows => rows
-                    .Select(r => new ULongTgt { Id = r.Id, V = 9_999_999_999UL }));
+
             });
+            mb.MaterializedView<ULongTgt>().From<Row>().DefinedAs(rows => rows
+                    .Select(r => new ULongTgt { Id = r.Id, V = 9_999_999_999UL }));
         }
     }
 
@@ -217,9 +223,10 @@ public class MvNonNullConstantLiteralTests
             mb.Entity<DoubleTgt>(e =>
             {
                 e.ToTable("MvLitDoubleTarget"); e.HasNoKey(); e.UseMergeTree(x => x.Id);
-                e.AsMaterializedView<DoubleTgt, Row>(rows => rows
-                    .Select(r => new DoubleTgt { Id = r.Id, V = 3.14 }));
+
             });
+            mb.MaterializedView<DoubleTgt>().From<Row>().DefinedAs(rows => rows
+                    .Select(r => new DoubleTgt { Id = r.Id, V = 3.14 }));
         }
     }
 }

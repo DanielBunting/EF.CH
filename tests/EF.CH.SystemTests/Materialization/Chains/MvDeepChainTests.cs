@@ -95,7 +95,9 @@ public class MvDeepChainTests
                 e.UseAggregatingMergeTree(x => x.HourBucket);
                 e.Property(x => x.ClickCount).HasAggregateFunction("count", typeof(ulong));
                 e.Property(x => x.UniqUsers).HasAggregateFunction("uniq", typeof(long));
-                e.AsMaterializedView<Hourly, RawClick>(rows => rows
+
+            });
+            mb.MaterializedView<Hourly>().From<RawClick>().DefinedAs(rows => rows
                     .GroupBy(r => ClickHouseFunctions.ToStartOfHour(r.At))
                     .Select(g => new Hourly
                     {
@@ -103,7 +105,6 @@ public class MvDeepChainTests
                         ClickCount = g.CountState(),
                         UniqUsers = g.UniqState(r => r.UserId),
                     }));
-            });
 
             // Plain AMT target tables (no MV) — populated by explicit INSERT-SELECT.
             mb.Entity<Daily>(e =>

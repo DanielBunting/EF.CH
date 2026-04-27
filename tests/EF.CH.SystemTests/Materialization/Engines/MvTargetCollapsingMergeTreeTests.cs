@@ -74,9 +74,10 @@ public class MvTargetCollapsingMergeTreeTests
                 {
                     e.ToTable("MtToCollapsingTarget"); e.HasNoKey();
                     e.UseCollapsingMergeTree("Sign", "AccountId");
-                    e.AsMaterializedView<Target, Row>(rows => rows
-                        .Select(r => new Target { AccountId = r.AccountId, Balance = r.Balance, Sign = r.Sign }));
+
                 });
+                mb.MaterializedView<Target>().From<Row>().DefinedAs(rows => rows
+                        .Select(r => new Target { AccountId = r.AccountId, Balance = r.Balance, Sign = r.Sign }));
             }
         }
         public class Row { public long Id { get; set; } public long AccountId { get; set; } public double Balance { get; set; } public sbyte Sign { get; set; } }
@@ -96,9 +97,10 @@ public class MvTargetCollapsingMergeTreeTests
                 {
                     e.ToTable("NullToCollapsingTarget"); e.HasNoKey();
                     e.UseCollapsingMergeTree("Sign", "AccountId");
-                    e.AsMaterializedView<Target, Row>(rows => rows
-                        .Select(r => new Target { AccountId = r.AccountId, Balance = r.Balance, Sign = r.Sign }));
+
                 });
+                mb.MaterializedView<Target>().From<Row>().DefinedAs(rows => rows
+                        .Select(r => new Target { AccountId = r.AccountId, Balance = r.Balance, Sign = r.Sign }));
             }
         }
         public class Row { public long AccountId { get; set; } public double Balance { get; set; } public sbyte Sign { get; set; } }

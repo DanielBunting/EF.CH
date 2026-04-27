@@ -474,7 +474,9 @@ public class AnalyticsDbContext(string connectionString) : DbContext
                 .ThenBy(x => x.Date);
 
             // Materialized view: count page views from raw events using typed LINQ.
-            entity.AsMaterializedView<PageViewSummary, RawEvent>(events => events
+
+        });
+        modelBuilder.MaterializedView<PageViewSummary>().From<RawEvent>().DefinedAs(events => events
                 .Where(e => e.EventType == "page_view")
                 .GroupBy(e => new { Date = e.Timestamp.Date, e.Page })
                 .Select(g => new PageViewSummary
@@ -484,7 +486,6 @@ public class AnalyticsDbContext(string connectionString) : DbContext
                     ViewCount = g.Count(),
                     UniqueVisitors = 1L,
                 }));
-        });
 
         // ============================================================
         // ReplacingMergeTree: Latest user session state

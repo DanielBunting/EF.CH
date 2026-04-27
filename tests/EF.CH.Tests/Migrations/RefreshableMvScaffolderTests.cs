@@ -82,10 +82,8 @@ public class RefreshableScaffolderContext(DbContextOptions<RefreshableScaffolder
         b.Entity<ScaffolderRefreshableMv>(e =>
         {
             e.UseMergeTree(x => x.Id);
-            e.AsRefreshableMaterializedViewRaw("Source", "SELECT 1 AS Id",
-                r => r.Every(TimeSpan.FromMinutes(5))
-                      .RandomizeFor(TimeSpan.FromSeconds(30))
-                      .Append());
+
         });
+        b.MaterializedView<ScaffolderRefreshableMv>().FromTable("Source").DefinedAsRaw("SELECT 1 AS Id").RefreshEvery(TimeSpan.FromMinutes(5)).RandomizeFor(TimeSpan.FromSeconds(30)).Append();
     }
 }

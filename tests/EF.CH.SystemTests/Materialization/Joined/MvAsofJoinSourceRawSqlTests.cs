@@ -79,14 +79,13 @@ public class MvAsofJoinSourceRawSqlTests
             {
                 e.ToTable("RawAsofInnerTarget"); e.HasNoKey();
                 e.UseMergeTree(x => x.TradeId);
-                e.AsMaterializedViewRaw(
-                    sourceTable: "RawAsofInnerTrades",
-                    selectSql: """
+
+            });
+            mb.MaterializedView<TradeWithQuote>().FromTable("RawAsofInnerTrades").DefinedAsRaw("""
                     SELECT t."Id" AS "TradeId", t."T" AS "TradeT", q."Price" AS "QuotePrice"
                     FROM "RawAsofInnerTrades" AS t
                     ASOF JOIN "RawAsofInnerQuotes" AS q ON t."Symbol" = q."Symbol" AND t."T" >= q."T"
                     """);
-            });
         }
     }
 }

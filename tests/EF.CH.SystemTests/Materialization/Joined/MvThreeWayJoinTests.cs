@@ -75,7 +75,9 @@ public class MvThreeWayJoinTests
             {
                 e.ToTable("Mv3WayJoinTarget"); e.HasNoKey();
                 e.UseSummingMergeTree(x => new { x.Region, x.Category });
-                e.AsMaterializedView<Tgt, Order>(orders => orders
+
+            });
+            mb.MaterializedView<Tgt>().From<Order>().DefinedAs(orders => orders
                     .Join(_customers,
                         o => o.CustomerId,
                         c => c.Id,
@@ -91,7 +93,6 @@ public class MvThreeWayJoinTests
                         Category = g.Key.Category,
                         Total = g.Sum(x => x.Amount),
                     }));
-            });
         }
     }
 }

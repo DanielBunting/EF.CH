@@ -59,10 +59,11 @@ public class MvDecimal128RoundTripTests
                 e.ToTable("MvDecimal128Target"); e.HasNoKey();
                 e.UseSummingMergeTree(x => x.Bucket);
                 e.Property(x => x.Total).HasColumnType("Decimal(38, 6)");
-                e.AsMaterializedView<Tgt, Src>(rows => rows
+
+            });
+            mb.MaterializedView<Tgt>().From<Src>().DefinedAs(rows => rows
                     .GroupBy(r => r.Bucket)
                     .Select(g => new Tgt { Bucket = g.Key, Total = g.Sum(r => r.Amount) }));
-            });
         }
     }
 }
