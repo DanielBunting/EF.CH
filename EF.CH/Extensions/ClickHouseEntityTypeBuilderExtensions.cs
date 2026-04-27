@@ -129,9 +129,9 @@ public class ReplicatedEngineBuilder<TEntity> where TEntity : class
 /// entity.UseDistributed("my_cluster", "events_local")
 ///       .WithShardingKey(x => x.UserId);
 ///
-/// // With expression-based sharding
+/// // With expression-based sharding (raw SQL)
 /// entity.UseDistributed("my_cluster", "events_local")
-///       .WithShardingKey("cityHash64(UserId)")
+///       .WithShardingKeyExpression("cityHash64(UserId)")
 ///       .WithPolicy("ssd_policy");
 /// </code>
 /// </example>
@@ -149,28 +149,73 @@ public class DistributedEngineBuilder<TEntity> where TEntity : class
     }
 
     /// <summary>
-    /// Configures the sharding key using a property selector expression.
+    /// Configures the sharding key using a direct property-access expression.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Only direct member access is accepted (e.g. <c>x =&gt; x.UserId</c>). Anything
+    /// else — function calls, casts, binary expressions — throws an
+    /// <see cref="ArgumentException"/> at configuration time. For computed sharding
+    /// keys such as <c>cityHash64(UserId)</c>, use
+    /// <see cref="WithShardingKeyExpression(string)"/> instead.
+    /// </para>
+    /// </remarks>
     /// <typeparam name="TProperty">The property type.</typeparam>
     /// <param name="shardingKeySelector">Expression selecting the property to use as sharding key.</param>
     /// <returns>This builder for continued chaining.</returns>
+    /// <exception cref="ArgumentException">
+    /// Thrown when <paramref name="shardingKeySelector"/> is anything other than a
+    /// direct property-access expression.
+    /// </exception>
     public DistributedEngineBuilder<TEntity> WithShardingKey<TProperty>(
         Expression<Func<TEntity, TProperty>> shardingKeySelector)
     {
         ArgumentNullException.ThrowIfNull(shardingKeySelector);
-        var propertyName = ExpressionExtensions.GetPropertyName(shardingKeySelector);
-        _builder.HasAnnotation(ClickHouseAnnotationNames.DistributedShardingKey, propertyName);
+
+        // Unwrap a single Convert/ConvertChecked node — Expression<Func<T, object>>
+        // overloads always wrap value-typed members in a Convert.
+        var body = shardingKeySelector.Body;
+        if (body is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } convert)
+        {
+            body = convert.Operand;
+        }
+
+        if (body is not MemberExpression member)
+        {
+            throw new ArgumentException(
+                "WithShardingKey<TProperty> accepts only direct property access " +
+                "(e.g. x => x.UserId). For computed sharding keys " +
+                "(e.g. cityHash64(x.UserId)), use WithShardingKeyExpression(string).",
+                nameof(shardingKeySelector));
+        }
+
+        // Member must be on the lambda parameter, not a constant capture or nested member.
+        if (member.Expression is not ParameterExpression)
+        {
+            throw new ArgumentException(
+                "WithShardingKey<TProperty> accepts only direct property access " +
+                "on the lambda parameter (e.g. x => x.UserId). For computed sharding keys, " +
+                "use WithShardingKeyExpression(string).",
+                nameof(shardingKeySelector));
+        }
+
+        _builder.HasAnnotation(ClickHouseAnnotationNames.DistributedShardingKey, member.Member.Name);
         return this;
     }
 
     /// <summary>
     /// Configures the sharding key using a raw SQL expression.
     /// </summary>
+    /// <remarks>
+    /// Use this overload for hash-based or otherwise computed sharding keys, e.g.
+    /// <c>"cityHash64(UserId)"</c>. The expression is emitted verbatim into the
+    /// distributed engine's <c>ENGINE = Distributed(..., sharding_key)</c> clause.
+    /// </remarks>
     /// <param name="shardingKeyExpression">The sharding key expression (e.g., "cityHash64(UserId)").</param>
     /// <returns>This builder for continued chaining.</returns>
-    public DistributedEngineBuilder<TEntity> WithShardingKey(string shardingKeyExpression)
+    public DistributedEngineBuilder<TEntity> WithShardingKeyExpression(string shardingKeyExpression)
     {
-        ArgumentNullException.ThrowIfNull(shardingKeyExpression);
+        ArgumentException.ThrowIfNullOrWhiteSpace(shardingKeyExpression);
         _builder.HasAnnotation(ClickHouseAnnotationNames.DistributedShardingKey, shardingKeyExpression);
         return this;
     }
@@ -1819,7 +1864,7 @@ public static class ClickHouseEntityTypeBuilderExtensions
     /// <example>
     /// <code>
     /// entity.UseDistributed("my_cluster", "events_local")
-    ///       .WithShardingKey("cityHash64(UserId)")
+    ///       .WithShardingKeyExpression("cityHash64(UserId)")
     ///       .WithPolicy("ssd_policy");
     /// </code>
     /// </example>

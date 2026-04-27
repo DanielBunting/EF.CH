@@ -85,7 +85,7 @@ public class DistributedTableRoutingTests
             {
                 e.ToTable("Events"); e.HasKey(x => x.Id);
                 e.UseDistributed(ClusterConfigTemplates.ShardedClusterName, "EventsLocal")
-                    .WithShardingKey("cityHash64(UserId)");
+                    .WithShardingKeyExpression("cityHash64(UserId)");
             });
         }
     }
