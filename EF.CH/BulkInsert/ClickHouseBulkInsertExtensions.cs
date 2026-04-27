@@ -10,6 +10,15 @@ namespace EF.CH.Extensions;
 public static class ClickHouseBulkInsertExtensions
 {
     /// <summary>
+    /// Synchronous counterpart of <see cref="BulkInsertAsync{TEntity}(DbContext, IEnumerable{TEntity}, Action{ClickHouseBulkInsertOptions}?, CancellationToken)"/>.
+    /// </summary>
+    public static ClickHouseBulkInsertResult BulkInsert<TEntity>(
+        this DbContext context,
+        IEnumerable<TEntity> entities,
+        Action<ClickHouseBulkInsertOptions>? configure = null) where TEntity : class
+        => BulkInsertAsync(context, entities, configure).GetAwaiter().GetResult();
+
+    /// <summary>
     /// Bulk inserts a collection of entities into ClickHouse.
     /// Bypasses EF Core change tracking for maximum insert performance.
     /// </summary>
@@ -49,6 +58,15 @@ public static class ClickHouseBulkInsertExtensions
         var bulkInserter = context.GetService<IClickHouseBulkInserter>();
         return bulkInserter.InsertStreamingAsync(entities, configure, cancellationToken);
     }
+
+    /// <summary>
+    /// Synchronous counterpart of <see cref="BulkInsertAsync{TEntity}(DbSet{TEntity}, IEnumerable{TEntity}, Action{ClickHouseBulkInsertOptions}?, CancellationToken)"/>.
+    /// </summary>
+    public static ClickHouseBulkInsertResult BulkInsert<TEntity>(
+        this DbSet<TEntity> dbSet,
+        IEnumerable<TEntity> entities,
+        Action<ClickHouseBulkInsertOptions>? configure = null) where TEntity : class
+        => BulkInsertAsync(dbSet, entities, configure).GetAwaiter().GetResult();
 
     /// <summary>
     /// Bulk inserts a collection of entities into ClickHouse.
@@ -105,6 +123,14 @@ public static class ClickHouseBulkInsertExtensions
         IEnumerable<TEntity> entities,
         CancellationToken cancellationToken = default) where TEntity : class
         => dbSet.BulkInsertAsync(entities, configure: null, cancellationToken);
+
+    /// <summary>
+    /// Synchronous counterpart of <see cref="InsertFromQueryAsync{TEntity}"/>.
+    /// </summary>
+    public static int InsertFromQuery<TEntity>(
+        this DbSet<TEntity> targetSet,
+        IQueryable<TEntity> sourceQuery) where TEntity : class
+        => InsertFromQueryAsync(targetSet, sourceQuery).GetAwaiter().GetResult();
 
     /// <summary>
     /// Issues <c>INSERT INTO target SELECT …</c> from the given source
