@@ -163,9 +163,9 @@ static async Task DemoInsertSelect(BulkOpsContext context)
 
     // Server-side INSERT...SELECT with mapping between different entity types.
     // Data never leaves ClickHouse -- the mapping expression is translated to SQL.
-    var insertResult = await context.SensorArchive
-        .ExecuteInsertFromQueryAsync(
-            sourceQuery,
+    var insertResult = await sourceQuery
+        .InsertIntoAsync(
+            context.SensorArchive,
             src => new SensorArchiveEntry
             {
                 SensorId = src.SensorId,

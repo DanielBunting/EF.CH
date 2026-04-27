@@ -51,15 +51,17 @@ public class InsertSelectTests : IAsyncLifetime
         await context.BulkInsertAsync(sourceEvents);
 
         // Execute INSERT ... SELECT with filter and mapping
-        var result = await context.ArchivedEvents.ExecuteInsertFromQueryAsync(
-            context.Events.Where(e => e.Category == "CategoryA"),
-            e => new ArchivedEvent
-            {
-                Id = e.Id,
-                Timestamp = e.Timestamp,
-                Category = e.Category,
-                Amount = e.Amount
-            });
+        var result = await context.Events
+            .Where(e => e.Category == "CategoryA")
+            .InsertIntoAsync(
+                context.ArchivedEvents,
+                e => new ArchivedEvent
+                {
+                    Id = e.Id,
+                    Timestamp = e.Timestamp,
+                    Category = e.Category,
+                    Amount = e.Amount
+                });
 
         Assert.True(result.RowsAffected >= 0); // ClickHouse may return 0 for INSERT ... SELECT
         Assert.True(result.Elapsed > TimeSpan.Zero);
@@ -116,15 +118,17 @@ public class InsertSelectTests : IAsyncLifetime
         await context.Database.EnsureCreatedAsync();
 
         // Execute INSERT ... SELECT on empty table with mapping
-        var result = await context.ArchivedEvents.ExecuteInsertFromQueryAsync(
-            context.Events.Where(e => e.Category == "NonExistent"),
-            e => new ArchivedEvent
-            {
-                Id = e.Id,
-                Timestamp = e.Timestamp,
-                Category = e.Category,
-                Amount = e.Amount
-            });
+        var result = await context.Events
+            .Where(e => e.Category == "NonExistent")
+            .InsertIntoAsync(
+                context.ArchivedEvents,
+                e => new ArchivedEvent
+                {
+                    Id = e.Id,
+                    Timestamp = e.Timestamp,
+                    Category = e.Category,
+                    Amount = e.Amount
+                });
 
         Assert.True(result.Elapsed > TimeSpan.Zero);
         Assert.Contains("INSERT INTO", result.Sql);
@@ -139,15 +143,17 @@ public class InsertSelectTests : IAsyncLifetime
         await using var context = CreateContext();
         await context.Database.EnsureCreatedAsync();
 
-        var result = await context.ArchivedEvents.ExecuteInsertFromQueryAsync(
-            context.Events.Where(e => e.Category == "Test"),
-            e => new ArchivedEvent
-            {
-                Id = e.Id,
-                Timestamp = e.Timestamp,
-                Category = e.Category,
-                Amount = e.Amount
-            });
+        var result = await context.Events
+            .Where(e => e.Category == "Test")
+            .InsertIntoAsync(
+                context.ArchivedEvents,
+                e => new ArchivedEvent
+                {
+                    Id = e.Id,
+                    Timestamp = e.Timestamp,
+                    Category = e.Category,
+                    Amount = e.Amount
+                });
 
         // Verify SQL structure
         Assert.Contains("INSERT INTO \"ArchivedEvents\"", result.Sql);
@@ -184,8 +190,9 @@ public class InsertSelectTests : IAsyncLifetime
 
         // For same-type insert, computed columns are automatically excluded
         // from both INSERT column list and SELECT
-        var result = await context.EntitiesWithComputed.ExecuteInsertFromQueryAsync(
-            context.EntitiesWithComputed.Where(e => e.Value > 0));
+        var result = await context.EntitiesWithComputed
+            .Where(e => e.Value > 0)
+            .InsertIntoAsync(context.EntitiesWithComputed);
 
         // The computed column should be excluded from the INSERT column list
         Assert.Contains("INSERT INTO", result.Sql);
@@ -221,17 +228,18 @@ public class InsertSelectTests : IAsyncLifetime
         await context.BulkInsertAsync(sourceEvents);
 
         // INSERT ... SELECT with ORDER BY and mapping
-        var result = await context.ArchivedEvents.ExecuteInsertFromQueryAsync(
-            context.Events
-                .Where(e => e.Category == "OrderTest")
-                .OrderByDescending(e => e.Amount),
-            e => new ArchivedEvent
-            {
-                Id = e.Id,
-                Timestamp = e.Timestamp,
-                Category = e.Category,
-                Amount = e.Amount
-            });
+        var result = await context.Events
+            .Where(e => e.Category == "OrderTest")
+            .OrderByDescending(e => e.Amount)
+            .InsertIntoAsync(
+                context.ArchivedEvents,
+                e => new ArchivedEvent
+                {
+                    Id = e.Id,
+                    Timestamp = e.Timestamp,
+                    Category = e.Category,
+                    Amount = e.Amount
+                });
 
         Assert.Contains("ORDER BY", result.Sql);
 
@@ -259,15 +267,17 @@ public class InsertSelectTests : IAsyncLifetime
         await context.BulkInsertAsync(sourceEvents);
 
         // INSERT ... SELECT with multiple conditions and mapping
-        var result = await context.ArchivedEvents.ExecuteInsertFromQueryAsync(
-            context.Events.Where(e => e.Category == "A" && e.Amount > 50),
-            e => new ArchivedEvent
-            {
-                Id = e.Id,
-                Timestamp = e.Timestamp,
-                Category = e.Category,
-                Amount = e.Amount
-            });
+        var result = await context.Events
+            .Where(e => e.Category == "A" && e.Amount > 50)
+            .InsertIntoAsync(
+                context.ArchivedEvents,
+                e => new ArchivedEvent
+                {
+                    Id = e.Id,
+                    Timestamp = e.Timestamp,
+                    Category = e.Category,
+                    Amount = e.Amount
+                });
 
         Assert.Contains("WHERE", result.Sql);
         Assert.Contains("AND", result.Sql);
@@ -297,8 +307,8 @@ public class InsertSelectTests : IAsyncLifetime
         await context.BulkInsertAsync(sourceEvents);
 
         // INSERT ... SELECT all with mapping - should include all rows
-        var result = await context.ArchivedEvents.ExecuteInsertFromQueryAsync(
-            context.Events,
+        var result = await context.Events.InsertIntoAsync(
+            context.ArchivedEvents,
             e => new ArchivedEvent
             {
                 Id = e.Id,

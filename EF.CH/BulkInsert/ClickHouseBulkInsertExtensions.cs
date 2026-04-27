@@ -94,19 +94,6 @@ public static class ClickHouseBulkInsertExtensions
     }
 
     /// <summary>
-    /// Upserts a collection of entities. For engines that treat INSERT as an
-    /// upsert (<c>KeeperMap</c>, <c>ReplacingMergeTree</c>), this is identical
-    /// to <see cref="BulkInsertAsync{TEntity}(DbSet{TEntity}, IEnumerable{TEntity}, Action{ClickHouseBulkInsertOptions}?, CancellationToken)"/>
-    /// but the name documents the intent. Bypasses EF's change tracker so
-    /// duplicate keys don't trip <c>InvalidOperationException</c>.
-    /// </summary>
-    public static Task<ClickHouseBulkInsertResult> UpsertRangeAsync<TEntity>(
-        this DbSet<TEntity> dbSet,
-        IEnumerable<TEntity> entities,
-        CancellationToken cancellationToken = default) where TEntity : class
-        => dbSet.BulkInsertAsync(entities, configure: null, cancellationToken);
-
-    /// <summary>
     /// Issues <c>INSERT INTO target SELECT …</c> from the given source
     /// <see cref="IQueryable{TEntity}"/>. Stays server-side — no rows flow
     /// through the client. Use for AMT→AMT chaining where

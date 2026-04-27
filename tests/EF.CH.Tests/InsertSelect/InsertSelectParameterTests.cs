@@ -50,15 +50,17 @@ public class InsertSelectParameterTests : IAsyncLifetime
 
         // Use captured DateTime variable
         var cutoff = now.AddDays(-7);
-        var result = await context.ArchivedParameterTestEvents.ExecuteInsertFromQueryAsync(
-            context.ParameterTestEvents.Where(e => e.Timestamp > cutoff),
-            e => new ArchivedParameterTestEvent
-            {
-                Id = e.Id,
-                Timestamp = e.Timestamp,
-                Category = e.Category,
-                Amount = e.Amount
-            });
+        var result = await context.ParameterTestEvents
+            .Where(e => e.Timestamp > cutoff)
+            .InsertIntoAsync(
+                context.ArchivedParameterTestEvents,
+                e => new ArchivedParameterTestEvent
+                {
+                    Id = e.Id,
+                    Timestamp = e.Timestamp,
+                    Category = e.Category,
+                    Amount = e.Amount
+                });
 
         // Verify parameter was resolved (no placeholder in SQL)
         Assert.DoesNotContain("{__cutoff", result.Sql);
@@ -90,15 +92,17 @@ public class InsertSelectParameterTests : IAsyncLifetime
 
         // Use captured decimal variable
         var minAmount = 100.50m;
-        var result = await context.ArchivedParameterTestEvents.ExecuteInsertFromQueryAsync(
-            context.ParameterTestEvents.Where(e => e.Amount > minAmount),
-            e => new ArchivedParameterTestEvent
-            {
-                Id = e.Id,
-                Timestamp = e.Timestamp,
-                Category = e.Category,
-                Amount = e.Amount
-            });
+        var result = await context.ParameterTestEvents
+            .Where(e => e.Amount > minAmount)
+            .InsertIntoAsync(
+                context.ArchivedParameterTestEvents,
+                e => new ArchivedParameterTestEvent
+                {
+                    Id = e.Id,
+                    Timestamp = e.Timestamp,
+                    Category = e.Category,
+                    Amount = e.Amount
+                });
 
         // Verify parameter was resolved (no placeholder in SQL)
         Assert.DoesNotContain("{", result.Sql);
@@ -129,15 +133,17 @@ public class InsertSelectParameterTests : IAsyncLifetime
 
         // Use captured string variable
         var targetCategory = "Important";
-        var result = await context.ArchivedParameterTestEvents.ExecuteInsertFromQueryAsync(
-            context.ParameterTestEvents.Where(e => e.Category == targetCategory),
-            e => new ArchivedParameterTestEvent
-            {
-                Id = e.Id,
-                Timestamp = e.Timestamp,
-                Category = e.Category,
-                Amount = e.Amount
-            });
+        var result = await context.ParameterTestEvents
+            .Where(e => e.Category == targetCategory)
+            .InsertIntoAsync(
+                context.ArchivedParameterTestEvents,
+                e => new ArchivedParameterTestEvent
+                {
+                    Id = e.Id,
+                    Timestamp = e.Timestamp,
+                    Category = e.Category,
+                    Amount = e.Amount
+                });
 
         // Verify parameter was resolved
         Assert.DoesNotContain("{__targetCategory", result.Sql);
@@ -177,15 +183,17 @@ public class InsertSelectParameterTests : IAsyncLifetime
         await context.BulkInsertAsync(sourceEvents);
 
         // Use captured Guid variable
-        var result = await context.ArchivedParameterTestEvents.ExecuteInsertFromQueryAsync(
-            context.ParameterTestEvents.Where(e => e.Id == targetId),
-            e => new ArchivedParameterTestEvent
-            {
-                Id = e.Id,
-                Timestamp = e.Timestamp,
-                Category = e.Category,
-                Amount = e.Amount
-            });
+        var result = await context.ParameterTestEvents
+            .Where(e => e.Id == targetId)
+            .InsertIntoAsync(
+                context.ArchivedParameterTestEvents,
+                e => new ArchivedParameterTestEvent
+                {
+                    Id = e.Id,
+                    Timestamp = e.Timestamp,
+                    Category = e.Category,
+                    Amount = e.Amount
+                });
 
         // Verify parameter was resolved
         Assert.DoesNotContain("{__targetId", result.Sql);
@@ -221,18 +229,20 @@ public class InsertSelectParameterTests : IAsyncLifetime
         var category = "Important";
         var minAmount = 50m;
 
-        var result = await context.ArchivedParameterTestEvents.ExecuteInsertFromQueryAsync(
-            context.ParameterTestEvents.Where(e =>
+        var result = await context.ParameterTestEvents
+            .Where(e =>
                 e.Timestamp > cutoff &&
                 e.Category == category &&
-                e.Amount > minAmount),
-            e => new ArchivedParameterTestEvent
-            {
-                Id = e.Id,
-                Timestamp = e.Timestamp,
-                Category = e.Category,
-                Amount = e.Amount
-            });
+                e.Amount > minAmount)
+            .InsertIntoAsync(
+                context.ArchivedParameterTestEvents,
+                e => new ArchivedParameterTestEvent
+                {
+                    Id = e.Id,
+                    Timestamp = e.Timestamp,
+                    Category = e.Category,
+                    Amount = e.Amount
+                });
 
         // Verify all parameters were resolved (no placeholders)
         Assert.DoesNotContain("{", result.Sql);
@@ -263,15 +273,17 @@ public class InsertSelectParameterTests : IAsyncLifetime
 
         // Use property from an object (simulating a settings or filter object)
         var filter = new { MinAmount = 100m };
-        var result = await context.ArchivedParameterTestEvents.ExecuteInsertFromQueryAsync(
-            context.ParameterTestEvents.Where(e => e.Amount >= filter.MinAmount),
-            e => new ArchivedParameterTestEvent
-            {
-                Id = e.Id,
-                Timestamp = e.Timestamp,
-                Category = e.Category,
-                Amount = e.Amount
-            });
+        var result = await context.ParameterTestEvents
+            .Where(e => e.Amount >= filter.MinAmount)
+            .InsertIntoAsync(
+                context.ArchivedParameterTestEvents,
+                e => new ArchivedParameterTestEvent
+                {
+                    Id = e.Id,
+                    Timestamp = e.Timestamp,
+                    Category = e.Category,
+                    Amount = e.Amount
+                });
 
         // Verify parameter was resolved
         Assert.DoesNotContain("{", result.Sql);
@@ -289,15 +301,17 @@ public class InsertSelectParameterTests : IAsyncLifetime
 
         // For now, we verify that valid parameters don't throw
         var category = "Test";
-        var result = await context.ArchivedParameterTestEvents.ExecuteInsertFromQueryAsync(
-            context.ParameterTestEvents.Where(e => e.Category == category),
-            e => new ArchivedParameterTestEvent
-            {
-                Id = e.Id,
-                Timestamp = e.Timestamp,
-                Category = e.Category,
-                Amount = e.Amount
-            });
+        var result = await context.ParameterTestEvents
+            .Where(e => e.Category == category)
+            .InsertIntoAsync(
+                context.ArchivedParameterTestEvents,
+                e => new ArchivedParameterTestEvent
+                {
+                    Id = e.Id,
+                    Timestamp = e.Timestamp,
+                    Category = e.Category,
+                    Amount = e.Amount
+                });
 
         // This should succeed without throwing
         Assert.Contains("INSERT INTO", result.Sql);
@@ -325,15 +339,17 @@ public class InsertSelectParameterTests : IAsyncLifetime
 
         // Use DateTime.UtcNow.AddDays() directly (common pattern)
         var cutoffDate = DateTime.UtcNow.AddDays(-14);
-        var result = await context.ArchivedParameterTestEvents.ExecuteInsertFromQueryAsync(
-            context.ParameterTestEvents.Where(e => e.Timestamp < cutoffDate),
-            e => new ArchivedParameterTestEvent
-            {
-                Id = e.Id,
-                Timestamp = e.Timestamp,
-                Category = e.Category,
-                Amount = e.Amount
-            });
+        var result = await context.ParameterTestEvents
+            .Where(e => e.Timestamp < cutoffDate)
+            .InsertIntoAsync(
+                context.ArchivedParameterTestEvents,
+                e => new ArchivedParameterTestEvent
+                {
+                    Id = e.Id,
+                    Timestamp = e.Timestamp,
+                    Category = e.Category,
+                    Amount = e.Amount
+                });
 
         // Verify parameter was resolved (no placeholder in SQL)
         Assert.DoesNotContain("{", result.Sql);
