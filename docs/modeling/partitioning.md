@@ -15,7 +15,7 @@ modelBuilder.Entity<Event>(entity =>
 {
     entity.UseMergeTree(x => new { x.Timestamp, x.EventType });
 
-    entity.HasPartitionByMonth(x => x.Timestamp);
+    entity.HasPartitionBy(x => x.Timestamp, PartitionGranularity.Month);
 });
 ```
 
@@ -36,7 +36,7 @@ Produces partition IDs like `202601`, `202602`, `202603`.
 Finer-grained partitioning for high-volume tables where daily data management is needed.
 
 ```csharp
-entity.HasPartitionByDay(x => x.EventDate);
+entity.HasPartitionBy(x => x.EventDate, PartitionGranularity.Day);
 ```
 
 **Generated SQL:**
@@ -52,7 +52,7 @@ Produces partition IDs like `20260101`, `20260102`, `20260103`.
 Coarser partitioning for tables with lower volume or multi-year retention.
 
 ```csharp
-entity.HasPartitionByYear(x => x.OrderDate);
+entity.HasPartitionBy(x => x.OrderDate, PartitionGranularity.Year);
 ```
 
 **Generated SQL:**
@@ -93,9 +93,9 @@ entity.HasPartitionBy("intDiv(toUInt32(\"UserId\"), 1000000)");
 
 | Strategy | Method | Typical Row Volume | Use Case |
 |---|---|---|---|
-| Monthly | `HasPartitionByMonth()` | Millions-billions/month | Standard time-series, event logs, metrics |
-| Daily | `HasPartitionByDay()` | Millions+/day | High-volume logs, real-time analytics |
-| Yearly | `HasPartitionByYear()` | Any | Multi-year archives, low-volume tables |
+| Monthly | `HasPartitionBy(..., PartitionGranularity.Month)` | Millions-billions/month | Standard time-series, event logs, metrics |
+| Daily | `HasPartitionBy(..., PartitionGranularity.Day)` | Millions+/day | High-volume logs, real-time analytics |
+| Yearly | `HasPartitionBy(..., PartitionGranularity.Year)` | Any | Multi-year archives, low-volume tables |
 | By column | `HasPartitionBy(x => x.Col)` | Varies | Multi-tenant, regional separation |
 | Custom | `HasPartitionBy("expr")` | Varies | Composite keys, hash-based distribution |
 
@@ -182,7 +182,7 @@ modelBuilder.Entity<MetricPoint>(entity =>
     entity.HasKey(x => x.Id);
 
     entity.UseMergeTree(x => new { x.Timestamp, x.MetricName })
-        .HasPartitionByMonth(x => x.Timestamp);
+        .HasPartitionBy(x => x.Timestamp, PartitionGranularity.Month);
 
     // Skip index on metric name for fast filtering within partitions
     entity.HasIndex(x => x.MetricName)

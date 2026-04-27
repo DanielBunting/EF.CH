@@ -155,7 +155,7 @@ entity.UseReplicatedMergeTree(x => x.Id)
     .WithReplication("/clickhouse/geo/{database}/{table}")
     .WithTableGroup("Core")
     .And()  // or just continue chaining
-    .HasPartitionByMonth(x => x.OrderDate)
+    .HasPartitionBy(x => x.OrderDate, PartitionGranularity.Month)
     .HasTtl(x => x.OrderDate, TimeSpan.FromDays(365));
 ```
 
@@ -165,7 +165,7 @@ The `.And()` call explicitly returns the `EntityTypeBuilder<TEntity>`, but impli
 // Implicit conversion -- no .And() needed
 entity.UseReplicatedMergeTree(x => x.Id)
     .WithCluster("geo_cluster")
-    .HasPartitionByMonth(x => x.OrderDate);
+    .HasPartitionBy(x => x.OrderDate, PartitionGranularity.Month);
 ```
 
 ## Full Example
@@ -184,7 +184,7 @@ public class AnalyticsDbContext : DbContext
                 .WithReplication("/clickhouse/analytics/{database}/{table}")
                 .WithTableGroup("Core");
 
-            entity.HasPartitionByMonth(x => x.Timestamp);
+            entity.HasPartitionBy(x => x.Timestamp, PartitionGranularity.Month);
             entity.HasTtl(x => x.Timestamp, TimeSpan.FromDays(90));
 
             entity.HasIndex(x => x.UserId)

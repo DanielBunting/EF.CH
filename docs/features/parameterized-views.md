@@ -375,7 +375,7 @@ public class AnalyticsDbContext : DbContext
         {
             entity.HasKey(e => e.EventId);
             entity.UseMergeTree(x => new { x.UserId, x.Timestamp });
-            entity.HasPartitionByMonth(x => x.Timestamp);
+            entity.HasPartitionBy(x => x.Timestamp, PartitionGranularity.Month);
         });
 
         // Parameterized view result

@@ -30,7 +30,7 @@ public class DeferredPopulateTests
             new Sale { Id = 3, Region = "us", Amount = 15 });
         await ctx.SaveChangesAsync();
 
-        await ctx.Database.CreateMaterializedViewAsync<RegionSummary>(populate: true);
+        await ctx.Database.CreateMaterializedViewAsync<RegionSummary>(o => o.WithPopulate());
         await RawClickHouse.SettleMaterializationAsync(_fixture.ConnectionString, "RegionSummary");
 
         var rows = await RawClickHouse.RowsAsync(_fixture.ConnectionString,

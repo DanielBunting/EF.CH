@@ -265,46 +265,126 @@ public static class ClickHouseDatabaseExtensions
     #region Deferred materialised views
 
     /// <summary>
-    /// Synchronous counterpart of <see cref="CreateMaterializedViewAsync{TEntity}"/>.
-    /// </summary>
-    public static int CreateMaterializedView<TEntity>(
-        this DatabaseFacade database,
-        bool populate = false) where TEntity : class
-        => CreateMaterializedViewAsync<TEntity>(database, populate).GetAwaiter().GetResult();
-
-    /// <summary>
     /// Creates a materialised view that was declared with
-    /// <see cref="ClickHouseEntityTypeBuilderExtensions.AsMaterializedViewDeferred{TEntity}"/>.
-    /// The view's target table must already exist
-    /// (normally created via <c>EnsureCreatedAsync</c>). Use <paramref name="populate"/>
-    /// to backfill from the source table at attach time.
+    /// <see cref="ClickHouseEntityTypeBuilderExtensions.AsMaterializedViewDeferred{TEntity}"/>
+    /// or <see cref="ClickHouseEntityTypeBuilderExtensions.AsRefreshableMaterializedView{TEntity, TSource}"/>.
+    /// The dispatch is automatic: if the entity carries a <c>MaterializedViewRefreshKind</c>
+    /// annotation, the refreshable form is emitted; otherwise the standard form.
     /// </summary>
+    /// <typeparam name="TEntity">The materialised view entity type.</typeparam>
+    /// <param name="database">The database facade.</param>
+    /// <param name="configure">Optional action to configure the create call
+    /// (POPULATE, ON CLUSTER, IF NOT EXISTS opt-out).</param>
+    /// <param name="cancellationToken">A cancellation token.</param>
+    /// <example>
+    /// <code>
+    /// // Default (IF NOT EXISTS, no populate)
+    /// await db.CreateMaterializedViewAsync&lt;MyMv&gt;();
+    ///
+    /// // With POPULATE backfill
+    /// await db.CreateMaterializedViewAsync&lt;MyMv&gt;(o => o.WithPopulate());
+    ///
+    /// // Refreshable MV — same call, dispatched via annotations
+    /// await db.CreateMaterializedViewAsync&lt;HourlySummary&gt;();
+    /// </code>
+    /// </example>
     public static Task<int> CreateMaterializedViewAsync<TEntity>(
         this DatabaseFacade database,
-        bool populate = false,
+        Action<CreateMaterializedViewOptions>? configure = null,
         CancellationToken cancellationToken = default) where TEntity : class
     {
+        var options = new CreateMaterializedViewOptions();
+        configure?.Invoke(options);
+
         var context = database.GetService<ICurrentDbContext>().Context;
         var entityType = context.Model.FindEntityType(typeof(TEntity))
             ?? throw new InvalidOperationException($"Entity type '{typeof(TEntity).Name}' is not in the model.");
 
         var viewName = entityType.GetTableName()
             ?? throw new InvalidOperationException($"Entity '{typeof(TEntity).Name}' has no table name.");
-        var selectSql = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewQuery)?.Value as string
-            ?? throw new InvalidOperationException(
-                $"Entity '{typeof(TEntity).Name}' is not configured as a materialised view. " +
-                "Call AsMaterializedView(…) or AsMaterializedViewRaw(…) first.");
 
         var helper = database.GetService<ISqlGenerationHelper>();
-        var engineSql = BuildEngineClauseForEntity(entityType);
-        var sql = new System.Text.StringBuilder()
-            .Append("CREATE MATERIALIZED VIEW IF NOT EXISTS ").Append(helper.DelimitIdentifier(viewName)).Append(' ')
-            .Append(engineSql)
-            .Append(populate ? " POPULATE AS " : " AS ")
-            .Append(selectSql)
-            .ToString();
+        var isRefreshable = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshKind) != null;
+        var sql = isRefreshable
+            ? BuildRefreshableMaterializedViewSql(entityType, viewName, helper, options)
+            : BuildMaterializedViewSql(entityType, viewName, helper, options);
 
         return database.ExecuteSqlRawAsync(sql, cancellationToken);
+    }
+
+    /// <summary>
+    /// Synchronous counterpart of <see cref="CreateMaterializedViewAsync{TEntity}"/>.
+    /// </summary>
+    public static int CreateMaterializedView<TEntity>(
+        this DatabaseFacade database,
+        Action<CreateMaterializedViewOptions>? configure = null) where TEntity : class
+        => CreateMaterializedViewAsync<TEntity>(database, configure).GetAwaiter().GetResult();
+
+    private static string BuildMaterializedViewSql(
+        IEntityType entityType,
+        string viewName,
+        ISqlGenerationHelper helper,
+        CreateMaterializedViewOptions options)
+    {
+        var selectSql = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewQuery)?.Value as string
+            ?? throw new InvalidOperationException(
+                $"Entity '{entityType.ClrType.Name}' is not configured as a materialised view. " +
+                "Call AsMaterializedView(…) or AsMaterializedViewRaw(…) first.");
+
+        var engineSql = BuildEngineClauseForEntity(entityType);
+        var sb = new System.Text.StringBuilder("CREATE MATERIALIZED VIEW ");
+        if (options.IfNotExists) sb.Append("IF NOT EXISTS ");
+        sb.Append(helper.DelimitIdentifier(viewName));
+        AppendOnCluster(sb, options.OnClusterName, helper);
+        sb.Append(' ').Append(engineSql);
+        sb.Append(options.Populate ? " POPULATE AS " : " AS ");
+        sb.Append(selectSql);
+        return sb.ToString();
+    }
+
+    private static string BuildRefreshableMaterializedViewSql(
+        IEntityType entityType,
+        string viewName,
+        ISqlGenerationHelper helper,
+        CreateMaterializedViewOptions options)
+    {
+        var selectSql = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewQuery)?.Value as string
+            ?? throw new InvalidOperationException(
+                $"Entity '{entityType.ClrType.Name}' is not configured as a refreshable MV (missing query).");
+
+        var kind = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshKind)?.Value as string ?? "EVERY";
+        var interval = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshInterval)?.Value as string
+            ?? throw new InvalidOperationException(
+                $"Entity '{entityType.ClrType.Name}' has no refresh interval — was it declared with AsRefreshableMaterializedView?");
+        var offset = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshOffset)?.Value as string;
+        var randomize = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshRandomizeFor)?.Value as string;
+        var append = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshAppend)?.Value as bool? ?? false;
+        var empty = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshEmpty)?.Value as bool? ?? false;
+        var target = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshTarget)?.Value as string;
+
+        var sb = new System.Text.StringBuilder("CREATE MATERIALIZED VIEW ");
+        if (options.IfNotExists) sb.Append("IF NOT EXISTS ");
+        sb.Append(helper.DelimitIdentifier(viewName));
+        AppendOnCluster(sb, options.OnClusterName, helper);
+        sb.Append(' ').Append("REFRESH ").Append(kind).Append(' ').Append(interval);
+        if (!string.IsNullOrEmpty(offset)) sb.Append(" OFFSET ").Append(offset);
+        if (!string.IsNullOrEmpty(randomize)) sb.Append(" RANDOMIZE FOR ").Append(randomize);
+        if (append) sb.Append(" APPEND");
+        if (!string.IsNullOrEmpty(target))
+            sb.Append(" TO ").Append(helper.DelimitIdentifier(target));
+        else
+            sb.Append(' ').Append(BuildEngineClauseForEntity(entityType));
+        if (empty) sb.Append(" EMPTY");
+        sb.Append(" AS ").Append(selectSql);
+        return sb.ToString();
+    }
+
+    private static void AppendOnCluster(System.Text.StringBuilder sb, string? cluster, ISqlGenerationHelper helper)
+    {
+        if (string.IsNullOrEmpty(cluster)) return;
+        sb.Append(ClickHouseClusterMacros.ContainsMacro(cluster)
+            ? $" ON CLUSTER '{cluster.Replace("'", "''")}'"
+            : $" ON CLUSTER {helper.DelimitIdentifier(cluster)}");
     }
 
     private static string BuildEngineClauseForEntity(IEntityType entityType)
@@ -318,55 +398,6 @@ public static class ClickHouseDatabaseExtensions
         if (orderBy is { Length: > 0 })
             sb.Append(" ORDER BY (").Append(string.Join(", ", orderBy.Select(c => "\"" + c + "\""))).Append(')');
         return sb.ToString();
-    }
-
-    /// <summary>
-    /// Synchronous counterpart of <see cref="CreateRefreshableMaterializedViewAsync{TEntity}"/>.
-    /// </summary>
-    public static int CreateRefreshableMaterializedView<TEntity>(
-        this DatabaseFacade database) where TEntity : class
-        => CreateRefreshableMaterializedViewAsync<TEntity>(database).GetAwaiter().GetResult();
-
-    /// <summary>
-    /// Issues <c>CREATE MATERIALIZED VIEW … REFRESH …</c> for an entity declared with
-    /// <see cref="ClickHouseEntityTypeBuilderExtensions.AsRefreshableMaterializedView"/>.
-    /// Intended to back the deferred-creation path the same way
-    /// <see cref="CreateMaterializedViewAsync{TEntity}"/> does for non-refreshable MVs.
-    /// </summary>
-    public static Task<int> CreateRefreshableMaterializedViewAsync<TEntity>(
-        this DatabaseFacade database,
-        CancellationToken cancellationToken = default) where TEntity : class
-    {
-        var (entityType, viewName, helper) = ResolveRefreshable<TEntity>(database);
-        var selectSql = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewQuery)?.Value as string
-            ?? throw new InvalidOperationException(
-                $"Entity '{typeof(TEntity).Name}' is not configured as a refreshable MV (missing query).");
-
-        var kind = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshKind)?.Value as string ?? "EVERY";
-        var interval = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshInterval)?.Value as string
-            ?? throw new InvalidOperationException(
-                $"Entity '{typeof(TEntity).Name}' has no refresh interval — was it declared with AsRefreshableMaterializedView?");
-        var offset = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshOffset)?.Value as string;
-        var randomize = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshRandomizeFor)?.Value as string;
-        var append = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshAppend)?.Value as bool? ?? false;
-        var empty = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshEmpty)?.Value as bool? ?? false;
-        var target = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshTarget)?.Value as string;
-
-        var sb = new System.Text.StringBuilder()
-            .Append("CREATE MATERIALIZED VIEW IF NOT EXISTS ")
-            .Append(helper.DelimitIdentifier(viewName)).Append(' ')
-            .Append("REFRESH ").Append(kind).Append(' ').Append(interval);
-        if (!string.IsNullOrEmpty(offset)) sb.Append(" OFFSET ").Append(offset);
-        if (!string.IsNullOrEmpty(randomize)) sb.Append(" RANDOMIZE FOR ").Append(randomize);
-        if (append) sb.Append(" APPEND");
-        if (!string.IsNullOrEmpty(target))
-            sb.Append(" TO ").Append(helper.DelimitIdentifier(target));
-        else
-            sb.Append(' ').Append(BuildEngineClauseForEntity(entityType));
-        if (empty) sb.Append(" EMPTY");
-        sb.Append(" AS ").Append(selectSql);
-
-        return database.ExecuteSqlRawAsync(sb.ToString(), cancellationToken);
     }
 
     /// <summary>

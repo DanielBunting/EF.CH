@@ -112,7 +112,7 @@ modelBuilder.Entity<AnalyticsEvent>(entity =>
 {
     entity.HasKey(e => e.Id);
     entity.UseMergeTree(x => new { x.CreatedAt, x.Id });
-    entity.HasPartitionByMonth(x => x.CreatedAt);
+    entity.HasPartitionBy(x => x.CreatedAt, PartitionGranularity.Month);
 });
 ```
 

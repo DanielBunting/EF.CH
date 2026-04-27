@@ -141,7 +141,7 @@ modelBuilder.Entity<AccountBalance>(entity =>
         x => x.Sign,
         x => x.Version,
         x => new { x.AccountId })
-        .HasPartitionByMonth(x => x.Version);
+        .HasPartitionBy(x => x.Version, PartitionGranularity.Month);
 });
 ```
 

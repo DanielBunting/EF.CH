@@ -53,7 +53,7 @@ Partitioning controls how data is physically organized on disk. Choose partition
 
 ```csharp
 entity.UseMergeTree(x => new { x.Date, x.Id })
-    .HasPartitionByMonth(x => x.CreatedAt);
+    .HasPartitionBy(x => x.CreatedAt, PartitionGranularity.Month);
 ```
 
 ```sql
@@ -65,7 +65,7 @@ ORDER BY ("Date", "Id")
 ### Daily partitioning
 
 ```csharp
-entity.HasPartitionByDay(x => x.EventDate);
+entity.HasPartitionBy(x => x.EventDate, PartitionGranularity.Day);
 ```
 
 ```sql
@@ -75,7 +75,7 @@ PARTITION BY toYYYYMMDD("EventDate")
 ### Yearly partitioning
 
 ```csharp
-entity.HasPartitionByYear(x => x.OrderDate);
+entity.HasPartitionBy(x => x.OrderDate, PartitionGranularity.Year);
 ```
 
 ```sql
@@ -230,7 +230,7 @@ modelBuilder.Entity<Event>(entity =>
     entity.HasKey(e => e.Id);
 
     entity.UseMergeTree(x => new { x.Date, x.Id })
-        .HasPartitionByMonth(x => x.CreatedAt)
+        .HasPartitionBy(x => x.CreatedAt, PartitionGranularity.Month)
         .HasSampleBy(x => x.UserId)
         .HasTtl(x => x.CreatedAt, TimeSpan.FromDays(30))
         .HasEngineSettings(new Dictionary<string, string>

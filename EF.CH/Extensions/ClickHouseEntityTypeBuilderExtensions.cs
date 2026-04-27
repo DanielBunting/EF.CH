@@ -2215,7 +2215,7 @@ public static class ClickHouseEntityTypeBuilderExtensions
     /// <summary>
     /// Marks the entity's materialised view as deferred: <c>EnsureCreatedAsync</c>
     /// skips emitting it, so the caller can seed source data first and then
-    /// attach via <c>DatabaseFacade.CreateMaterializedViewAsync&lt;TEntity&gt;(populate: true)</c>.
+    /// attach via <c>DatabaseFacade.CreateMaterializedViewAsync&lt;TEntity&gt;(o =&gt; o.WithPopulate())</c>.
     /// </summary>
     public static EntityTypeBuilder<TEntity> AsMaterializedViewDeferred<TEntity>(
         this EntityTypeBuilder<TEntity> builder) where TEntity : class

@@ -80,7 +80,7 @@ The default, general-purpose columnar storage engine. Data is stored sorted by t
 
 ```csharp
 entity.UseMergeTree(x => new { x.Timestamp, x.Id })
-    .HasPartitionByMonth(x => x.Timestamp);
+    .HasPartitionBy(x => x.Timestamp, PartitionGranularity.Month);
 ```
 
 See [MergeTree](mergetree.md) for full configuration options.
@@ -292,7 +292,7 @@ All MergeTree family engines (including replicated variants) support these table
 
 ```csharp
 entity.UseMergeTree(x => new { x.Date, x.Id })           // ORDER BY (required)
-    .HasPartitionByMonth(x => x.Date)                      // PARTITION BY
+    .HasPartitionBy(x => x.Date, PartitionGranularity.Month)                      // PARTITION BY
     .HasSampleBy(x => x.UserId)                            // SAMPLE BY
     .HasTtl(x => x.Date, TimeSpan.FromDays(90))           // TTL
     .HasEngineSettings(new Dictionary<string, string>       // SETTINGS

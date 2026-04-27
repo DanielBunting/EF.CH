@@ -122,7 +122,7 @@ modelBuilder.Entity<MetricPoint>(entity =>
 {
     entity.UseMergeTree(x => new { x.Timestamp, x.MetricName });
 
-    entity.HasPartitionByMonth(x => x.Timestamp);
+    entity.HasPartitionBy(x => x.Timestamp, PartitionGranularity.Month);
     entity.HasTtl(x => x.Timestamp, ClickHouseInterval.Months(6));
 });
 ```
@@ -161,7 +161,7 @@ modelBuilder.Entity<AuditLog>(entity =>
     entity.UseMergeTree(x => new { x.Timestamp, x.Action });
 
     // Monthly partitions for management
-    entity.HasPartitionByMonth(x => x.Timestamp);
+    entity.HasPartitionBy(x => x.Timestamp, PartitionGranularity.Month);
 
     // Auto-expire after 1 year
     entity.HasTtl(x => x.Timestamp, ClickHouseInterval.Years(1));

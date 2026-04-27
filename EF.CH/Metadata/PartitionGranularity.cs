@@ -8,8 +8,8 @@ namespace EF.CH.Metadata;
 /// <remarks>
 /// The Day / Month / Year values map to the integer-key functions
 /// <c>toYYYYMMDD</c> / <c>toYYYYMM</c> / <c>toYear</c> for byte-identity
-/// with the legacy <c>HasPartitionByDay/Month/Year</c> methods. Hour / Week /
-/// Quarter map to <c>toStartOfHour</c> / <c>toStartOfWeek</c> /
+/// with the legacy granularity-specific methods that this enum replaces.
+/// Hour / Week / Quarter map to <c>toStartOfHour</c> / <c>toStartOfWeek</c> /
 /// <c>toStartOfQuarter</c> — they have no integer-key analogue in ClickHouse.
 /// </remarks>
 public enum PartitionGranularity

@@ -47,7 +47,7 @@ entity.UseReplicatedMergeTree(x => x.Id)
       .WithReplication("/clickhouse/tables/{database}/{table}")
       .WithTableGroup("Core")
       .And()  // Explicit conversion back to EntityTypeBuilder
-      .HasPartitionByMonth(x => x.CreatedAt);
+      .HasPartitionBy(x => x.CreatedAt, PartitionGranularity.Month);
 ```
 
 ### Available Methods
@@ -68,11 +68,11 @@ The builder implicitly converts to `EntityTypeBuilder<TEntity>`, so `.And()` is 
 entity.UseReplicatedMergeTree(x => x.Id)
       .WithCluster("my_cluster")
       .And()
-      .HasPartitionByMonth(x => x.CreatedAt);
+      .HasPartitionBy(x => x.CreatedAt, PartitionGranularity.Month);
 
 entity.UseReplicatedMergeTree(x => x.Id)
       .WithCluster("my_cluster")
-      .HasPartitionByMonth(x => x.CreatedAt);  // Implicit conversion
+      .HasPartitionBy(x => x.CreatedAt, PartitionGranularity.Month);  // Implicit conversion
 ```
 
 ## Examples
@@ -89,7 +89,7 @@ modelBuilder.Entity<Event>(entity =>
           .WithCluster("events_cluster")
           .WithReplication("/clickhouse/tables/{database}/{table}");
 
-    entity.HasPartitionByMonth(x => x.Timestamp);
+    entity.HasPartitionBy(x => x.Timestamp, PartitionGranularity.Month);
 });
 ```
 
@@ -273,7 +273,7 @@ modelBuilder.Entity<Order>(entity =>
           .WithTableGroup("Core");
 
     // Standard EF.CH configuration continues
-    entity.HasPartitionByMonth(x => x.OrderDate);
+    entity.HasPartitionBy(x => x.OrderDate, PartitionGranularity.Month);
     entity.HasTtl("OrderDate + INTERVAL 2 YEAR");
 
     entity.Property(e => e.Total)

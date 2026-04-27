@@ -153,7 +153,7 @@ public class AnalyticsDbContext : DbContext
         modelBuilder.Entity<PageView>(entity =>
         {
             entity.UseMergeTree(x => new { x.Timestamp, x.PagePath });
-            entity.HasPartitionByMonth(x => x.Timestamp);
+            entity.HasPartitionBy(x => x.Timestamp, PartitionGranularity.Month);
             entity.HasTtl(x => x.Timestamp, ClickHouseInterval.Months(6));
 
             entity.Property(x => x.Timestamp).HasTimestampCodec();
@@ -163,7 +163,7 @@ public class AnalyticsDbContext : DbContext
         modelBuilder.Entity<ClickEvent>(entity =>
         {
             entity.UseMergeTree(x => new { x.Timestamp, x.ElementId });
-            entity.HasPartitionByMonth(x => x.Timestamp);
+            entity.HasPartitionBy(x => x.Timestamp, PartitionGranularity.Month);
             entity.HasTtl(x => x.Timestamp, ClickHouseInterval.Months(3));
 
             entity.Property(x => x.Timestamp).HasTimestampCodec();

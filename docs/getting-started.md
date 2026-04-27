@@ -135,7 +135,7 @@ public class AnalyticsDbContext : DbContext
             entity.HasNoKey();
 
             entity.UseMergeTree(x => new { x.Timestamp, x.Url })
-                .HasPartitionByMonth(x => x.Timestamp);
+                .HasPartitionBy(x => x.Timestamp, PartitionGranularity.Month);
         });
     }
 }

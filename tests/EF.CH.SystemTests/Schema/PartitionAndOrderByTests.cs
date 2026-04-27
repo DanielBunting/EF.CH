@@ -8,7 +8,7 @@ using EF.CH.Metadata;
 namespace EF.CH.SystemTests.Schema;
 
 /// <summary>
-/// Coverage of <c>HasPartitionByMonth/Day/Year</c> and free-form <c>HasPartitionBy</c>.
+/// Coverage of <c>HasPartitionBy(..., PartitionGranularity.X)</c> and free-form <c>HasPartitionBy</c>.
 /// Asserts the partition expression appears in <c>engine_full</c>.
 /// </summary>
 [Collection(SingleNodeCollection.Name)]
