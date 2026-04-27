@@ -18,16 +18,25 @@ public class CodecChainBuilder
     }
 
     /// <summary>
-    /// ZSTD - Higher compression ratio than LZ4.
+    /// ZSTD with the default compression level (level 1, emitted as <c>ZSTD</c>).
     /// </summary>
-    /// <param name="level">Compression level from 1 to 22. Default is 1.</param>
+    public CodecChainBuilder ZSTD()
+    {
+        _codecs.Add("ZSTD");
+        return this;
+    }
+
+    /// <summary>
+    /// ZSTD with an explicit compression level.
+    /// </summary>
+    /// <param name="level">Compression level from 1 to 22.</param>
     /// <exception cref="ArgumentOutOfRangeException">If level is not between 1 and 22.</exception>
-    public CodecChainBuilder ZSTD(int level = 1)
+    public CodecChainBuilder ZSTD(int level)
     {
         if (level < 1 || level > 22)
             throw new ArgumentOutOfRangeException(nameof(level), level, "ZSTD level must be between 1 and 22.");
 
-        _codecs.Add(level == 1 ? "ZSTD" : $"ZSTD({level})");
+        _codecs.Add($"ZSTD({level})");
         return this;
     }
 
@@ -73,16 +82,25 @@ public class CodecChainBuilder
     }
 
     /// <summary>
-    /// FPC - Fast floating-point compression.
+    /// FPC with the default prediction level (level 12, emitted as <c>FPC</c>).
     /// </summary>
-    /// <param name="level">Prediction level from 1 to 28. Default is 12.</param>
+    public CodecChainBuilder FPC()
+    {
+        _codecs.Add("FPC");
+        return this;
+    }
+
+    /// <summary>
+    /// FPC with an explicit prediction level.
+    /// </summary>
+    /// <param name="level">Prediction level from 1 to 28.</param>
     /// <exception cref="ArgumentOutOfRangeException">If level is not between 1 and 28.</exception>
-    public CodecChainBuilder FPC(int level = 12)
+    public CodecChainBuilder FPC(int level)
     {
         if (level < 1 || level > 28)
             throw new ArgumentOutOfRangeException(nameof(level), level, "FPC level must be between 1 and 28.");
 
-        _codecs.Add(level == 12 ? "FPC" : $"FPC({level})");
+        _codecs.Add($"FPC({level})");
         return this;
     }
 
