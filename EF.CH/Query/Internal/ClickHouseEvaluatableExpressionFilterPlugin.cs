@@ -143,6 +143,7 @@ public class ClickHouseEvaluatableExpressionFilterPlugin : IEvaluatableExpressio
                     genericDef == ClickHouseQueryableExtensions.SampleWithOffsetMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.WithSettingMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.LimitByMethodInfo ||
+                    genericDef == ClickHouseQueryableExtensions.LimitByWithOffsetMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.AsSingleCteMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.WithRawFilterMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.ArrayJoinMethodInfo ||

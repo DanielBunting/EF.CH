@@ -229,7 +229,9 @@ public static class ClickHouseQueryableExtensions
     /// <para>
     /// The key selector defines the grouping columns. Use OrderBy/OrderByDescending before
     /// LimitBy to control which rows are kept within each group. To skip rows within
-    /// each group before applying the limit, compose with <c>.Skip(...)</c> after LimitBy.
+    /// each group before applying the limit, use the <c>(keySelector, limit, offset)</c>
+    /// overload — <c>.Skip(...)</c> after LimitBy is not recognised by EF Core's
+    /// navigation expander.
     /// </para>
     /// </remarks>
     /// <typeparam name="TEntity">The entity type.</typeparam>
@@ -276,9 +278,57 @@ public static class ClickHouseQueryableExtensions
                 WrapInEfConstant(limit)));
     }
 
+    /// <summary>
+    /// Applies LIMIT offset, limit BY clause to skip rows within each group before
+    /// taking the top N. Use this overload instead of <c>.Skip(...)</c> after
+    /// <see cref="LimitBy{TEntity, TKey}(IQueryable{TEntity}, Expression{Func{TEntity, TKey}}, int)"/>:
+    /// EF Core's navigation expander does not recognise Skip after a custom LIMIT BY method.
+    /// </summary>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <typeparam name="TKey">The key type (single column or anonymous type for compound keys).</typeparam>
+    /// <param name="source">The source queryable.</param>
+    /// <param name="keySelector">Expression selecting the grouping key column(s).</param>
+    /// <param name="limit">The maximum number of rows to return per group.</param>
+    /// <param name="offset">The number of rows to skip within each group before taking <paramref name="limit"/>.</param>
+    /// <returns>A queryable with LIMIT offset, limit BY applied.</returns>
+    public static IQueryable<TEntity> LimitBy<TEntity, TKey>(
+        this IQueryable<TEntity> source,
+        Expression<Func<TEntity, TKey>> keySelector,
+        int limit,
+        int offset)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(keySelector);
+
+        if (limit <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(limit),
+                "Limit must be a positive integer.");
+        }
+
+        if (offset < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(offset),
+                "Offset must be non-negative.");
+        }
+
+        return source.Provider.CreateQuery<TEntity>(
+            Expression.Call(
+                null,
+                LimitByWithOffsetMethodInfo.MakeGenericMethod(typeof(TEntity), typeof(TKey)),
+                source.Expression,
+                Expression.Quote(keySelector),
+                WrapInEfConstant(limit),
+                WrapInEfConstant(offset)));
+    }
+
     internal static readonly MethodInfo LimitByMethodInfo =
         typeof(ClickHouseQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
             .First(m => m.Name == nameof(LimitBy) && m.GetParameters().Length == 3);
+
+    internal static readonly MethodInfo LimitByWithOffsetMethodInfo =
+        typeof(ClickHouseQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .First(m => m.Name == nameof(LimitBy) && m.GetParameters().Length == 4);
 
     /// <summary>
     /// Adds WITH ROLLUP modifier to the GROUP BY clause, generating hierarchical subtotals.

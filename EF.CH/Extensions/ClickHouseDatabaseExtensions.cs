@@ -785,8 +785,9 @@ public static class ClickHouseDatabaseExtensions
     /// <summary>
     /// Synchronous counterpart of <see cref="EnsureParameterizedViewAsync{TView}"/>.
     /// Always emits <c>IF NOT EXISTS</c> — the operation is idempotent.
+    /// Returns the rows-affected count from the underlying DDL command.
     /// </summary>
-    public static void EnsureParameterizedView<TView>(this DatabaseFacade database)
+    public static int EnsureParameterizedView<TView>(this DatabaseFacade database)
         where TView : class
         => EnsureParameterizedViewAsync<TView>(database).GetAwaiter().GetResult();
 
@@ -797,7 +798,7 @@ public static class ClickHouseDatabaseExtensions
     /// <typeparam name="TView">The view result entity type.</typeparam>
     /// <param name="database">The database facade.</param>
     /// <param name="cancellationToken">A cancellation token.</param>
-    /// <returns>A task representing the asynchronous operation.</returns>
+    /// <returns>The rows-affected count from the underlying DDL command.</returns>
     /// <exception cref="InvalidOperationException">
     /// If the entity type is not configured as a parameterized view with fluent configuration.
     /// </exception>
@@ -806,7 +807,7 @@ public static class ClickHouseDatabaseExtensions
     /// await context.Database.EnsureParameterizedViewAsync&lt;UserEventView&gt;();
     /// </code>
     /// </example>
-    public static Task EnsureParameterizedViewAsync<TView>(
+    public static Task<int> EnsureParameterizedViewAsync<TView>(
         this DatabaseFacade database,
         CancellationToken cancellationToken = default)
         where TView : class
@@ -1019,8 +1020,9 @@ public static class ClickHouseDatabaseExtensions
     /// <summary>
     /// Synchronous counterpart of <see cref="EnsureViewAsync{TView}"/>.
     /// Always emits <c>IF NOT EXISTS</c> — the operation is idempotent.
+    /// Returns the rows-affected count from the underlying DDL command.
     /// </summary>
-    public static void EnsureView<TView>(this DatabaseFacade database)
+    public static int EnsureView<TView>(this DatabaseFacade database)
         where TView : class
         => EnsureViewAsync<TView>(database).GetAwaiter().GetResult();
 
@@ -1029,7 +1031,7 @@ public static class ClickHouseDatabaseExtensions
     /// Always emits <c>IF NOT EXISTS</c> — the operation is idempotent.
     /// </summary>
     /// <typeparam name="TView">The view result entity type.</typeparam>
-    public static Task EnsureViewAsync<TView>(
+    public static Task<int> EnsureViewAsync<TView>(
         this DatabaseFacade database,
         CancellationToken cancellationToken = default)
         where TView : class

@@ -208,6 +208,20 @@ public class CompressionCodecTests
         Assert.Equal("NONE", annotation.Value);
     }
 
+    [Fact]
+    public void HasCodec_Raw_EmitsVerbatim()
+    {
+        var spec = new CodecChainBuilder().Delta().Raw("LZ4HC(9)").Build();
+        Assert.Equal("Delta, LZ4HC(9)", spec);
+    }
+
+    [Fact]
+    public void HasCodec_Raw_RejectsEmpty()
+    {
+        Assert.Throws<ArgumentException>(() => new CodecChainBuilder().Raw(""));
+        Assert.Throws<ArgumentException>(() => new CodecChainBuilder().Raw("   "));
+    }
+
     #endregion
 
     #region Attribute Annotation Tests

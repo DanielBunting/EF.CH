@@ -1,4 +1,5 @@
 using System.Linq.Expressions;
+using System.Reflection;
 using EF.CH.Configuration;
 using EF.CH.Dictionaries;
 using EF.CH.Infrastructure;
@@ -2243,6 +2244,15 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         try
         {
             return (string?)translateMethod.Invoke(translator, [expression]);
+        }
+        catch (TargetInvocationException tie) when (tie.InnerException is not null)
+        {
+            // Reflection wraps user-meaningful exceptions (e.g. NotSupportedException
+            // for unsupported MV LINQ operators) in TargetInvocationException; expose
+            // the inner type and message rather than the meaningless outer wrapper.
+            throw new InvalidOperationException(
+                $"Failed to translate materialized view expression for entity '{entityType.Name}': {tie.InnerException.Message}",
+                tie.InnerException);
         }
         catch (Exception ex)
         {

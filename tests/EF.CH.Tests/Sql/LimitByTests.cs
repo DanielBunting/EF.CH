@@ -46,16 +46,14 @@ public class LimitByTests
         Assert.Contains("\"Region\"", sql);
     }
 
-    [Fact(Skip = "Skip after LimitBy isn't recognised by EF Core's navigation expander. " +
-                 "Same constraint as Take after LimitBy — use .ToList().Skip(...) for now. " +
-                 "The legacy LIMIT offset, limit BY shape is no longer exposed via the public API.")]
+    [Fact]
     public void LimitBy_WithOffset_GeneratesLimitOffsetByClause()
     {
         using var context = CreateContext();
 
         var query = context.Events
             .OrderByDescending(e => e.Score)
-            .LimitBy(e => e.UserId, 5).Skip(2);
+            .LimitBy(e => e.UserId, limit: 5, offset: 2);
 
         var sql = query.ToQueryString();
         Console.WriteLine("Generated SQL: " + sql);
@@ -64,6 +62,15 @@ public class LimitByTests
         Assert.Contains("LIMIT", sql);
         Assert.Contains("BY", sql);
         Assert.Contains("\"UserId\"", sql);
+    }
+
+    [Fact]
+    public void LimitBy_WithOffset_ValidationThrowsForNegativeOffset()
+    {
+        using var context = CreateContext();
+
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            context.Events.LimitBy(e => e.Category, limit: 5, offset: -1));
     }
 
     [Fact(Skip = "EF Core's NavigationExpandingExpressionVisitor doesn't recognize custom LimitBy method, " +
@@ -140,7 +147,7 @@ public class LimitByTests
         // With offset
         var q3 = context.Events
             .OrderByDescending(e => e.CreatedAt)
-            .LimitBy(e => e.UserId, 5).Skip(2);
+            .LimitBy(e => e.UserId, limit: 5, offset: 2);
 
         // Combined with global Take
         var q4 = context.Events

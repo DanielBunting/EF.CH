@@ -115,6 +115,21 @@ public class CodecChainBuilder
     }
 
     /// <summary>
+    /// Escape hatch for codecs not yet exposed as typed methods (e.g.
+    /// <c>LZ4HC(9)</c>, <c>ZSTD_QAT(3)</c>, <c>AES_128_GCM_SIV</c>).
+    /// The argument is emitted verbatim — caller is responsible for valid
+    /// ClickHouse codec syntax and any level constraints.
+    /// </summary>
+    /// <param name="codec">Raw codec spec, e.g. <c>"LZ4HC(9)"</c>.</param>
+    /// <exception cref="ArgumentException">If <paramref name="codec"/> is null or whitespace.</exception>
+    public CodecChainBuilder Raw(string codec)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(codec);
+        _codecs.Add(codec);
+        return this;
+    }
+
+    /// <summary>
     /// Builds the codec specification string.
     /// </summary>
     /// <returns>Comma-separated codec string (e.g., "DoubleDelta, LZ4").</returns>
