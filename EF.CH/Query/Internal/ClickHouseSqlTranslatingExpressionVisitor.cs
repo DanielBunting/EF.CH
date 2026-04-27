@@ -661,6 +661,9 @@ public class ClickHouseSqlTranslatingExpressionVisitor : RelationalSqlTranslatin
 
         var interval = unit.Value switch
         {
+            ClickHouseIntervalUnit.Nanosecond => ClickHouseInterval.Nanoseconds(intervalValue.Value),
+            ClickHouseIntervalUnit.Microsecond => ClickHouseInterval.Microseconds(intervalValue.Value),
+            ClickHouseIntervalUnit.Millisecond => ClickHouseInterval.Milliseconds(intervalValue.Value),
             ClickHouseIntervalUnit.Second => ClickHouseInterval.Seconds(intervalValue.Value),
             ClickHouseIntervalUnit.Minute => ClickHouseInterval.Minutes(intervalValue.Value),
             ClickHouseIntervalUnit.Hour => ClickHouseInterval.Hours(intervalValue.Value),

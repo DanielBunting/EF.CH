@@ -41,6 +41,21 @@ public readonly struct ClickHouseInterval : IEquatable<ClickHouseInterval>
     }
 
     /// <summary>
+    /// Creates an interval of the specified number of nanoseconds.
+    /// </summary>
+    public static ClickHouseInterval Nanoseconds(int value) => new(value, ClickHouseIntervalUnit.Nanosecond);
+
+    /// <summary>
+    /// Creates an interval of the specified number of microseconds.
+    /// </summary>
+    public static ClickHouseInterval Microseconds(int value) => new(value, ClickHouseIntervalUnit.Microsecond);
+
+    /// <summary>
+    /// Creates an interval of the specified number of milliseconds.
+    /// </summary>
+    public static ClickHouseInterval Milliseconds(int value) => new(value, ClickHouseIntervalUnit.Millisecond);
+
+    /// <summary>
     /// Creates an interval of the specified number of seconds.
     /// </summary>
     public static ClickHouseInterval Seconds(int value) => new(value, ClickHouseIntervalUnit.Second);
@@ -158,5 +173,25 @@ public enum ClickHouseIntervalUnit
     /// <summary>
     /// Interval in calendar years.
     /// </summary>
-    Year
+    Year,
+
+    /// <summary>
+    /// Interval in nanoseconds.
+    /// </summary>
+    /// <remarks>
+    /// Sub-second units are appended at the end of the enum to preserve ordinal
+    /// stability for the original Second..Year values; ClickHouse accepts them
+    /// in the same <c>INTERVAL n UNIT</c> grammar.
+    /// </remarks>
+    Nanosecond,
+
+    /// <summary>
+    /// Interval in microseconds.
+    /// </summary>
+    Microsecond,
+
+    /// <summary>
+    /// Interval in milliseconds.
+    /// </summary>
+    Millisecond,
 }
