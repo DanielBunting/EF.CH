@@ -16,7 +16,7 @@ public class LimitByTests
 
         var query = context.Events
             .OrderByDescending(e => e.Score)
-            .LimitBy(5, e => e.Category);
+            .LimitBy(e => e.Category, 5);
 
         var sql = query.ToQueryString();
         Console.WriteLine("Generated SQL: " + sql);
@@ -34,7 +34,7 @@ public class LimitByTests
 
         var query = context.Events
             .OrderByDescending(e => e.Score)
-            .LimitBy(3, e => new { e.Category, e.Region });
+            .LimitBy(e => new { e.Category, e.Region }, 3);
 
         var sql = query.ToQueryString();
         Console.WriteLine("Generated SQL: " + sql);
@@ -53,7 +53,7 @@ public class LimitByTests
 
         var query = context.Events
             .OrderByDescending(e => e.Score)
-            .LimitBy(2, 5, e => e.UserId);
+            .LimitBy(e => e.UserId, 5).Skip(2);
 
         var sql = query.ToQueryString();
         Console.WriteLine("Generated SQL: " + sql);
@@ -72,7 +72,7 @@ public class LimitByTests
 
         var query = context.Events
             .OrderByDescending(e => e.Score)
-            .LimitBy(5, e => e.Category)
+            .LimitBy(e => e.Category, 5)
             .Take(100);
 
         var sql = query.ToQueryString();
@@ -95,7 +95,7 @@ public class LimitByTests
         using var context = CreateContext();
 
         Assert.Throws<ArgumentOutOfRangeException>(() =>
-            context.Events.LimitBy(0, e => e.Category));
+            context.Events.LimitBy(e => e.Category, 0));
     }
 
     [Fact]
@@ -104,16 +104,7 @@ public class LimitByTests
         using var context = CreateContext();
 
         Assert.Throws<ArgumentOutOfRangeException>(() =>
-            context.Events.LimitBy(-1, e => e.Category));
-    }
-
-    [Fact]
-    public void LimitBy_ValidationThrowsForNegativeOffset()
-    {
-        using var context = CreateContext();
-
-        Assert.Throws<ArgumentOutOfRangeException>(() =>
-            context.Events.LimitBy(-1, 5, e => e.Category));
+            context.Events.LimitBy(e => e.Category, -1));
     }
 
     [Fact]
@@ -122,7 +113,7 @@ public class LimitByTests
         IQueryable<LimitByEvent>? nullSource = null;
 
         Assert.Throws<ArgumentNullException>(() =>
-            nullSource!.LimitBy(5, e => e.Category));
+            nullSource!.LimitBy(e => e.Category, 5));
     }
 
     /// <summary>
@@ -137,29 +128,29 @@ public class LimitByTests
         // Single column key
         var q1 = context.Events
             .OrderByDescending(e => e.Score)
-            .LimitBy(5, e => e.Category);
+            .LimitBy(e => e.Category, 5);
 
         // Compound key (anonymous type)
         var q2 = context.Events
             .OrderByDescending(e => e.Score)
-            .LimitBy(3, e => new { e.Category, e.Region });
+            .LimitBy(e => new { e.Category, e.Region }, 3);
 
         // With offset
         var q3 = context.Events
             .OrderByDescending(e => e.CreatedAt)
-            .LimitBy(2, 5, e => e.UserId);
+            .LimitBy(e => e.UserId, 5).Skip(2);
 
         // Combined with global Take
         var q4 = context.Events
             .OrderByDescending(e => e.Score)
-            .LimitBy(5, e => e.Category)
+            .LimitBy(e => e.Category, 5)
             .Take(100);
 
         // Combined with Where
         var q5 = context.Events
             .Where(e => e.Score > 0)
             .OrderByDescending(e => e.Score)
-            .LimitBy(10, e => e.Category);
+            .LimitBy(e => e.Category, 10);
 
         // Verify queries are created (but not executed)
         Assert.NotNull(q1);
@@ -177,7 +168,7 @@ public class LimitByTests
         var query = context.Events
             .Final()
             .OrderByDescending(e => e.Score)
-            .LimitBy(5, e => e.Category);
+            .LimitBy(e => e.Category, 5);
 
         var sql = query.ToQueryString();
         Console.WriteLine("Generated SQL: " + sql);

@@ -224,7 +224,7 @@ static async Task DemoLimitBy(EventsContext context)
     var topPerCategory = await context.Events
         .Final()
         .OrderByDescending(e => e.Score)
-        .LimitBy(3, e => e.Category)
+        .LimitBy(e => e.Category, 3)
         .ToListAsync();
 
     Console.WriteLine("Top 3 events per category by score:");

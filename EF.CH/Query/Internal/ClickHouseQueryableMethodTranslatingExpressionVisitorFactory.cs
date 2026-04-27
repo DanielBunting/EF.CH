@@ -103,8 +103,7 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
         [ClickHouseQueryableExtensions.WithSettingMethodInfo] = (v, e) => v.TranslateWithSetting(e),
         // PreWhere is rewritten to Where(PreWhereMarker(...)) by the preprocessor;
         // the SqlTranslator lifts the marker into _options.PreWhereExpression.
-        [ClickHouseQueryableExtensions.LimitByMethodInfo] = (v, e) => v.TranslateLimitBy(e, hasOffset: false),
-        [ClickHouseQueryableExtensions.LimitByWithOffsetMethodInfo] = (v, e) => v.TranslateLimitBy(e, hasOffset: true),
+        [ClickHouseQueryableExtensions.LimitByMethodInfo] = (v, e) => v.TranslateLimitBy(e),
         [ClickHouseQueryableExtensions.WithRollupMethodInfo] = (v, e) => v.TranslateGroupByModifier(e, GroupByModifier.Rollup),
         [ClickHouseQueryableExtensions.WithCubeMethodInfo] = (v, e) => v.TranslateGroupByModifier(e, GroupByModifier.Cube),
         [ClickHouseQueryableExtensions.WithTotalsMethodInfo] = (v, e) => v.TranslateGroupByModifier(e, GroupByModifier.Totals),
@@ -443,9 +442,10 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
 
     /// <summary>
     /// Translates the LimitBy() extension method.
-    /// Extracts limit, optional offset, and key selector columns for LIMIT BY clause.
+    /// Argument order: (source, keySelector, limit). Compose with .Skip(...)
+    /// for the offset case.
     /// </summary>
-    private Expression TranslateLimitBy(MethodCallExpression methodCallExpression, bool hasOffset)
+    private Expression TranslateLimitBy(MethodCallExpression methodCallExpression)
     {
         // Visit the source to get the translated query
         var source = Visit(methodCallExpression.Arguments[0]);
@@ -455,29 +455,15 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
             throw new InvalidOperationException("LimitBy can only be applied to a query source.");
         }
 
-        int argIndex = 1;
+        // Extract key selector lambda (arg 1)
+        var keySelectorLambda = UnwrapLambda(methodCallExpression.Arguments[1]);
 
-        // Extract offset if present
-        if (hasOffset)
-        {
-            if (!TryGetConstantValue<int>(methodCallExpression.Arguments[argIndex], out var offset))
-            {
-                throw new InvalidOperationException("LimitBy offset must be a constant value.");
-            }
-            _options.LimitByOffset = offset;
-            argIndex++;
-        }
-
-        // Extract limit
-        if (!TryGetConstantValue<int>(methodCallExpression.Arguments[argIndex], out var limit))
+        // Extract limit (arg 2)
+        if (!TryGetConstantValue<int>(methodCallExpression.Arguments[2], out var limit))
         {
             throw new InvalidOperationException("LimitBy limit must be a constant value.");
         }
         _options.LimitByLimit = limit;
-        argIndex++;
-
-        // Extract key selector lambda
-        var keySelectorLambda = UnwrapLambda(methodCallExpression.Arguments[argIndex]);
 
         // Translate the key selector to SQL expressions
         var keyExpressions = TranslateLimitByKeySelector(shapedQuery, keySelectorLambda);

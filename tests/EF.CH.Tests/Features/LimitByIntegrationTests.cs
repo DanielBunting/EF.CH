@@ -59,7 +59,7 @@ public class LimitByIntegrationTests : IAsyncLifetime
         // The results come back already ordered by the original OrderByDescending(Score)
         var results = await context.Events
             .OrderByDescending(e => e.Score)
-            .LimitBy(2, e => e.Category)
+            .LimitBy(e => e.Category, 2)
             .ToListAsync();
 
         // Expect: A(100,90), B(95,85), C(50,40) = 6 total
@@ -111,7 +111,7 @@ public class LimitByIntegrationTests : IAsyncLifetime
         // Sort in-memory after fetching.
         var results = (await context.Events
             .OrderByDescending(e => e.Score)
-            .LimitBy(2, e => new { e.Category, e.Region })
+            .LimitBy(e => new { e.Category, e.Region }, 2)
             .ToListAsync())
             .OrderBy(e => e.Category)
             .ThenBy(e => e.Region)
@@ -138,8 +138,10 @@ public class LimitByIntegrationTests : IAsyncLifetime
         Assert.Equal(2, bUs.Count);
     }
 
-    [Fact]
-    public async Task LimitBy_WithOffset_SkipsRowsPerGroup()
+    [Fact(Skip = "Per-group offset is no longer supported by the public API. " +
+                 "Compose .LimitBy(key, limit).Skip(offset) for global skip — " +
+                 "the per-group LIMIT offset, limit BY shape is reserved for a future redesign.")]
+    public async Task LimitBy_WithOffset_SkipsRowsPerGroup_legacy_disabled()
     {
         await using var context = CreateContext();
 
@@ -167,7 +169,7 @@ public class LimitByIntegrationTests : IAsyncLifetime
         // Sort in-memory after fetching.
         var results = (await context.Events
             .OrderByDescending(e => e.Score)
-            .LimitBy(1, 2, e => e.Category)
+            .LimitBy(e => e.Category, 2).Skip(1)
             .ToListAsync())
             .OrderBy(e => e.Category)
             .ThenByDescending(e => e.Score)
@@ -221,7 +223,7 @@ public class LimitByIntegrationTests : IAsyncLifetime
         // Get top 2 per category, but limit total to 6
         var results = await context.Events
             .OrderByDescending(e => e.Score)
-            .LimitBy(2, e => e.Category)
+            .LimitBy(e => e.Category, 2)
             .Take(6)
             .ToListAsync();
 
@@ -253,7 +255,7 @@ public class LimitByIntegrationTests : IAsyncLifetime
         var results = await context.Events
             .Where(e => e.Score > 50)
             .OrderByDescending(e => e.Score)
-            .LimitBy(2, e => e.Category)
+            .LimitBy(e => e.Category, 2)
             .ToListAsync();
 
         // All results should have Score > 50

@@ -7,7 +7,7 @@ using Xunit;
 namespace EF.CH.SystemTests.QueryOperators;
 
 /// <summary>
-/// Coverage of LIMIT BY: <c>LimitBy(limit, key)</c> and <c>LimitBy(offset, limit, key)</c>.
+/// Coverage of LIMIT BY: <c>LimitBy(key, limit)</c>.
 /// The first returns at most N rows per group; the second pages within each group.
 /// </summary>
 [Collection(SingleNodeCollection.Name)]
@@ -40,20 +40,22 @@ public class LimitByOperatorTests
         await using var ctx = await SeededAsync();
         var rows = await ctx.Rows
             .OrderByDescending(r => r.Score)
-            .LimitBy(2, r => r.Group)
+            .LimitBy(r => r.Group, 2)
             .ToListAsync();
         var perGroup = rows.GroupBy(r => r.Group).ToDictionary(g => g.Key, g => g.Count());
         Assert.All(perGroup.Values, c => Assert.True(c <= 2, $"expected ≤ 2 per group, got {c}"));
         Assert.Equal(6, rows.Count);
     }
 
-    [Fact]
+    [Fact(Skip = "Per-group LIMIT offset BY semantics no longer exposed via the public API. " +
+                 "The composed .LimitBy(key, limit).Skip(offset) translates to global OFFSET, " +
+                 "which is intentional but distinct from the legacy per-group offset.")]
     public async Task LimitBy_WithOffset_SkipsLeadingRowsPerGroup()
     {
         await using var ctx = await SeededAsync();
         var rows = await ctx.Rows
             .OrderByDescending(r => r.Score)
-            .LimitBy(2, 2, r => r.Group)
+            .LimitBy(r => r.Group, 2).Skip(2)
             .ToListAsync();
         var perGroup = rows.GroupBy(r => r.Group).ToDictionary(g => g.Key, g => g.OrderByDescending(x => x.Score).ToList());
         Assert.All(perGroup.Values, list =>

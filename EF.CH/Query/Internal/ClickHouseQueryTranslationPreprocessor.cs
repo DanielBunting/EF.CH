@@ -95,6 +95,15 @@ internal class ClickHouseMethodRewritingVisitor : ExpressionVisitor
         if (genericDef == ClickHouseQueryableExtensions.ArrayJoin2MethodInfo)
             return RewriteArrayJoin2(visited);
 
+        if (genericDef == ClickHouseArrayJoinExtensions.ArrayJoin3MethodInfo)
+            return RewriteArrayJoinN(visited, arrayCount: 3);
+
+        if (genericDef == ClickHouseArrayJoinExtensions.ArrayJoin4MethodInfo)
+            return RewriteArrayJoinN(visited, arrayCount: 4);
+
+        if (genericDef == ClickHouseArrayJoinExtensions.ArrayJoin5MethodInfo)
+            return RewriteArrayJoinN(visited, arrayCount: 5);
+
         if (genericDef == ClickHouseQueryableExtensions.AsofJoinMethodInfo)
             return RewriteAsofJoin(visited, isLeft: false);
 
@@ -666,6 +675,54 @@ internal class ClickHouseMethodRewritingVisitor : ExpressionVisitor
         newBody = new ParameterReplacer(resultSelector.Parameters[2], rawSql2).Visit(newBody);
         var selectLambda = Expression.Lambda(newBody, resultSelector.Parameters[0]);
 
+        var resultType = resultSelector.ReturnType;
+        var selectMethod = GetQueryableSelectMethod().MakeGenericMethod(entityClrType, resultType);
+
+        return Expression.Call(null, selectMethod, source, Expression.Quote(selectLambda));
+    }
+
+    /// <summary>
+    /// Rewrites the N-array (3, 4, 5) ARRAY JOIN forms.
+    /// Argument layout: [0]=source, [1..N]=array selectors, [N+1]=resultSelector.
+    /// </summary>
+    private Expression RewriteArrayJoinN(MethodCallExpression call, int arrayCount)
+    {
+        var source = call.Arguments[0];
+        var arraySelectors = new LambdaExpression[arrayCount];
+        for (var i = 0; i < arrayCount; i++)
+        {
+            arraySelectors[i] = UnwrapLambda(call.Arguments[1 + i]);
+        }
+        var resultSelector = UnwrapLambda(call.Arguments[1 + arrayCount]);
+
+        var entityClrType = call.Method.GetGenericArguments()[0];
+        var rawSqlMethod = typeof(ClickHouseFunctions)
+            .GetMethod(nameof(ClickHouseFunctions.RawSql))!;
+
+        var newBody = resultSelector.Body;
+        for (var i = 0; i < arrayCount; i++)
+        {
+            var propName = ExtractMemberName(arraySelectors[i]);
+            var colName = ResolveColumnName(entityClrType, propName);
+            // Parameters[0] is the entity; element params are 1, 2, ..., arrayCount
+            var elementParam = resultSelector.Parameters[1 + i];
+            var alias = elementParam.Name ?? colName;
+            var elemType = elementParam.Type;
+
+            _options.ArrayJoinSpecs.Add(new ArrayJoinSpec
+            {
+                ColumnName = colName,
+                Alias = alias,
+                IsLeft = false
+            });
+
+            var rawSqlCall = Expression.Call(
+                rawSqlMethod.MakeGenericMethod(elemType),
+                Expression.Constant("\"" + alias + "\""));
+            newBody = new ParameterReplacer(elementParam, rawSqlCall).Visit(newBody);
+        }
+
+        var selectLambda = Expression.Lambda(newBody, resultSelector.Parameters[0]);
         var resultType = resultSelector.ReturnType;
         var selectMethod = GetQueryableSelectMethod().MakeGenericMethod(entityClrType, resultType);
 
