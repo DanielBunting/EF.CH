@@ -387,14 +387,14 @@ public class RawMvContext(string connectionString) : DbContext
 
             // Typed MV with a hour-granular bucket + countIf.
             entity.AsMaterializedView<HourlySummary, AccessLog>(logs => logs
-                .GroupBy(x => new { Hour = EF.CH.Extensions.ClickHouseFunctions.ToStartOfHour(x.RequestedAt), x.Path })
+                .GroupBy(x => new { Hour = x.RequestedAt.ToStartOfHour(), x.Path })
                 .Select(g => new HourlySummary
                 {
                     Hour = g.Key.Hour,
                     Path = g.Key.Path,
-                    RequestCount = (ulong)g.Count(),
+                    RequestCount = g.CountUInt64(),
                     AvgResponseMs = g.Average(x => (double)x.ResponseTimeMs),
-                    ErrorCount = (ulong)EF.CH.Extensions.ClickHouseAggregates.CountIf(g, x => x.StatusCode >= 500),
+                    ErrorCount = (ulong)g.CountIf(x => x.StatusCode >= 500),
                 }));
         });
     }
@@ -442,13 +442,13 @@ public class NullEngineMvContext(string connectionString) : DbContext
             entity.UseSummingMergeTree(x => new { x.MetricName, x.MinuteSlot });
 
             entity.AsMaterializedView<MetricsSummary, RawMetric>(raw => raw
-                .GroupBy(x => new { x.MetricName, MinuteSlot = EF.CH.Extensions.ClickHouseFunctions.ToStartOfMinute(x.Timestamp) })
+                .GroupBy(x => new { x.MetricName, MinuteSlot = x.Timestamp.ToStartOfMinute() })
                 .Select(g => new MetricsSummary
                 {
                     MetricName = g.Key.MetricName,
                     MinuteSlot = g.Key.MinuteSlot,
                     ValueSum = g.Sum(x => x.Value),
-                    ValueCount = (ulong)g.Count(),
+                    ValueCount = g.CountUInt64(),
                 }));
         });
     }

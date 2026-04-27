@@ -109,36 +109,36 @@ public class AggregateCombinatorTests : IAsyncLifetime
     [Fact]
     public void CountState_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { 1, 2, 3 };
-        Assert.Throws<InvalidOperationException>(() => items.CountState());
+        var g = MakeGrouping("k", new[] { 1, 2, 3 });
+        Assert.Throws<InvalidOperationException>(() => g.CountState());
     }
 
     [Fact]
     public void SumState_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { 1, 2, 3 };
-        Assert.Throws<InvalidOperationException>(() => items.SumState(x => x));
+        var g = MakeGrouping("k", new[] { 1, 2, 3 });
+        Assert.Throws<InvalidOperationException>(() => g.SumState(x => x));
     }
 
     [Fact]
     public void AvgState_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { 1.0, 2.0, 3.0 };
-        Assert.Throws<InvalidOperationException>(() => items.AvgState(x => x));
+        var g = MakeGrouping("k", new[] { 1.0, 2.0, 3.0 });
+        Assert.Throws<InvalidOperationException>(() => g.AvgState(x => x));
     }
 
     [Fact]
     public void UniqState_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { "a", "b", "c" };
-        Assert.Throws<InvalidOperationException>(() => items.UniqState(x => x));
+        var g = MakeGrouping("k", new[] { "a", "b", "c" });
+        Assert.Throws<InvalidOperationException>(() => g.UniqState(x => x));
     }
 
     [Fact]
     public void QuantileState_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { 1.0, 2.0, 3.0 };
-        Assert.Throws<InvalidOperationException>(() => items.QuantileState(0.95, x => x));
+        var g = MakeGrouping("k", new[] { 1.0, 2.0, 3.0 });
+        Assert.Throws<InvalidOperationException>(() => g.QuantileState(0.95, x => x));
     }
 
     #endregion
@@ -148,15 +148,15 @@ public class AggregateCombinatorTests : IAsyncLifetime
     [Fact]
     public void CountMerge_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { new { State = new byte[] { 1, 2, 3 } } };
-        Assert.Throws<InvalidOperationException>(() => items.CountMerge(x => x.State));
+        var g = MakeGrouping("k", new[] { new StateHolder { State = [1, 2, 3] } });
+        Assert.Throws<InvalidOperationException>(() => g.CountMerge(x => x.State));
     }
 
     [Fact]
     public void SumMerge_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { new StateHolder { State = [1, 2, 3] } };
-        Assert.Throws<InvalidOperationException>(() => items.SumMerge<StateHolder, long>(x => x.State));
+        var g = MakeGrouping("k", new[] { new StateHolder { State = [1, 2, 3] } });
+        Assert.Throws<InvalidOperationException>(() => g.SumMerge<string, StateHolder, long>(x => x.State));
     }
 
     private class StateHolder
@@ -167,8 +167,8 @@ public class AggregateCombinatorTests : IAsyncLifetime
     [Fact]
     public void AvgMerge_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { new { State = new byte[] { 1, 2, 3 } } };
-        Assert.Throws<InvalidOperationException>(() => items.AvgMerge(x => x.State));
+        var g = MakeGrouping("k", new[] { new StateHolder { State = [1, 2, 3] } });
+        Assert.Throws<InvalidOperationException>(() => g.AvgMerge(x => x.State));
     }
 
     #endregion
@@ -178,235 +178,260 @@ public class AggregateCombinatorTests : IAsyncLifetime
     [Fact]
     public void CountIf_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { 1, 2, 3 };
-        Assert.Throws<InvalidOperationException>(() => items.CountIf(x => x > 1));
+        var g = MakeGrouping("k", new[] { 1, 2, 3 });
+        Assert.Throws<InvalidOperationException>(() => g.CountIf(x => x > 1));
     }
 
     [Fact]
     public void SumIf_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { 1, 2, 3 };
-        Assert.Throws<InvalidOperationException>(() => items.SumIf(x => x, x => x > 1));
+        var g = MakeGrouping("k", new[] { 1, 2, 3 });
+        Assert.Throws<InvalidOperationException>(() => g.SumIf(x => x, x => x > 1));
     }
 
     [Fact]
     public void AvgIf_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { 1.0, 2.0, 3.0 };
-        Assert.Throws<InvalidOperationException>(() => items.AvgIf(x => x, x => x > 1));
+        var g = MakeGrouping("k", new[] { 1.0, 2.0, 3.0 });
+        Assert.Throws<InvalidOperationException>(() => g.AvgIf(x => x, x => x > 1));
     }
 
     [Fact]
     public void UniqIf_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { 1, 2, 3 };
-        Assert.Throws<InvalidOperationException>(() => items.UniqIf(x => x, x => x > 1));
+        var g = MakeGrouping("k", new[] { 1, 2, 3 });
+        Assert.Throws<InvalidOperationException>(() => g.UniqIf(x => x, x => x > 1));
     }
 
     [Fact]
     public void MinIf_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { 1, 2, 3 };
-        Assert.Throws<InvalidOperationException>(() => items.MinIf(x => x, x => x > 1));
+        var g = MakeGrouping("k", new[] { 1, 2, 3 });
+        Assert.Throws<InvalidOperationException>(() => g.MinIf(x => x, x => x > 1));
     }
 
     [Fact]
     public void MaxIf_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { 1, 2, 3 };
-        Assert.Throws<InvalidOperationException>(() => items.MaxIf(x => x, x => x > 1));
+        var g = MakeGrouping("k", new[] { 1, 2, 3 });
+        Assert.Throws<InvalidOperationException>(() => g.MaxIf(x => x, x => x > 1));
     }
 
     [Fact]
     public void UniqExactIf_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { 1, 2, 3 };
-        Assert.Throws<InvalidOperationException>(() => items.UniqExactIf(x => x, x => x > 1));
+        var g = MakeGrouping("k", new[] { 1, 2, 3 });
+        Assert.Throws<InvalidOperationException>(() => g.UniqExactIf(x => x, x => x > 1));
     }
 
     [Fact]
     public void AnyIf_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { 1, 2, 3 };
-        Assert.Throws<InvalidOperationException>(() => items.AnyIf(x => x, x => x > 1));
+        var g = MakeGrouping("k", new[] { 1, 2, 3 });
+        Assert.Throws<InvalidOperationException>(() => g.AnyIf(x => x, x => x > 1));
     }
 
     [Fact]
     public void AnyLastIf_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { 1, 2, 3 };
-        Assert.Throws<InvalidOperationException>(() => items.AnyLastIf(x => x, x => x > 1));
+        var g = MakeGrouping("k", new[] { 1, 2, 3 });
+        Assert.Throws<InvalidOperationException>(() => g.AnyLastIf(x => x, x => x > 1));
     }
 
     [Fact]
     public void QuantileIf_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { 1.0, 2.0, 3.0 };
-        Assert.Throws<InvalidOperationException>(() => items.QuantileIf(0.95, x => x, x => x > 1));
+        var g = MakeGrouping("k", new[] { 1.0, 2.0, 3.0 });
+        Assert.Throws<InvalidOperationException>(() => g.QuantileIf(0.95, x => x, x => x > 1));
     }
 
     [Fact]
     public void ArgMaxIf_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { new { A = 1, B = 2 } };
-        Assert.Throws<InvalidOperationException>(() => items.ArgMaxIf(x => x.A, x => x.B, x => x.B > 0));
+        var g = MakeGrouping("k", new[] { new { A = 1, B = 2 } });
+        Assert.Throws<InvalidOperationException>(() => g.ArgMaxIf(x => x.A, x => x.B, x => x.B > 0));
     }
 
     [Fact]
     public void ArgMinIf_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { new { A = 1, B = 2 } };
-        Assert.Throws<InvalidOperationException>(() => items.ArgMinIf(x => x.A, x => x.B, x => x.B > 0));
+        var g = MakeGrouping("k", new[] { new { A = 1, B = 2 } });
+        Assert.Throws<InvalidOperationException>(() => g.ArgMinIf(x => x.A, x => x.B, x => x.B > 0));
     }
 
     [Fact]
     public void TopKIf_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { 1, 2, 3 };
-        Assert.Throws<InvalidOperationException>(() => items.TopKIf(2, x => x, x => x > 1));
+        var g = MakeGrouping("k", new[] { 1, 2, 3 });
+        Assert.Throws<InvalidOperationException>(() => g.TopKIf(2, x => x, x => x > 1));
     }
 
     [Fact]
     public void TopKWeightedIf_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { 1, 2, 3 };
-        Assert.Throws<InvalidOperationException>(() => items.TopKWeightedIf(2, x => x, x => x, x => x > 1));
+        var g = MakeGrouping("k", new[] { 1, 2, 3 });
+        Assert.Throws<InvalidOperationException>(() => g.TopKWeightedIf(2, x => x, x => x, x => x > 1));
     }
 
     [Fact]
     public void GroupArrayIf_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { 1, 2, 3 };
-        Assert.Throws<InvalidOperationException>(() => items.GroupArrayIf(x => x, x => x > 1));
+        var g = MakeGrouping("k", new[] { 1, 2, 3 });
+        Assert.Throws<InvalidOperationException>(() => g.GroupArrayIf(x => x, x => x > 1));
     }
 
     [Fact]
     public void GroupArrayIfWithLimit_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { 1, 2, 3 };
-        Assert.Throws<InvalidOperationException>(() => items.GroupArrayIf(10, x => x, x => x > 1));
+        var g = MakeGrouping("k", new[] { 1, 2, 3 });
+        Assert.Throws<InvalidOperationException>(() => g.GroupArrayIf(10, x => x, x => x > 1));
     }
 
     [Fact]
     public void GroupUniqArrayIf_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { 1, 2, 3 };
-        Assert.Throws<InvalidOperationException>(() => items.GroupUniqArrayIf(x => x, x => x > 1));
+        var g = MakeGrouping("k", new[] { 1, 2, 3 });
+        Assert.Throws<InvalidOperationException>(() => g.GroupUniqArrayIf(x => x, x => x > 1));
     }
 
     [Fact]
     public void GroupUniqArrayIfWithLimit_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { 1, 2, 3 };
-        Assert.Throws<InvalidOperationException>(() => items.GroupUniqArrayIf(10, x => x, x => x > 1));
+        var g = MakeGrouping("k", new[] { 1, 2, 3 });
+        Assert.Throws<InvalidOperationException>(() => g.GroupUniqArrayIf(10, x => x, x => x > 1));
     }
 
     [Fact]
     public void MedianIf_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { 1.0, 2.0, 3.0 };
-        Assert.Throws<InvalidOperationException>(() => items.MedianIf(x => x, x => x > 1));
+        var g = MakeGrouping("k", new[] { 1.0, 2.0, 3.0 });
+        Assert.Throws<InvalidOperationException>(() => g.MedianIf(x => x, x => x > 1));
     }
 
     [Fact]
     public void StddevPopIf_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { 1.0, 2.0, 3.0 };
-        Assert.Throws<InvalidOperationException>(() => items.StddevPopIf(x => x, x => x > 1));
+        var g = MakeGrouping("k", new[] { 1.0, 2.0, 3.0 });
+        Assert.Throws<InvalidOperationException>(() => g.StddevPopIf(x => x, x => x > 1));
     }
 
     [Fact]
     public void StddevSampIf_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { 1.0, 2.0, 3.0 };
-        Assert.Throws<InvalidOperationException>(() => items.StddevSampIf(x => x, x => x > 1));
+        var g = MakeGrouping("k", new[] { 1.0, 2.0, 3.0 });
+        Assert.Throws<InvalidOperationException>(() => g.StddevSampIf(x => x, x => x > 1));
     }
 
     [Fact]
     public void VarPopIf_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { 1.0, 2.0, 3.0 };
-        Assert.Throws<InvalidOperationException>(() => items.VarPopIf(x => x, x => x > 1));
+        var g = MakeGrouping("k", new[] { 1.0, 2.0, 3.0 });
+        Assert.Throws<InvalidOperationException>(() => g.VarPopIf(x => x, x => x > 1));
     }
 
     [Fact]
     public void VarSampIf_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { 1.0, 2.0, 3.0 };
-        Assert.Throws<InvalidOperationException>(() => items.VarSampIf(x => x, x => x > 1));
+        var g = MakeGrouping("k", new[] { 1.0, 2.0, 3.0 });
+        Assert.Throws<InvalidOperationException>(() => g.VarSampIf(x => x, x => x > 1));
     }
 
     [Fact]
     public void UniqCombinedIf_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { 1, 2, 3 };
-        Assert.Throws<InvalidOperationException>(() => items.UniqCombinedIf(x => x, x => x > 1));
+        var g = MakeGrouping("k", new[] { 1, 2, 3 });
+        Assert.Throws<InvalidOperationException>(() => g.UniqCombinedIf(x => x, x => x > 1));
     }
 
     [Fact]
     public void UniqCombined64If_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { 1, 2, 3 };
-        Assert.Throws<InvalidOperationException>(() => items.UniqCombined64If(x => x, x => x > 1));
+        var g = MakeGrouping("k", new[] { 1, 2, 3 });
+        Assert.Throws<InvalidOperationException>(() => g.UniqCombined64If(x => x, x => x > 1));
     }
 
     [Fact]
     public void UniqHLL12If_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { 1, 2, 3 };
-        Assert.Throws<InvalidOperationException>(() => items.UniqHLL12If(x => x, x => x > 1));
+        var g = MakeGrouping("k", new[] { 1, 2, 3 });
+        Assert.Throws<InvalidOperationException>(() => g.UniqHLL12If(x => x, x => x > 1));
     }
 
     [Fact]
     public void UniqThetaIf_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { 1, 2, 3 };
-        Assert.Throws<InvalidOperationException>(() => items.UniqThetaIf(x => x, x => x > 1));
+        var g = MakeGrouping("k", new[] { 1, 2, 3 });
+        Assert.Throws<InvalidOperationException>(() => g.UniqThetaIf(x => x, x => x > 1));
     }
 
     [Fact]
     public void QuantileTDigestIf_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { 1.0, 2.0, 3.0 };
-        Assert.Throws<InvalidOperationException>(() => items.QuantileTDigestIf(0.95, x => x, x => x > 1));
+        var g = MakeGrouping("k", new[] { 1.0, 2.0, 3.0 });
+        Assert.Throws<InvalidOperationException>(() => g.QuantileTDigestIf(0.95, x => x, x => x > 1));
     }
 
     [Fact]
     public void QuantileExactIf_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { 1.0, 2.0, 3.0 };
-        Assert.Throws<InvalidOperationException>(() => items.QuantileExactIf(0.95, x => x, x => x > 1));
+        var g = MakeGrouping("k", new[] { 1.0, 2.0, 3.0 });
+        Assert.Throws<InvalidOperationException>(() => g.QuantileExactIf(0.95, x => x, x => x > 1));
     }
 
     [Fact]
     public void QuantileTimingIf_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { 1.0, 2.0, 3.0 };
-        Assert.Throws<InvalidOperationException>(() => items.QuantileTimingIf(0.95, x => x, x => x > 1));
+        var g = MakeGrouping("k", new[] { 1.0, 2.0, 3.0 });
+        Assert.Throws<InvalidOperationException>(() => g.QuantileTimingIf(0.95, x => x, x => x > 1));
     }
 
     [Fact]
     public void QuantileDDIf_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { 1.0, 2.0, 3.0 };
-        Assert.Throws<InvalidOperationException>(() => items.QuantileDDIf(0.01, 0.95, x => x, x => x > 1));
+        var g = MakeGrouping("k", new[] { 1.0, 2.0, 3.0 });
+        Assert.Throws<InvalidOperationException>(() => g.QuantileDDIf(0.01, 0.95, x => x, x => x > 1));
     }
 
     [Fact]
     public void QuantilesIf_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { 1.0, 2.0, 3.0 };
-        Assert.Throws<InvalidOperationException>(() => items.QuantilesIf(new[] { 0.5, 0.9 }, x => x, x => x > 1));
+        var g = MakeGrouping("k", new[] { 1.0, 2.0, 3.0 });
+        Assert.Throws<InvalidOperationException>(() => g.QuantilesIf(new[] { 0.5, 0.9 }, x => x, x => x > 1));
     }
 
     [Fact]
     public void QuantilesTDigestIf_ThrowsWhenInvokedDirectly()
     {
-        var items = new[] { 1.0, 2.0, 3.0 };
-        Assert.Throws<InvalidOperationException>(() => items.QuantilesTDigestIf(new[] { 0.5, 0.9 }, x => x, x => x > 1));
+        var g = MakeGrouping("k", new[] { 1.0, 2.0, 3.0 });
+        Assert.Throws<InvalidOperationException>(() => g.QuantilesTDigestIf(new[] { 0.5, 0.9 }, x => x, x => x > 1));
+    }
+
+    [Fact]
+    public void CountUInt64_ThrowsWhenInvokedDirectly()
+    {
+        var g = MakeGrouping("k", new[] { 1, 2, 3 });
+        Assert.Throws<InvalidOperationException>(() => g.CountUInt64());
+    }
+
+    [Fact]
+    public void SumUInt64_ThrowsWhenInvokedDirectly()
+    {
+        var g = MakeGrouping("k", new[] { 1, 2, 3 });
+        Assert.Throws<InvalidOperationException>(() => g.SumUInt64(x => x));
     }
 
     #endregion
+
+    private static IGrouping<TKey, TElement> MakeGrouping<TKey, TElement>(TKey key, IEnumerable<TElement> elements)
+        => new TestGrouping<TKey, TElement>(key, elements);
+
+    private sealed class TestGrouping<TKey, TElement>(TKey key, IEnumerable<TElement> elements)
+        : IGrouping<TKey, TElement>
+    {
+        public TKey Key { get; } = key;
+        public IEnumerator<TElement> GetEnumerator() => elements.GetEnumerator();
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+    }
 
     #region Array Combinator Marker Method Tests
 

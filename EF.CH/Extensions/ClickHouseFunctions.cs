@@ -52,66 +52,77 @@ public static class ClickHouseFunctions
     /// Converts a DateTime to an integer in YYYYMM format.
     /// Translates to: toYYYYMM(column)
     /// </summary>
+    /// <example>e.RequestedAt.ToYYYYMM()</example>
     public static int ToYYYYMM(this DateTime dateTime) => Throw<int>();
 
     /// <summary>
     /// Converts a DateTime to an integer in YYYYMMDD format.
     /// Translates to: toYYYYMMDD(column)
     /// </summary>
+    /// <example>e.RequestedAt.ToYYYYMMDD()</example>
     public static int ToYYYYMMDD(this DateTime dateTime) => Throw<int>();
 
     /// <summary>
     /// Truncates DateTime to the start of the hour.
     /// Translates to: toStartOfHour(column)
     /// </summary>
+    /// <example>e.RequestedAt.ToStartOfHour()</example>
     public static DateTime ToStartOfHour(this DateTime dateTime) => Throw<DateTime>();
 
     /// <summary>
     /// Truncates DateTime to the start of the day.
     /// Translates to: toStartOfDay(column)
     /// </summary>
+    /// <example>e.RequestedAt.ToStartOfDay()</example>
     public static DateTime ToStartOfDay(this DateTime dateTime) => Throw<DateTime>();
 
     /// <summary>
     /// Truncates DateTime to the start of the week (Monday).
     /// Translates to: toStartOfWeek(column)
     /// </summary>
+    /// <example>e.RequestedAt.ToStartOfWeek()</example>
     public static DateTime ToStartOfWeek(this DateTime dateTime) => Throw<DateTime>();
 
     /// <summary>
     /// Truncates DateTime to the start of the month.
     /// Translates to: toStartOfMonth(column)
     /// </summary>
+    /// <example>e.RequestedAt.ToStartOfMonth()</example>
     public static DateTime ToStartOfMonth(this DateTime dateTime) => Throw<DateTime>();
 
     /// <summary>
     /// Truncates DateTime to the start of the quarter.
     /// Translates to: toStartOfQuarter(column)
     /// </summary>
+    /// <example>e.RequestedAt.ToStartOfQuarter()</example>
     public static DateTime ToStartOfQuarter(this DateTime dateTime) => Throw<DateTime>();
 
     /// <summary>
     /// Truncates DateTime to the start of the year.
     /// Translates to: toStartOfYear(column)
     /// </summary>
+    /// <example>e.RequestedAt.ToStartOfYear()</example>
     public static DateTime ToStartOfYear(this DateTime dateTime) => Throw<DateTime>();
 
     /// <summary>
     /// Truncates DateTime to the start of the minute.
     /// Translates to: toStartOfMinute(column)
     /// </summary>
+    /// <example>e.RequestedAt.ToStartOfMinute()</example>
     public static DateTime ToStartOfMinute(this DateTime dateTime) => Throw<DateTime>();
 
     /// <summary>
     /// Truncates DateTime to the start of the 5-minute interval.
     /// Translates to: toStartOfFiveMinutes(column)
     /// </summary>
+    /// <example>e.RequestedAt.ToStartOfFiveMinutes()</example>
     public static DateTime ToStartOfFiveMinutes(this DateTime dateTime) => Throw<DateTime>();
 
     /// <summary>
     /// Truncates DateTime to the start of the 15-minute interval.
     /// Translates to: toStartOfFifteenMinutes(column)
     /// </summary>
+    /// <example>e.RequestedAt.ToStartOfFifteenMinutes()</example>
     public static DateTime ToStartOfFifteenMinutes(this DateTime dateTime) => Throw<DateTime>();
 
     #endregion

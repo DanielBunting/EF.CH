@@ -105,7 +105,7 @@ public class MergeCombinatorReadSideTests
             {
                 Bucket = g.Key,
                 Count = g.CountMerge(s => s.Count_s),
-                Total = g.SumMerge<Stat, double>(s => s.Sum_s),
+                Total = g.SumMerge<string, Stat, double>(s => s.Sum_s),
                 Uniq = g.UniqMerge(s => s.Uniq_s),
             })
             .OrderBy(r => r.Bucket)
@@ -147,10 +147,10 @@ public class MergeCombinatorReadSideTests
             {
                 Bucket = g.Key,
                 Count = g.CountMerge(s => s.Count_s),
-                Sum = g.SumMerge<BroadStat, double>(s => s.Sum_s),
+                Sum = g.SumMerge<string, BroadStat, double>(s => s.Sum_s),
                 Avg = g.AvgMerge(s => s.Avg_s),
-                Min = g.MinMerge<BroadStat, double>(s => s.Min_s),
-                Max = g.MaxMerge<BroadStat, double>(s => s.Max_s),
+                Min = g.MinMerge<string, BroadStat, double>(s => s.Min_s),
+                Max = g.MaxMerge<string, BroadStat, double>(s => s.Max_s),
                 Uniq = g.UniqMerge(s => s.Uniq_s),
                 UniqExact = g.UniqExactMerge(s => s.UniqExact_s),
             })

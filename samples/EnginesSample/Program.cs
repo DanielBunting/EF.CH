@@ -241,7 +241,7 @@ static async Task DemoAggregatingMergeTree(string connectionString)
         {
             EventType = g.Key,
             Count = g.CountMerge(s => s.EventCount),
-            Total = g.SumMerge<EventStat, double>(s => s.TotalAmount),
+            Total = g.SumMerge<string, EventStat, double>(s => s.TotalAmount),
         })
         .OrderBy(r => r.EventType)
         .ToListAsync();

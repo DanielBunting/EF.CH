@@ -45,14 +45,14 @@ public class StateCombinatorMvCoverageTests
             .Select(g => new
             {
                 Count = g.CountMerge(t => t.CountSt),
-                Sum = g.SumMerge<Target, double>(t => t.SumSt),
+                Sum = g.SumMerge<string, Target, double>(t => t.SumSt),
                 Avg = g.AvgMerge(t => t.AvgSt),
-                Min = g.MinMerge<Target, double>(t => t.MinSt),
-                Max = g.MaxMerge<Target, double>(t => t.MaxSt),
+                Min = g.MinMerge<string, Target, double>(t => t.MinSt),
+                Max = g.MaxMerge<string, Target, double>(t => t.MaxSt),
                 Uniq = g.UniqMerge(t => t.UniqSt),
                 UniqExact = g.UniqExactMerge(t => t.UniqExactSt),
-                Any = g.AnyMerge<Target, string>(t => t.AnySt),
-                AnyLast = g.AnyLastMerge<Target, string>(t => t.AnyLastSt),
+                Any = g.AnyMerge<string, Target, string>(t => t.AnySt),
+                AnyLast = g.AnyLastMerge<string, Target, string>(t => t.AnyLastSt),
                 Quantile = g.QuantileMerge(0.5, t => t.QuantileSt),
             })
             .FirstAsync();

@@ -1428,8 +1428,8 @@ public class ClickHouseAggregatesContext : DbContext
                     .Select(g => new MvClickHouseAggregatesSummary
                     {
                         EventName = g.Key,
-                        UniqueUsers = ClickHouseAggregates.Uniq(g, e => e.UserId),
-                        AnyUserId = ClickHouseAggregates.AnyValue(g, e => e.UserId)
+                        UniqueUsers = g.Uniq(e => e.UserId),
+                        AnyUserId = g.AnyValue(e => e.UserId)
                     }),
                 populate: false);
         });
