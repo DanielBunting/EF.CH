@@ -7,7 +7,7 @@ namespace EF.CH.Query.Internal;
 
 /// <summary>
 /// Prevents EF Core from parameterizing arguments to ClickHouse-specific extension methods
-/// like Sample(), WithSetting(), WithSettings(), and window functions.
+/// like Sample(), WithSetting(), and window functions.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -138,10 +138,10 @@ public class ClickHouseEvaluatableExpressionFilterPlugin : IEvaluatableExpressio
             {
                 var genericDef = method.GetGenericMethodDefinition();
 
-                // Don't parameterize calls to Sample, WithSetting, WithSettings, or LimitBy
+                // Don't parameterize calls to Sample, WithSetting, or LimitBy
                 if (genericDef == ClickHouseQueryableExtensions.SampleMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.SampleWithOffsetMethodInfo ||
-                    genericDef == ClickHouseQueryableExtensions.WithSettingsMethodInfo ||
+                    genericDef == ClickHouseQueryableExtensions.WithSettingMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.LimitByMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.LimitByWithOffsetMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.AsCteMethodInfo ||

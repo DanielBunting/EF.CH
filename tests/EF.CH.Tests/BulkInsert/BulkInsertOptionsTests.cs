@@ -88,14 +88,11 @@ public class BulkInsertOptionsTests
     }
 
     [Fact]
-    public void WithSettings_AddsMultipleSettings()
+    public void WithSetting_ChainedAddsMultipleSettings()
     {
         var options = new ClickHouseBulkInsertOptions()
-            .WithSettings(new Dictionary<string, object>
-            {
-                ["max_block_size"] = 1000,
-                ["max_threads"] = 4
-            });
+            .WithSetting("max_block_size", 1000)
+            .WithSetting("max_threads", 4);
 
         Assert.Equal(2, options.Settings.Count);
         Assert.Equal(1000, options.Settings["max_block_size"]);

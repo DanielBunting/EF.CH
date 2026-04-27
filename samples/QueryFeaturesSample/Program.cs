@@ -168,11 +168,11 @@ static async Task DemoSample(EventsContext context)
 }
 
 // ---------------------------------------------------------------------------
-// 3. WithSettings / WithRawFilter
+// 3. WithSetting / WithRawFilter
 // ---------------------------------------------------------------------------
 static async Task DemoWithSettings(EventsContext context)
 {
-    Console.WriteLine("--- 3. WithSettings / WithRawFilter ---");
+    Console.WriteLine("--- 3. WithSetting / WithRawFilter ---");
     Console.WriteLine("Pass ClickHouse settings to queries, or inject raw SQL conditions.");
     Console.WriteLine();
 
@@ -185,15 +185,12 @@ static async Task DemoWithSettings(EventsContext context)
         .CountAsync();
     Console.WriteLine($"Web events (with max_threads=2 setting): {withSettings}");
 
-    // WithSettings: multiple settings via dictionary
+    // Chain WithSetting calls to apply multiple settings.
     var withMultipleSettings = await context.Events
         .Final()
         .Where(e => e.Score > 50)
-        .WithSettings(new Dictionary<string, object>
-        {
-            ["max_threads"] = "4",
-            ["max_block_size"] = "1000"
-        })
+        .WithSetting("max_threads", "4")
+        .WithSetting("max_block_size", "1000")
         .CountAsync();
     Console.WriteLine($"High-score events (with multiple settings): {withMultipleSettings}");
 

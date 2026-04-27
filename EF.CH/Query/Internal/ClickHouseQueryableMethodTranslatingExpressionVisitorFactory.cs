@@ -99,7 +99,6 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
         [ClickHouseQueryableExtensions.FinalMethodInfo] = (v, e) => v.TranslateFinal(e),
         [ClickHouseQueryableExtensions.SampleMethodInfo] = (v, e) => v.TranslateSample(e, hasOffset: false),
         [ClickHouseQueryableExtensions.SampleWithOffsetMethodInfo] = (v, e) => v.TranslateSample(e, hasOffset: true),
-        [ClickHouseQueryableExtensions.WithSettingsMethodInfo] = (v, e) => v.TranslateWithSettings(e),
         [ClickHouseQueryableExtensions.WithSettingMethodInfo] = (v, e) => v.TranslateWithSetting(e),
         // PreWhere is rewritten to Where(PreWhereMarker(...)) by the preprocessor;
         // the SqlTranslator lifts the marker into _options.PreWhereExpression.
@@ -178,28 +177,6 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
                     $"Sample offset must be a constant value. Got expression type: {offsetArg.GetType().Name}");
             }
             _options.SampleOffset = offsetValue;
-        }
-
-        return source;
-    }
-
-    /// <summary>
-    /// Translates the WithSettings() extension method.
-    /// Stores settings in the query options to be applied during SQL generation.
-    /// </summary>
-    private Expression TranslateWithSettings(MethodCallExpression methodCallExpression)
-    {
-        var source = Visit(methodCallExpression.Arguments[0]);
-
-        var settingsArg = methodCallExpression.Arguments[1];
-        if (!TryGetConstantValue<IDictionary<string, object>>(settingsArg, out var settings))
-        {
-            throw new InvalidOperationException("WithSettings argument must be a constant dictionary.");
-        }
-
-        foreach (var kvp in settings)
-        {
-            _options.QuerySettings[kvp.Key] = kvp.Value;
         }
 
         return source;
