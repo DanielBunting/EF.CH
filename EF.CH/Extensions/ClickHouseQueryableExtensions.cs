@@ -470,7 +470,7 @@ public static class ClickHouseQueryableExtensions
             nameof(WithTotals), BindingFlags.Public | BindingFlags.Static)!;
 
     /// <summary>
-    /// Wraps the current query as a Common Table Expression (CTE) with the given name.
+    /// Wraps the current query as a single Common Table Expression (CTE) with the given name.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -481,16 +481,20 @@ public static class ClickHouseQueryableExtensions
     /// Generates: <c>WITH "name" AS (SELECT ...) SELECT ... FROM "name"</c>
     /// </para>
     /// <para>
-    /// Limitations:
-    /// - Single CTE per query (multi-CTE deferred to future version)
-    /// - No recursive CTEs (limited ClickHouse support)
+    /// <b>Single CTE only.</b> A query may declare exactly one CTE. Calling this
+    /// twice in the same query throws — multi-CTE support is reserved for a future
+    /// release under the name <c>AsCte</c>. Use a single named CTE today; promote to
+    /// <c>AsCte</c> when multi-CTE lands.
+    /// </para>
+    /// <para>
+    /// Recursive CTEs are not supported (ClickHouse has limited recursive CTE support).
     /// </para>
     /// </remarks>
     /// <typeparam name="TEntity">The entity type.</typeparam>
     /// <param name="source">The source queryable to use as CTE body.</param>
     /// <param name="name">The CTE name (used in WITH clause and FROM reference).</param>
     /// <returns>A queryable that will be rendered as a CTE.</returns>
-    public static IQueryable<TEntity> AsCte<TEntity>(this IQueryable<TEntity> source, string name)
+    public static IQueryable<TEntity> AsSingleCte<TEntity>(this IQueryable<TEntity> source, string name)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentException.ThrowIfNullOrEmpty(name);
@@ -498,14 +502,14 @@ public static class ClickHouseQueryableExtensions
         return source.Provider.CreateQuery<TEntity>(
             Expression.Call(
                 null,
-                AsCteMethodInfo.MakeGenericMethod(typeof(TEntity)),
+                AsSingleCteMethodInfo.MakeGenericMethod(typeof(TEntity)),
                 source.Expression,
                 WrapInEfConstant(name)));
     }
 
-    internal static readonly MethodInfo AsCteMethodInfo =
+    internal static readonly MethodInfo AsSingleCteMethodInfo =
         typeof(ClickHouseQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
-            .First(m => m.Name == nameof(AsCte));
+            .First(m => m.Name == nameof(AsSingleCte));
 
     /// <summary>
     /// Injects a raw SQL condition into the WHERE clause of the query.

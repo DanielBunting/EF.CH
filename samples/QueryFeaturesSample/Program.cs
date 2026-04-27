@@ -4,7 +4,7 @@
 // 2. SAMPLE         - Probabilistic sampling for approximate results
 // 3. WithSettings   - ClickHouse query-level settings and WithRawFilter
 // 4. LimitBy        - Top-N per group without window functions
-// 5. CTE            - Common Table Expressions via .AsCte()
+// 5. CTE            - Common Table Expressions via .AsSingleCte()
 // 6. Set Operations - UnionAll and UnionDistinct
 // 7. GROUP BY modifiers - WithRollup, WithCube, WithTotals
 // 8. Text Search    - Token-based and fuzzy text search
@@ -254,7 +254,7 @@ static async Task DemoCte(EventsContext context)
     var recentHighScorers = await context.Events
         .Final()
         .Where(e => e.Score > 75)
-        .AsCte("high_score_events")
+        .AsSingleCte("high_score_events")
         .OrderByDescending(e => e.Score)
         .Take(5)
         .ToListAsync();
