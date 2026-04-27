@@ -43,7 +43,7 @@ public class OptimizeTableTests : IAsyncLifetime
         await CreateTestTable(context);
 
         // Should execute without error
-        await context.Database.OptimizeTableFinalAsync<OptimizeTestEvent>();
+        await context.Database.OptimizeTableAsync<OptimizeTestEvent>(o => o.WithFinal());
     }
 
     [Fact]
@@ -71,7 +71,7 @@ public class OptimizeTableTests : IAsyncLifetime
         ");
 
         // Optimize to force merge
-        await context.Database.OptimizeTableFinalAsync("OptimizeTestEvents");
+        await context.Database.OptimizeTableAsync("OptimizeTestEvents", o => o.WithFinal());
 
         // Verify deduplication occurred - should only have latest version
         var count = await context.Database
@@ -103,7 +103,7 @@ public class OptimizeTableTests : IAsyncLifetime
         ");
 
         // Should execute without error
-        await context.Database.OptimizeTablePartitionAsync("PartitionedEvents", "202401");
+        await context.Database.OptimizeTableAsync("PartitionedEvents", o => o.WithPartition("202401"));
     }
 
     [Fact]
@@ -128,7 +128,7 @@ public class OptimizeTableTests : IAsyncLifetime
         ");
 
         // Should execute without error
-        await context.Database.OptimizeTablePartitionFinalAsync("PartitionedEvents2", "202401");
+        await context.Database.OptimizeTableAsync("PartitionedEvents2", o => o.WithPartition("202401").WithFinal());
     }
 
     [Fact]
@@ -224,7 +224,7 @@ public class OptimizeTableTests : IAsyncLifetime
 
         // NonExistentEntity is not in the model
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            context.Database.OptimizeTableFinalAsync<NonExistentEntity>());
+            context.Database.OptimizeTableAsync<NonExistentEntity>(o => o.WithFinal()));
     }
 
     [Fact]
@@ -233,7 +233,7 @@ public class OptimizeTableTests : IAsyncLifetime
         await using var context = CreateContext();
 
         await Assert.ThrowsAsync<ArgumentNullException>(() =>
-            context.Database.OptimizeTableAsync(null!, CancellationToken.None));
+            context.Database.OptimizeTableAsync(tableName: null!, cancellationToken: CancellationToken.None));
     }
 
     [Fact]
@@ -242,7 +242,7 @@ public class OptimizeTableTests : IAsyncLifetime
         await using var context = CreateContext();
 
         await Assert.ThrowsAsync<ArgumentException>(() =>
-            context.Database.OptimizeTableAsync("", CancellationToken.None));
+            context.Database.OptimizeTableAsync(tableName: "", cancellationToken: CancellationToken.None));
     }
 
     #endregion

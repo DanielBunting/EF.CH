@@ -179,7 +179,7 @@ static async Task DemoSummingMergeTree(string connectionString)
     Console.WriteLine($"Inserted {counters.Count} counter increments.");
 
     // Force merge to trigger summation
-    await context.Database.OptimizeTableFinalAsync<PageCounter>();
+    await context.Database.OptimizeTableAsync<PageCounter>(o => o.WithFinal());
     // Allow time for the merge to complete
     await Task.Delay(500);
 
@@ -303,7 +303,7 @@ static async Task DemoCollapsingMergeTree(string connectionString)
     }
 
     // Force merge to collapse +1/-1 pairs
-    await context.Database.OptimizeTableFinalAsync<UserBalance>();
+    await context.Database.OptimizeTableAsync<UserBalance>(o => o.WithFinal());
     await Task.Delay(500);
 
     var afterMerge = await context.UserBalances

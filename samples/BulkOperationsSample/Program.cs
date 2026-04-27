@@ -199,7 +199,7 @@ static async Task DemoOptimizeTable(BulkOpsContext context)
 
     // Optimize with FINAL (forces complete merge)
     Console.WriteLine("Running OPTIMIZE TABLE SensorReadings FINAL...");
-    await context.Database.OptimizeTableFinalAsync<SensorReading>();
+    await context.Database.OptimizeTableAsync<SensorReading>(o => o.WithFinal());
     // Allow time for the merge to complete
     await Task.Delay(500);
     Console.WriteLine("  OPTIMIZE FINAL complete.");
