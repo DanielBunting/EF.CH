@@ -9,6 +9,7 @@
 using EF.CH.Extensions;
 using Microsoft.EntityFrameworkCore;
 using Testcontainers.ClickHouse;
+using EF.CH.Metadata;
 
 var container = new ClickHouseBuilder()
     .WithImage("clickhouse/clickhouse-server:25.6")
@@ -347,7 +348,7 @@ public class MergeTreeContext(string connectionString) : DbContext
         {
             entity.HasNoKey();
             entity.UseMergeTree(x => new { x.ViewedAt, x.Id })
-                .HasPartitionByMonth(x => x.ViewedAt);
+                .HasPartitionBy(x => x.ViewedAt, PartitionGranularity.Month);
         });
     }
 }

@@ -11,6 +11,7 @@ using System.Runtime.CompilerServices;
 using EF.CH.Extensions;
 using Microsoft.EntityFrameworkCore;
 using Testcontainers.ClickHouse;
+using EF.CH.Metadata;
 
 var container = new ClickHouseBuilder()
     .WithImage("clickhouse/clickhouse-server:25.6")
@@ -295,14 +296,14 @@ public class BulkOpsContext(string connectionString) : DbContext
         {
             entity.HasNoKey();
             entity.UseMergeTree(x => new { x.SensorId, x.ReadingAt })
-                .HasPartitionByMonth(x => x.ReadingAt);
+                .HasPartitionBy(x => x.ReadingAt, PartitionGranularity.Month);
         });
 
         modelBuilder.Entity<SensorArchiveEntry>(entity =>
         {
             entity.HasNoKey();
             entity.UseMergeTree(x => new { x.SensorId, x.ReadingAt })
-                .HasPartitionByMonth(x => x.ReadingAt);
+                .HasPartitionBy(x => x.ReadingAt, PartitionGranularity.Month);
         });
     }
 }

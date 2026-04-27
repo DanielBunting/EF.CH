@@ -2,6 +2,7 @@ using EF.CH;
 using EF.CH.Extensions;
 using Microsoft.EntityFrameworkCore;
 using EfClass = Microsoft.EntityFrameworkCore.EF;
+using EF.CH.Metadata;
 
 // ============================================================
 // Utility Functions Sample
@@ -451,7 +452,7 @@ public class AnalyticsDbContext : DbContext
             entity.ToTable("PageViews");
             entity.HasKey(e => e.Id);
             entity.UseMergeTree(x => new { x.ViewedAt, x.Id });
-            entity.HasPartitionByMonth(x => x.ViewedAt);
+            entity.HasPartitionBy(x => x.ViewedAt, PartitionGranularity.Month);
         });
     }
 }

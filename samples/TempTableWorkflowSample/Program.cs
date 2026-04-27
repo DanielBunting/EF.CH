@@ -2,6 +2,7 @@ using EF.CH.BulkInsert;
 using EF.CH.Extensions;
 using Microsoft.EntityFrameworkCore;
 using Testcontainers.ClickHouse;
+using EF.CH.Metadata;
 
 // ============================================================
 // Temp Table Workflow Sample
@@ -451,7 +452,7 @@ public class EtlDbContext(string connectionString) : DbContext
             entity.ToTable("final_records");
             entity.HasNoKey();
             entity.UseMergeTree(x => new { x.ProcessedAt, x.ExternalId });
-            entity.HasPartitionByMonth(x => x.ProcessedAt);
+            entity.HasPartitionBy(x => x.ProcessedAt, PartitionGranularity.Month);
 
             entity.Property(e => e.CategoryCode).HasLowCardinality();
             entity.Property(e => e.RegionCode).HasLowCardinality();

@@ -1,5 +1,6 @@
 using EF.CH.Extensions;
 using Microsoft.EntityFrameworkCore;
+using EF.CH.Metadata;
 
 // ============================================================
 // INSERT ... SELECT Sample
@@ -249,7 +250,7 @@ public class SampleDbContext : DbContext
             entity.ToTable("Events");
             entity.HasKey(e => e.Id);
             entity.UseMergeTree(x => new { x.Timestamp, x.Id });
-            entity.HasPartitionByMonth(x => x.Timestamp);
+            entity.HasPartitionBy(x => x.Timestamp, PartitionGranularity.Month);
         });
 
         modelBuilder.Entity<ArchivedEvent>(entity =>
@@ -257,7 +258,7 @@ public class SampleDbContext : DbContext
             entity.ToTable("ArchivedEvents");
             entity.HasKey(e => e.Id);
             entity.UseMergeTree(x => new { x.Timestamp, x.Id });
-            entity.HasPartitionByMonth(x => x.Timestamp);
+            entity.HasPartitionBy(x => x.Timestamp, PartitionGranularity.Month);
         });
     }
 }

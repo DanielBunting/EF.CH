@@ -1,5 +1,6 @@
 using EF.CH.Extensions;
 using Microsoft.EntityFrameworkCore;
+using EF.CH.Metadata;
 
 // ============================================================
 // EF.CH Distributed Table Sample with Sharding
@@ -275,7 +276,7 @@ public class DistributedDbContext : DbContext
             entity.HasKey(e => e.Id);
 
             entity.UseMergeTree(x => new { x.EventTime, x.Id });
-            entity.HasPartitionByMonth(x => x.EventTime);
+            entity.HasPartitionBy(x => x.EventTime, PartitionGranularity.Month);
         });
 
         // ============================================================

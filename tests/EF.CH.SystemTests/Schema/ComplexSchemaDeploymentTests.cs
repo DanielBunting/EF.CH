@@ -3,6 +3,7 @@ using EF.CH.SystemTests.Fixtures;
 using EF.CH.SystemTests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
+using EF.CH.Metadata;
 
 namespace EF.CH.SystemTests.Schema;
 
@@ -69,7 +70,7 @@ public class ComplexSchemaDeploymentTests
             {
                 e.ToTable("Events"); e.HasKey(x => x.Id);
                 e.UseMergeTree(x => new { x.EventTime, x.Id });
-                e.HasPartitionByMonth(x => x.EventTime);
+                e.HasPartitionBy(x => x.EventTime, PartitionGranularity.Month);
                 e.Property(x => x.Category).HasColumnType("LowCardinality(String)");
                 e.Property(x => x.Tags).HasColumnType("Array(String)");
                 e.Property(x => x.Payload).HasCodec("ZSTD(3)");

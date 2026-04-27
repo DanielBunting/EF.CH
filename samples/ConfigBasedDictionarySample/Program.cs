@@ -378,7 +378,7 @@ public class ConfigDictSampleContext : DbContext
             entity.Property(e => e.Amount).HasColumnName("amount");
             entity.Property(e => e.OrderDate).HasColumnName("order_date");
             entity.UseMergeTree(x => new { x.OrderDate, x.Id });
-            entity.HasPartitionByMonth(x => x.OrderDate);
+            entity.HasPartitionBy(x => x.OrderDate, PartitionGranularity.Month);
         });
 
         // Dictionary entities - configured with dictionary annotations for LINQ translation.

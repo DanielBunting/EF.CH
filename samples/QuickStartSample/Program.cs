@@ -11,6 +11,7 @@
 using EF.CH.Extensions;
 using Microsoft.EntityFrameworkCore;
 using Testcontainers.ClickHouse;
+using EF.CH.Metadata;
 
 var container = new ClickHouseBuilder()
     .WithImage("clickhouse/clickhouse-server:25.6")
@@ -133,7 +134,7 @@ public class AppDbContext(string connectionString) : DbContext
             entity.UseMergeTree(x => new { x.Timestamp, x.Id });
 
             // Partition data by month for efficient time-range queries
-            entity.HasPartitionByMonth<Event, DateTime>(x => x.Timestamp);
+            entity.HasPartitionBy(x => x.Timestamp, PartitionGranularity.Month);
         });
     }
 }

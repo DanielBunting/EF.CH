@@ -283,7 +283,7 @@ public class ReplicatedEngineTests
             entity.UseReplicatedMergeTree(x => new { x.EventTime, x.Id })
                   .WithCluster("geo_cluster")
                   .And()
-                  .HasPartitionByMonth(x => x.EventTime);
+                  .HasPartitionBy(x => x.EventTime, PartitionGranularity.Month);
         });
 
         var model = builder.FinalizeModel();
@@ -306,7 +306,7 @@ public class ReplicatedEngineTests
             // Implicit conversion works when the result is used in a context expecting EntityTypeBuilder
             EntityTypeBuilder<TestReplicatedEntity> etb = entity.UseReplicatedMergeTree(x => new { x.EventTime, x.Id })
                   .WithCluster("geo_cluster");
-            etb.HasPartitionByMonth(x => x.EventTime);
+            etb.HasPartitionBy(x => x.EventTime, PartitionGranularity.Month);
         });
 
         var model = builder.FinalizeModel();
@@ -329,7 +329,7 @@ public class ReplicatedEngineTests
             entity.UseReplicatedMergeTree(x => new { x.EventTime, x.Id })
                   .WithCluster("geo_cluster")
                   .And()  // Explicit conversion back
-                  .HasPartitionByMonth(x => x.EventTime);
+                  .HasPartitionBy(x => x.EventTime, PartitionGranularity.Month);
         });
 
         var model = builder.FinalizeModel();

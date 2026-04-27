@@ -2,6 +2,7 @@ using EF.CH.Extensions;
 using Microsoft.EntityFrameworkCore;
 using Testcontainers.ClickHouse;
 using Xunit;
+using EF.CH.Metadata;
 
 namespace EF.CH.Tests.Core;
 
@@ -891,7 +892,7 @@ public class OrdersDbContext : DbContext
             entity.ToTable("Orders");
             entity.HasKey(e => e.Id);
             entity.UseMergeTree(x => new { x.OrderDate, x.Id });
-            entity.HasPartitionByMonth(x => x.OrderDate);
+            entity.HasPartitionBy(x => x.OrderDate, PartitionGranularity.Month);
         });
     }
 }
@@ -942,7 +943,7 @@ public class MetricsDbContext : DbContext
             entity.ToTable("Metrics");
             entity.HasNoKey();
             entity.UseMergeTree(x => new { x.Timestamp, x.MetricName });
-            entity.HasPartitionByDay(x => x.Timestamp);
+            entity.HasPartitionBy(x => x.Timestamp, PartitionGranularity.Day);
         });
     }
 }
@@ -968,7 +969,7 @@ public class SalesDbContext : DbContext
             entity.ToTable("Sales");
             entity.HasKey(e => e.Id);
             entity.UseMergeTree(x => new { x.SaleDate, x.Id });
-            entity.HasPartitionByMonth(x => x.SaleDate);
+            entity.HasPartitionBy(x => x.SaleDate, PartitionGranularity.Month);
         });
     }
 }

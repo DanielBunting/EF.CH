@@ -1,5 +1,6 @@
 using EF.CH.Extensions;
 using Microsoft.EntityFrameworkCore;
+using EF.CH.Metadata;
 
 // ============================================================
 // CTE (Common Table Expression) Sample
@@ -143,7 +144,7 @@ public class AnalyticsDbContext : DbContext
             entity.ToTable("AnalyticsEvents");
             entity.HasKey(e => e.Id);
             entity.UseMergeTree(x => new { x.CreatedAt, x.Id });
-            entity.HasPartitionByMonth(x => x.CreatedAt);
+            entity.HasPartitionBy(x => x.CreatedAt, PartitionGranularity.Month);
         });
     }
 }

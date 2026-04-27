@@ -3,6 +3,7 @@ using EF.CH.SystemTests.Fixtures;
 using EF.CH.SystemTests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
+using EF.CH.Metadata;
 
 namespace EF.CH.SystemTests.Schema;
 
@@ -74,7 +75,7 @@ public class PartitionAndOrderByTests
             mb.Entity<Row>(e =>
             {
                 e.ToTable("PartMonth_Rows"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id);
-                e.HasPartitionByMonth(x => x.At);
+                e.HasPartitionBy(x => x.At, PartitionGranularity.Month);
             });
     }
     public sealed class DailyCtx(DbContextOptions<DailyCtx> o) : DbContext(o)
@@ -84,7 +85,7 @@ public class PartitionAndOrderByTests
             mb.Entity<Row>(e =>
             {
                 e.ToTable("PartDay_Rows"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id);
-                e.HasPartitionByDay(x => x.At);
+                e.HasPartitionBy(x => x.At, PartitionGranularity.Day);
             });
     }
     public sealed class YearlyCtx(DbContextOptions<YearlyCtx> o) : DbContext(o)
@@ -94,7 +95,7 @@ public class PartitionAndOrderByTests
             mb.Entity<Row>(e =>
             {
                 e.ToTable("PartYear_Rows"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id);
-                e.HasPartitionByYear(x => x.At);
+                e.HasPartitionBy(x => x.At, PartitionGranularity.Year);
             });
     }
     public sealed class CompoundCtx(DbContextOptions<CompoundCtx> o) : DbContext(o)

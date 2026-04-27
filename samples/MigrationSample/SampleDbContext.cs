@@ -1,5 +1,6 @@
 using EF.CH.Extensions;
 using Microsoft.EntityFrameworkCore;
+using EF.CH.Metadata;
 
 namespace MigrationSample;
 
@@ -61,7 +62,7 @@ public class SampleDbContext : DbContext
             entity.UseMergeTree(x => new { x.Category, x.CreatedAt });
 
             // Monthly partitioning for time-based data management and TTL
-            entity.HasPartitionByMonth<Product, DateTime>(x => x.CreatedAt);
+            entity.HasPartitionBy(x => x.CreatedAt, PartitionGranularity.Month);
         });
     }
 }

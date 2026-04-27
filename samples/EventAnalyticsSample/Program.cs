@@ -3,6 +3,7 @@ using EF.CH.BulkInsert;
 using EF.CH.Extensions;
 using Microsoft.EntityFrameworkCore;
 using Testcontainers.ClickHouse;
+using EF.CH.Metadata;
 
 // ============================================================
 // Event Analytics Pipeline Sample
@@ -462,7 +463,7 @@ public class AnalyticsDbContext(string connectionString) : DbContext
             entity.ToTable("page_view_summary_mv");
             entity.HasNoKey();
             entity.UseSummingMergeTree(x => new { x.Date, x.Page });
-            entity.HasPartitionByMonth(x => x.Date);
+            entity.HasPartitionBy(x => x.Date, PartitionGranularity.Month);
 
             entity.Property(e => e.Page).HasLowCardinality();
             entity.Property(e => e.UniqueVisitors)

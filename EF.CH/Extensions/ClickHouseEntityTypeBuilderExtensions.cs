@@ -33,7 +33,7 @@ namespace EF.CH.Extensions;
 /// // Implicit conversion allows continued chaining
 /// entity.UseReplicatedMergeTree(x => x.Id)
 ///       .WithCluster("geo_cluster")
-///       .HasPartitionByMonth(x => x.OrderDate);  // Continues with EntityTypeBuilder
+///       .HasPartitionBy(x => x.OrderDate, PartitionGranularity.Month);  // Continues with EntityTypeBuilder
 /// </code>
 /// </example>
 public class ReplicatedEngineBuilder<TEntity> where TEntity : class
@@ -1785,100 +1785,47 @@ public static class ClickHouseEntityTypeBuilderExtensions
     }
 
     /// <summary>
-    /// Configures PARTITION BY using a monthly granularity on the specified column.
-    /// Generates: PARTITION BY toYYYYMM(column)
-    /// </summary>
-    /// <typeparam name="TEntity">The entity type.</typeparam>
-    /// <param name="builder">The entity type builder.</param>
-    /// <param name="columnExpression">Expression selecting the date/datetime column to partition by.</param>
-    /// <returns>The entity type builder for chaining.</returns>
-    /// <example>
-    /// <code>
-    /// entity.HasPartitionByMonth(x => x.CreatedAt);
-    /// // Generates: PARTITION BY toYYYYMM("CreatedAt")
-    /// </code>
-    /// </example>
-    public static EntityTypeBuilder<TEntity> HasPartitionByMonth<TEntity, TProperty>(
-        this EntityTypeBuilder<TEntity> builder,
-        Expression<Func<TEntity, TProperty>> columnExpression)
-        where TEntity : class
-    {
-        ArgumentNullException.ThrowIfNull(columnExpression);
-        var columnName = ExpressionExtensions.GetPropertyName(columnExpression);
-        return builder.HasPartitionBy($"toYYYYMM(\"{columnName}\")");
-    }
-
-    /// <summary>
-    /// Configures PARTITION BY using a daily granularity on the specified column.
-    /// Generates: PARTITION BY toYYYYMMDD(column)
-    /// </summary>
-    /// <typeparam name="TEntity">The entity type.</typeparam>
-    /// <param name="builder">The entity type builder.</param>
-    /// <param name="columnExpression">Expression selecting the date/datetime column to partition by.</param>
-    /// <returns>The entity type builder for chaining.</returns>
-    /// <example>
-    /// <code>
-    /// entity.HasPartitionByDay(x => x.EventDate);
-    /// // Generates: PARTITION BY toYYYYMMDD("EventDate")
-    /// </code>
-    /// </example>
-    public static EntityTypeBuilder<TEntity> HasPartitionByDay<TEntity, TProperty>(
-        this EntityTypeBuilder<TEntity> builder,
-        Expression<Func<TEntity, TProperty>> columnExpression)
-        where TEntity : class
-    {
-        ArgumentNullException.ThrowIfNull(columnExpression);
-        var columnName = ExpressionExtensions.GetPropertyName(columnExpression);
-        return builder.HasPartitionBy($"toYYYYMMDD(\"{columnName}\")");
-    }
-
-    /// <summary>
-    /// Configures PARTITION BY using a yearly granularity on the specified column.
-    /// Generates: PARTITION BY toYear(column)
-    /// </summary>
-    /// <typeparam name="TEntity">The entity type.</typeparam>
-    /// <param name="builder">The entity type builder.</param>
-    /// <param name="columnExpression">Expression selecting the date/datetime column to partition by.</param>
-    /// <returns>The entity type builder for chaining.</returns>
-    /// <example>
-    /// <code>
-    /// entity.HasPartitionByYear(x => x.OrderDate);
-    /// // Generates: PARTITION BY toYear("OrderDate")
-    /// </code>
-    /// </example>
-    public static EntityTypeBuilder<TEntity> HasPartitionByYear<TEntity, TProperty>(
-        this EntityTypeBuilder<TEntity> builder,
-        Expression<Func<TEntity, TProperty>> columnExpression)
-        where TEntity : class
-    {
-        ArgumentNullException.ThrowIfNull(columnExpression);
-        var columnName = ExpressionExtensions.GetPropertyName(columnExpression);
-        return builder.HasPartitionBy($"toYear(\"{columnName}\")");
-    }
-
-    /// <summary>
     /// Configures PARTITION BY using an expression-based column selector.
     /// </summary>
     /// <typeparam name="TEntity">The entity type.</typeparam>
     /// <typeparam name="TProperty">The property type.</typeparam>
     /// <param name="builder">The entity type builder.</param>
     /// <param name="partitionExpression">Expression selecting the column to partition by.</param>
+    /// <param name="granularity">Optional date-bucket wrapper applied to the column.
+    /// <see cref="PartitionGranularity.None"/> emits the raw column;
+    /// other values wrap it in the matching ClickHouse function.</param>
     /// <returns>The entity type builder for chaining.</returns>
     /// <example>
     /// <code>
     /// entity.HasPartitionBy(x => x.Region);
     /// // Generates: PARTITION BY "Region"
+    ///
+    /// entity.HasPartitionBy(x => x.CreatedAt, PartitionGranularity.Month);
+    /// // Generates: PARTITION BY toYYYYMM("CreatedAt")
     /// </code>
     /// </example>
     public static EntityTypeBuilder<TEntity> HasPartitionBy<TEntity, TProperty>(
         this EntityTypeBuilder<TEntity> builder,
-        Expression<Func<TEntity, TProperty>> partitionExpression)
+        Expression<Func<TEntity, TProperty>> partitionExpression,
+        PartitionGranularity granularity = PartitionGranularity.None)
         where TEntity : class
     {
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(partitionExpression);
         var columnName = ExpressionExtensions.GetPropertyName(partitionExpression);
-        return builder.HasPartitionBy($"\"{columnName}\"");
+        var quoted = $"\"{columnName}\"";
+        var expr = granularity switch
+        {
+            PartitionGranularity.None    => quoted,
+            PartitionGranularity.Hour    => $"toStartOfHour({quoted})",
+            PartitionGranularity.Day     => $"toYYYYMMDD({quoted})",
+            PartitionGranularity.Week    => $"toStartOfWeek({quoted})",
+            PartitionGranularity.Month   => $"toYYYYMM({quoted})",
+            PartitionGranularity.Quarter => $"toStartOfQuarter({quoted})",
+            PartitionGranularity.Year    => $"toYear({quoted})",
+            _ => throw new ArgumentOutOfRangeException(nameof(granularity)),
+        };
+        return builder.HasPartitionBy(expr);
     }
 
     #endregion
