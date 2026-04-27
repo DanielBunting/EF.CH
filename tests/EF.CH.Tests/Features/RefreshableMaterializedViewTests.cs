@@ -172,20 +172,16 @@ public class RefreshableMaterializedViewTests : IAsyncLifetime
     #region Validation
 
     [Fact]
-    public void Validation_BuilderRequiresInterval()
-    {
-        var ex = Assert.Throws<InvalidOperationException>(() => new RefreshableMaterializedViewBuilder().Build());
-        Assert.Contains("Every", ex.Message);
-    }
-
-    [Fact]
     public void Validation_AppendAndEmpty_Throws()
     {
-        var b = new RefreshableMaterializedViewBuilder()
-            .Every(TimeSpan.FromMinutes(5))
-            .Append()
-            .Empty();
-        Assert.Throws<InvalidOperationException>(() => b.Build());
+        // Append() and Empty() are mutually exclusive — the builder rejects the
+        // second call. Drives the rejection via a context whose OnModelCreating
+        // chains both to surface the validation through normal flow.
+        Assert.Throws<InvalidOperationException>(() =>
+        {
+            using var ctx = CreateContext<AppendAndEmptyContext>();
+            _ = ctx.Model;
+        });
     }
 
     [Fact]
@@ -288,9 +284,9 @@ public class EveryFiveMinutesContext(DbContextOptions<EveryFiveMinutesContext> o
         b.Entity<EveryFiveMinutesMv>(e =>
         {
             e.UseMergeTree(x => x.Id);
-            e.AsRefreshableMaterializedViewRaw("RawEvent", "SELECT Id FROM RawEvent",
-                r => r.Every(TimeSpan.FromMinutes(5)));
+
         });
+        b.MaterializedView<EveryFiveMinutesMv>().FromTable("RawEvent").DefinedAsRaw("SELECT Id FROM RawEvent").RefreshEvery(TimeSpan.FromMinutes(5));
     }
 }
 
@@ -302,9 +298,9 @@ public class RawRefreshableContext(DbContextOptions<RawRefreshableContext> opts)
         b.Entity<RawRefreshableMv>(e =>
         {
             e.UseMergeTree(x => x.Id);
-            e.AsRefreshableMaterializedViewRaw("RawSource", "SELECT 1 AS Id",
-                r => r.After(TimeSpan.FromHours(1)));
+
         });
+        b.MaterializedView<RawRefreshableMv>().FromTable("RawSource").DefinedAsRaw("SELECT 1 AS Id").RefreshAfter(TimeSpan.FromHours(1));
     }
 }
 
@@ -316,11 +312,9 @@ public class OffsetRandomizeContext(DbContextOptions<OffsetRandomizeContext> opt
         b.Entity<OffsetRandomizeMv>(e =>
         {
             e.UseMergeTree(x => x.Id);
-            e.AsRefreshableMaterializedViewRaw("RawSource", "SELECT 1 AS Id",
-                r => r.Every(TimeSpan.FromMinutes(5))
-                      .Offset(TimeSpan.FromMinutes(1))
-                      .RandomizeFor(TimeSpan.FromSeconds(30)));
+
         });
+        b.MaterializedView<OffsetRandomizeMv>().FromTable("RawSource").DefinedAsRaw("SELECT 1 AS Id").RefreshEvery(TimeSpan.FromMinutes(5)).Offset(TimeSpan.FromMinutes(1)).RandomizeFor(TimeSpan.FromSeconds(30));
     }
 }
 
@@ -334,9 +328,9 @@ public class DependsOnContext(DbContextOptions<DependsOnContext> opts) : DbConte
         b.Entity<DependsOnMv>(e =>
         {
             e.UseMergeTree(x => x.Id);
-            e.AsRefreshableMaterializedViewRaw("RawSource", "SELECT 1 AS Id",
-                r => r.Every(TimeSpan.FromMinutes(5)).DependsOn<OtherMv>());
+
         });
+        b.MaterializedView<DependsOnMv>().FromTable("RawSource").DefinedAsRaw("SELECT 1 AS Id").RefreshEvery(TimeSpan.FromMinutes(5)).DependsOn<OtherMv>();
     }
 }
 
@@ -348,9 +342,9 @@ public class AppendContext(DbContextOptions<AppendContext> opts) : DbContext(opt
         b.Entity<AppendMv>(e =>
         {
             e.UseMergeTree(x => x.Id);
-            e.AsRefreshableMaterializedViewRaw("RawSource", "SELECT 1 AS Id",
-                r => r.Every(TimeSpan.FromMinutes(5)).Append());
+
         });
+        b.MaterializedView<AppendMv>().FromTable("RawSource").DefinedAsRaw("SELECT 1 AS Id").RefreshEvery(TimeSpan.FromMinutes(5)).Append();
     }
 }
 
@@ -362,9 +356,9 @@ public class EmptyContext(DbContextOptions<EmptyContext> opts) : DbContext(opts)
         b.Entity<EmptyMv>(e =>
         {
             e.UseMergeTree(x => x.Id);
-            e.AsRefreshableMaterializedViewRaw("RawSource", "SELECT 1 AS Id",
-                r => r.Every(TimeSpan.FromMinutes(5)).Empty());
+
         });
+        b.MaterializedView<EmptyMv>().FromTable("RawSource").DefinedAsRaw("SELECT 1 AS Id").RefreshEvery(TimeSpan.FromMinutes(5)).Empty();
     }
 }
 
@@ -376,9 +370,9 @@ public class SettingsContext(DbContextOptions<SettingsContext> opts) : DbContext
         b.Entity<SettingsMv>(e =>
         {
             e.UseMergeTree(x => x.Id);
-            e.AsRefreshableMaterializedViewRaw("RawSource", "SELECT 1 AS Id",
-                r => r.Every(TimeSpan.FromMinutes(5)).WithSetting("refresh_retries", "3"));
+
         });
+        b.MaterializedView<SettingsMv>().FromTable("RawSource").DefinedAsRaw("SELECT 1 AS Id").RefreshEvery(TimeSpan.FromMinutes(5)).WithSetting("refresh_retries", "3");
     }
 }
 
@@ -391,9 +385,9 @@ public class ToTargetContext(DbContextOptions<ToTargetContext> opts) : DbContext
         b.Entity<TargetTable>(e => { e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id); });
         b.Entity<ToTargetMv>(e =>
         {
-            e.AsRefreshableMaterializedViewRaw("RawSource", "SELECT 1 AS Id",
-                r => r.Every(TimeSpan.FromMinutes(5)).ToTarget<TargetTable>());
+
         });
+        b.MaterializedView<ToTargetMv>().FromTable("RawSource").DefinedAsRaw("SELECT 1 AS Id").RefreshEvery(TimeSpan.FromMinutes(5)).ToTarget<TargetTable>();
     }
 }
 
@@ -405,11 +399,28 @@ public class RefreshAndPopulateContext(DbContextOptions<RefreshAndPopulateContex
         b.Entity<RefreshAndPopulateMv>(e =>
         {
             e.UseMergeTree(x => x.Id);
-            e.AsRefreshableMaterializedViewRaw("RawSource", "SELECT 1 AS Id",
-                r => r.Every(TimeSpan.FromMinutes(5)));
+
             // Cross-set populate to provoke validation
             e.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewPopulate, true);
         });
+        b.MaterializedView<RefreshAndPopulateMv>().FromTable("RawSource").DefinedAsRaw("SELECT 1 AS Id").RefreshEvery(TimeSpan.FromMinutes(5));
+    }
+}
+
+public class AppendAndEmptyMv { public int Id { get; set; } }
+
+public class AppendAndEmptyContext(DbContextOptions<AppendAndEmptyContext> opts) : DbContext(opts)
+{
+    public DbSet<AppendAndEmptyMv> Mvs => Set<AppendAndEmptyMv>();
+    protected override void OnModelCreating(ModelBuilder b)
+    {
+        b.Entity<AppendAndEmptyMv>(e => { e.UseMergeTree(x => x.Id); });
+        b.MaterializedView<AppendAndEmptyMv>()
+            .FromTable("RawSource")
+            .DefinedAsRaw("SELECT 1 AS Id")
+            .RefreshEvery(TimeSpan.FromMinutes(5))
+            .Append()
+            .Empty();
     }
 }
 
@@ -421,9 +432,9 @@ public class UnknownDependsContext(DbContextOptions<UnknownDependsContext> opts)
         b.Entity<UnknownDependsMv>(e =>
         {
             e.UseMergeTree(x => x.Id);
-            e.AsRefreshableMaterializedViewRaw("RawSource", "SELECT 1 AS Id",
-                r => r.Every(TimeSpan.FromMinutes(5)).DependsOn("EntityThatDoesNotExist"));
+
         });
+        b.MaterializedView<UnknownDependsMv>().FromTable("RawSource").DefinedAsRaw("SELECT 1 AS Id").RefreshEvery(TimeSpan.FromMinutes(5)).DependsOn("EntityThatDoesNotExist");
     }
 }
 

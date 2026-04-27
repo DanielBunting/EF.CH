@@ -115,7 +115,9 @@ public class AggregatingMergeTreeStateMergeTests
                 e.Property(x => x.UniqueUsers).HasAggregateFunction("uniq", typeof(long));
                 e.Property(x => x.AverageValue).HasAggregateFunction("avg", typeof(double));
 
-                e.AsMaterializedView<CategoryStat, RawEvent>(events => events
+
+            });
+            mb.MaterializedView<CategoryStat>().From<RawEvent>().DefinedAs(events => events
                     .GroupBy(x => x.Category)
                     .Select(g => new CategoryStat
                     {
@@ -125,7 +127,6 @@ public class AggregatingMergeTreeStateMergeTests
                         UniqueUsers = g.UniqState(x => x.UserId),
                         AverageValue = g.AvgState(x => x.Value),
                     }));
-            });
         }
     }
 

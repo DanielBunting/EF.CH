@@ -231,8 +231,9 @@ public class IfContext(string connectionString) : DbContext
             // Demonstrate every new -If combinator in a single MV definition.
             // Each selector's predicate is evaluated inline by ClickHouse in the
             // same GROUP BY pass — no separate WHERE or filter step per column.
-            entity.AsMaterializedView<RegionSummary, Order>(
-                query: orders => orders
+
+        });
+        modelBuilder.MaterializedView<RegionSummary>().From<Order>().DefinedAs(orders => orders
                     .GroupBy(o => o.Region)
                     .Select(g => new RegionSummary
                     {
@@ -273,8 +274,6 @@ public class IfContext(string connectionString) : DbContext
                         // Multi-quantile: 3 percentiles in one pass
                         FulfillTimePercentiles = ClickHouseAggregates.QuantilesIf(g, new[] { 0.5, 0.9, 0.99 }, o => o.FulfillTimeMs, o => o.Status == "paid"),
                         FulfillTimePercentilesTDigest = ClickHouseAggregates.QuantilesTDigestIf(g, new[] { 0.5, 0.9, 0.99 }, o => o.FulfillTimeMs, o => o.Status == "paid")
-                    }),
-                populate: false);
-        });
+                    }));
     }
 }

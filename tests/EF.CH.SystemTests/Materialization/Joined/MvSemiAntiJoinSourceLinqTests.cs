@@ -117,10 +117,11 @@ public class MvSemiAntiJoinSourceLinqTests
             {
                 e.ToTable("LeftSemiTarget"); e.HasNoKey();
                 e.UseMergeTree(x => x.OrderId);
-                e.AsMaterializedView<JustOrderId, Order>(orders => orders
+
+            });
+            mb.MaterializedView<JustOrderId>().From<Order>().DefinedAs(orders => orders
                     .LeftSemiJoin(_customers, o => o.CustomerId, c => c.Id,
                         o => new JustOrderId { OrderId = o.Id, Amount = o.Amount }));
-            });
         }
     }
 
@@ -137,10 +138,11 @@ public class MvSemiAntiJoinSourceLinqTests
             {
                 e.ToTable("LeftAntiTarget"); e.HasNoKey();
                 e.UseMergeTree(x => x.OrderId);
-                e.AsMaterializedView<JustOrderId, Order>(orders => orders
+
+            });
+            mb.MaterializedView<JustOrderId>().From<Order>().DefinedAs(orders => orders
                     .LeftAntiJoin(_customers, o => o.CustomerId, c => c.Id,
                         o => new JustOrderId { OrderId = o.Id, Amount = o.Amount }));
-            });
         }
     }
 
@@ -157,10 +159,11 @@ public class MvSemiAntiJoinSourceLinqTests
             {
                 e.ToTable("RightSemiTarget"); e.HasNoKey();
                 e.UseMergeTree(x => x.CustomerId);
-                e.AsMaterializedView<JustCustomerId, Order>(orders => orders
+
+            });
+            mb.MaterializedView<JustCustomerId>().From<Order>().DefinedAs(orders => orders
                     .RightSemiJoin(_customers, o => o.CustomerId, c => c.Id,
                         c => new JustCustomerId { CustomerId = c.Id }));
-            });
         }
     }
 
@@ -177,10 +180,11 @@ public class MvSemiAntiJoinSourceLinqTests
             {
                 e.ToTable("RightAntiTarget"); e.HasNoKey();
                 e.UseMergeTree(x => x.CustomerId);
-                e.AsMaterializedView<JustCustomerId, Order>(orders => orders
+
+            });
+            mb.MaterializedView<JustCustomerId>().From<Order>().DefinedAs(orders => orders
                     .RightAntiJoin(_customers, o => o.CustomerId, c => c.Id,
                         c => new JustCustomerId { CustomerId = c.Id }));
-            });
         }
     }
 }

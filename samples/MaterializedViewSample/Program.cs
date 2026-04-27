@@ -1,9 +1,10 @@
 // MaterializedViewSample - Demonstrates materialized views via EF.CH (all LINQ).
 //
-// 1. Basic LINQ MV    - AsMaterializedView<T, S>(q => q.GroupBy(...).Select(...))
-// 2. LINQ MV + filter - AsMaterializedView<T, S> with toStartOfHour + Count + Avg + CountIf
-// 3. Null engine      - UseNullEngine as MV source (data discarded after MV processes)
-// 4. Populate option  - Backfill from existing data when creating the view
+// 1. Basic LINQ MV       - MaterializedView<T>().From<S>().DefinedAs(q => q.GroupBy(...).Select(...))
+// 2. LINQ MV + filter    - MaterializedView<T>().From<S>() with toStartOfHour + Count + Avg + CountIf
+// 3. Null engine         - UseNullEngine as MV source (data discarded after MV processes)
+// 4. Populate option     - Backfill from existing data when creating the view
+// 5. Multi-source (Join) - MaterializedView<T>().From<A>().Join<B>().Join<C>().DefinedAs((a,b,c) => …)
 
 using EF.CH.Extensions;
 using Microsoft.EntityFrameworkCore;
@@ -28,6 +29,7 @@ try
     await DemoLinqWithFilterAndAggregates(connectionString);
     await DemoNullEngineSource(connectionString);
     await DemoPopulateOption(connectionString);
+    await DemoMultiSourceJoin(connectionString);
 
     Console.WriteLine("=== All materialized view demos complete ===");
 }
@@ -44,7 +46,7 @@ finally
 static async Task DemoBasicMaterializedView(string connectionString)
 {
     Console.WriteLine("--- 1. Basic Materialized View ---");
-    Console.WriteLine("AsMaterializedView<T, S>(LINQ) with GroupBy aggregation for daily order summaries.");
+    Console.WriteLine("MaterializedView<T>().From<S>().DefinedAs(...) with GroupBy aggregation for daily order summaries.");
     Console.WriteLine("EnsureCreatedAsync generates the source table, target table, and view.");
     Console.WriteLine();
 
@@ -101,7 +103,7 @@ static async Task DemoBasicMaterializedView(string connectionString)
 static async Task DemoLinqWithFilterAndAggregates(string connectionString)
 {
     Console.WriteLine("--- 2. LINQ MV with filter + aggregates ---");
-    Console.WriteLine("AsMaterializedView<T, S>(LINQ) using toStartOfHour, Count, Avg and CountIf.");
+    Console.WriteLine("MaterializedView<T>().From<S>().DefinedAs(...) using toStartOfHour, Count, Avg and CountIf.");
     Console.WriteLine();
 
     await using var context = new RawMvContext(connectionString);
@@ -277,6 +279,54 @@ static async Task DemoPopulateOption(string connectionString)
     Console.WriteLine();
 }
 
+// ---------------------------------------------------------------------------
+// 5. Multi-source Materialized View — From<Order>, Join<Customer>, Join<Product>
+// ---------------------------------------------------------------------------
+static async Task DemoMultiSourceJoin(string connectionString)
+{
+    Console.WriteLine("\n--- 5. Multi-source Materialized View ---");
+    Console.WriteLine("MaterializedView<RegionalRevenue>().From<Order>().Join<Customer>().Join<Product>().DefinedAs(...)");
+    Console.WriteLine("Order is the INSERT trigger — only writes into Order fire the MV. Customer/Product are looked up at trigger time.");
+    Console.WriteLine();
+
+    await using var context = new MultiSourceMvContext(connectionString);
+    await context.Database.EnsureDeletedAsync();
+    await context.Database.EnsureCreatedAsync();
+
+    await context.BulkInsertAsync(new[]
+    {
+        new SampleCustomer { Id = 1, Region = "EU", IsActive = true },
+        new SampleCustomer { Id = 2, Region = "US", IsActive = true },
+        new SampleCustomer { Id = 3, Region = "EU", IsActive = false },
+    });
+    await context.BulkInsertAsync(new[]
+    {
+        new SampleProduct { Id = 10, Category = "Books" },
+        new SampleProduct { Id = 20, Category = "Toys" },
+    });
+
+    await context.BulkInsertAsync(new[]
+    {
+        new SampleOrder { Id = 100, CustomerId = 1, ProductId = 10, Amount = 25 },
+        new SampleOrder { Id = 101, CustomerId = 1, ProductId = 20, Amount = 15 },
+        new SampleOrder { Id = 102, CustomerId = 2, ProductId = 10, Amount = 50 },
+        new SampleOrder { Id = 103, CustomerId = 3, ProductId = 20, Amount = 99 },
+    });
+
+    await context.Database.OptimizeTableAsync("RegionalRevenue", o => o.WithFinal());
+    await Task.Delay(500);
+
+    var rows = await context.RegionalRevenue
+        .OrderBy(r => r.Region).ThenBy(r => r.Category)
+        .ToListAsync();
+    Console.WriteLine("Regional Revenue (active customers only):");
+    foreach (var r in rows)
+        Console.WriteLine($"  Region={r.Region}, Category={r.Category}, Total={r.Total}, Count={r.Count}");
+
+    await context.Database.EnsureDeletedAsync();
+    Console.WriteLine();
+}
+
 // ===========================================================================
 // Entity classes and DbContext classes
 // ===========================================================================
@@ -327,7 +377,9 @@ public class LinqMvContext(string connectionString) : DbContext
             entity.UseSummingMergeTree(x => new { x.Date, x.ProductId });
 
             // MV aggregates orders into daily summaries per product, defined in LINQ.
-            entity.AsMaterializedView<LinqDailySummary, LinqOrder>(orders => orders
+
+        });
+        modelBuilder.MaterializedView<LinqDailySummary>().From<LinqOrder>().DefinedAs(orders => orders
                 .GroupBy(o => new { Date = o.OrderDate.Date, o.ProductId })
                 .Select(g => new LinqDailySummary
                 {
@@ -337,7 +389,6 @@ public class LinqMvContext(string connectionString) : DbContext
                     TotalRevenue = g.Sum(o => o.Revenue),
                     OrderCount = (ulong)g.Count(),
                 }));
-        });
     }
 }
 
@@ -385,8 +436,11 @@ public class RawMvContext(string connectionString) : DbContext
             entity.HasNoKey();
             entity.UseSummingMergeTree(x => new { x.Hour, x.Path });
 
-            // Typed MV with a hour-granular bucket + countIf.
-            entity.AsMaterializedView<HourlySummary, AccessLog>(logs => logs
+            // Typed MV with a hour-granular bucket + countIf, declared
+            // outside the Entity<> block via the new fluent builder.
+
+        });
+        modelBuilder.MaterializedView<HourlySummary>().From<AccessLog>().DefinedAs(logs => logs
                 .GroupBy(x => new { Hour = x.RequestedAt.ToStartOfHour(), x.Path })
                 .Select(g => new HourlySummary
                 {
@@ -396,7 +450,6 @@ public class RawMvContext(string connectionString) : DbContext
                     AvgResponseMs = g.Average(x => (double)x.ResponseTimeMs),
                     ErrorCount = (ulong)g.CountIf(x => x.StatusCode >= 500),
                 }));
-        });
     }
 }
 
@@ -441,7 +494,9 @@ public class NullEngineMvContext(string connectionString) : DbContext
             entity.HasNoKey();
             entity.UseSummingMergeTree(x => new { x.MetricName, x.MinuteSlot });
 
-            entity.AsMaterializedView<MetricsSummary, RawMetric>(raw => raw
+
+        });
+        modelBuilder.MaterializedView<MetricsSummary>().From<RawMetric>().DefinedAs(raw => raw
                 .GroupBy(x => new { x.MetricName, MinuteSlot = x.Timestamp.ToStartOfMinute() })
                 .Select(g => new MetricsSummary
                 {
@@ -450,7 +505,6 @@ public class NullEngineMvContext(string connectionString) : DbContext
                     ValueSum = g.Sum(x => x.Value),
                     ValueCount = g.CountUInt64(),
                 }));
-        });
     }
 }
 
@@ -496,15 +550,75 @@ public class PopulateMvContext(string connectionString) : DbContext
             entity.HasNoKey();
             entity.UseSummingMergeTree(x => new { x.Date });
 
-            entity.AsMaterializedView<PopulateSummary, PopulateOrder>(orders => orders
+
+        });
+        modelBuilder.MaterializedView<PopulateSummary>().From<PopulateOrder>().DefinedAs(orders => orders
                 .GroupBy(o => o.OrderDate.Date)
                 .Select(g => new PopulateSummary
                 {
                     Date = g.Key,
                     TotalAmount = g.Sum(o => o.Amount),
                     OrderCount = (ulong)g.Count(),
-                }),
-                populate: true);
+                })).Populate();
+    }
+}
+
+public class SampleOrder { public int Id { get; set; } public int CustomerId { get; set; } public int ProductId { get; set; } public long Amount { get; set; } }
+public class SampleCustomer { public int Id { get; set; } public string Region { get; set; } = ""; public bool IsActive { get; set; } }
+public class SampleProduct { public int Id { get; set; } public string Category { get; set; } = ""; }
+public class RegionalRevenue
+{
+    public string Category { get; set; } = "";
+    public string Region { get; set; } = "";
+    public long Total { get; set; }
+    // Theme 2 typed-return aggregate `g.CountUInt64()` will land alongside this branch
+    // — for now use the cast form to keep the worktree compiling.
+    public ulong Count { get; set; }
+}
+
+public class MultiSourceMvContext(string connectionString) : DbContext
+{
+    public DbSet<SampleOrder> Orders => Set<SampleOrder>();
+    public DbSet<SampleCustomer> Customers => Set<SampleCustomer>();
+    public DbSet<SampleProduct> Products => Set<SampleProduct>();
+    public DbSet<RegionalRevenue> RegionalRevenue => Set<RegionalRevenue>();
+
+    protected override void OnConfiguring(DbContextOptionsBuilder options)
+        => options.UseClickHouse(connectionString);
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<SampleOrder>(e => { e.ToTable("SampleOrder"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id); });
+        modelBuilder.Entity<SampleCustomer>(e => { e.ToTable("SampleCustomer"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id); });
+        modelBuilder.Entity<SampleProduct>(e => { e.ToTable("SampleProduct"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id); });
+
+        modelBuilder.Entity<RegionalRevenue>(e =>
+        {
+            e.ToTable("RegionalRevenue");
+            e.UseSummingMergeTree(x => new { x.Category, x.Region });
         });
+
+        modelBuilder.MaterializedView<RegionalRevenue>()
+            .From<SampleOrder>()
+            .Join<SampleCustomer>()
+            .Join<SampleProduct>()
+            .DefinedAs((orders, customers, products) => orders
+                .Join(customers,
+                    o => o.CustomerId,
+                    c => c.Id,
+                    (o, c) => new { o.Amount, o.ProductId, c.Region, c.IsActive })
+                .Join(products,
+                    oc => oc.ProductId,
+                    p => p.Id,
+                    (oc, p) => new { oc.Region, p.Category, oc.Amount, oc.IsActive })
+                .Where(x => x.IsActive)
+                .GroupBy(x => new { x.Category, x.Region })
+                .Select(g => new RegionalRevenue
+                {
+                    Category = g.Key.Category,
+                    Region = g.Key.Region,
+                    Total = g.Sum(x => x.Amount),
+                    Count = (ulong)g.Count(),     // Theme 2: g.CountUInt64()
+                }));
     }
 }

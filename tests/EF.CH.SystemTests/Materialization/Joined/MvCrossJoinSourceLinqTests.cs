@@ -59,9 +59,10 @@ public class MvCrossJoinSourceLinqTests
             {
                 e.ToTable("CrossJoinTarget"); e.HasNoKey();
                 e.UseMergeTree(x => x.OrderId);
-                e.AsMaterializedView<OrderTag, Order>(orders => orders
-                    .CrossJoin(_tags, (o, t) => new OrderTag { OrderId = o.Id, TagName = t.Name }));
+
             });
+            mb.MaterializedView<OrderTag>().From<Order>().DefinedAs(orders => orders
+                    .CrossJoin(_tags, (o, t) => new OrderTag { OrderId = o.Id, TagName = t.Name }));
         }
     }
 }

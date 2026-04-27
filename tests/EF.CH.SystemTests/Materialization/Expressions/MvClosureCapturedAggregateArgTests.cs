@@ -105,14 +105,15 @@ public class MvClosureCapturedAggregateArgTests
             mb.Entity<Tgt>(e =>
             {
                 e.ToTable("MvClosureLevelTarget"); e.HasNoKey(); e.UseSummingMergeTree(x => x.Bucket);
-                e.AsMaterializedView<Tgt, Row>(rows => rows
+
+            });
+            mb.MaterializedView<Tgt>().From<Row>().DefinedAs(rows => rows
                     .GroupBy(_ => 1L)
                     .Select(g => new Tgt
                     {
                         Bucket = g.Key,
                         Q = g.Quantile(capturedLevel, r => r.Latency),
                     }));
-            });
         }
     }
 
@@ -130,14 +131,15 @@ public class MvClosureCapturedAggregateArgTests
             mb.Entity<TopTgt>(e =>
             {
                 e.ToTable("MvClosureKTarget"); e.HasNoKey(); e.UseSummingMergeTree(x => x.Bucket);
-                e.AsMaterializedView<TopTgt, Row>(rows => rows
+
+            });
+            mb.MaterializedView<TopTgt>().From<Row>().DefinedAs(rows => rows
                     .GroupBy(_ => 1L)
                     .Select(g => new TopTgt
                     {
                         Bucket = g.Key,
                         Top = g.TopK(capturedK, r => r.Latency),
                     }));
-            });
         }
     }
 
@@ -157,14 +159,15 @@ public class MvClosureCapturedAggregateArgTests
             mb.Entity<Tgt>(e =>
             {
                 e.ToTable("MvClosureAccTarget"); e.HasNoKey(); e.UseSummingMergeTree(x => x.Bucket);
-                e.AsMaterializedView<Tgt, Row>(rows => rows
+
+            });
+            mb.MaterializedView<Tgt>().From<Row>().DefinedAs(rows => rows
                     .GroupBy(_ => 1L)
                     .Select(g => new Tgt
                     {
                         Bucket = g.Key,
                         Q = g.QuantileDD(capturedAccuracy, capturedLevel, r => r.Latency),
                     }));
-            });
         }
     }
 
@@ -182,14 +185,15 @@ public class MvClosureCapturedAggregateArgTests
             mb.Entity<QsTgt>(e =>
             {
                 e.ToTable("MvClosureLevelsTarget"); e.HasNoKey(); e.UseSummingMergeTree(x => x.Bucket);
-                e.AsMaterializedView<QsTgt, Row>(rows => rows
+
+            });
+            mb.MaterializedView<QsTgt>().From<Row>().DefinedAs(rows => rows
                     .GroupBy(_ => 1L)
                     .Select(g => new QsTgt
                     {
                         Bucket = g.Key,
                         Quantiles = g.Quantiles(capturedLevels, r => r.Latency),
                     }));
-            });
         }
     }
 }

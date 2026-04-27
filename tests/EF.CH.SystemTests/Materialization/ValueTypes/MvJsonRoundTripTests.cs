@@ -52,9 +52,10 @@ public class MvJsonRoundTripTests
                 e.ToTable("MvJsonTarget"); e.HasNoKey();
                 e.UseMergeTree(x => x.N);
                 e.Property(x => x.Data).HasColumnType("JSON");
-                e.AsMaterializedView<Tgt, Src>(rows => rows
-                    .Select(r => new Tgt { Data = r.Data, N = r.N }));
+
             });
+            mb.MaterializedView<Tgt>().From<Src>().DefinedAs(rows => rows
+                    .Select(r => new Tgt { Data = r.Data, N = r.N }));
         }
     }
 }

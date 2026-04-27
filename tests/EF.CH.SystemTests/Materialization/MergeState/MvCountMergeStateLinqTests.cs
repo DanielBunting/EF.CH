@@ -65,10 +65,11 @@ public class MvCountMergeStateLinqTests
                 e.ToTable("MsCountDaily"); e.HasNoKey();
                 e.UseAggregatingMergeTree(x => x.Bucket);
                 e.Property(x => x.Total).HasAggregateFunction("count", typeof(ulong));
-                e.AsMaterializedView<DailyRow, HourlyRow>(rows => rows
+
+            });
+            mb.MaterializedView<DailyRow>().From<HourlyRow>().DefinedAs(rows => rows
                     .GroupBy(r => r.Bucket)
                     .Select(g => new DailyRow { Bucket = g.Key, Total = g.CountMergeState(r => r.Total) }));
-            });
         }
     }
 

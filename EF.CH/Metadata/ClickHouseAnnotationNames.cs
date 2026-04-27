@@ -74,6 +74,21 @@ public static class ClickHouseAnnotationNames
     public const string MaterializedViewSource = Prefix + "MaterializedViewSource";
 
     /// <summary>
+    /// Optional. Names of joined source tables (T2..Tn) for multi-source
+    /// materialized views. Used by the migrations dependency resolver to order
+    /// joined tables before the MV CREATE statement. Absence means a
+    /// single-source MV (the trigger source from MaterializedViewSource).
+    /// Value type: string[]
+    /// </summary>
+    public const string MaterializedViewJoinedSources = Prefix + "MaterializedViewJoinedSources";
+
+    /// <summary>
+    /// Optional ON CLUSTER clause for materialized views.
+    /// Value type: string
+    /// </summary>
+    public const string MaterializedViewOnCluster = Prefix + "MaterializedViewOnCluster";
+
+    /// <summary>
     /// The SELECT query for the materialized view.
     /// </summary>
     public const string MaterializedViewQuery = Prefix + "MaterializedViewQuery";

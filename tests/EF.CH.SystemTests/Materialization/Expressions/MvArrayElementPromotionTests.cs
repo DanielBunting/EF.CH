@@ -55,14 +55,15 @@ public class MvArrayElementPromotionTests
             mb.Entity<Tgt>(e =>
             {
                 e.ToTable("MvArrayPromoTarget"); e.HasNoKey(); e.UseSummingMergeTree(x => x.Bucket);
-                e.AsMaterializedView<Tgt, Row>(rows => rows
+
+            });
+            mb.MaterializedView<Tgt>().From<Row>().DefinedAs(rows => rows
                     .GroupBy(_ => 1L)
                     .Select(g => new Tgt
                     {
                         Bucket = g.Key,
                         Quantiles = g.QuantilesTDigest(new[] { 0.5, 0.9, 0.99 }, r => r.Latency),
                     }));
-            });
         }
     }
 }

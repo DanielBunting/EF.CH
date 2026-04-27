@@ -39,7 +39,7 @@ UserSession (ReplacingMergeTree)
 | SummingMergeTree | `entity.UseSummingMergeTree(x => new { x.Date, x.Page })` |
 | AggregatingMergeTree | `entity.UseAggregatingMergeTree(x => new { x.Date, x.EventType })` |
 | ReplacingMergeTree | `entity.UseReplacingMergeTree(x => new { x.UserId }).WithVersion(x => x.Version)` |
-| Materialized view (raw) | `entity.AsMaterializedViewRaw(sourceTable, selectSql, populate)` |
+| Materialized view (raw) | `modelBuilder.MaterializedView<T>().FromTable(sourceTable).DefinedAsRaw(selectSql).Populate()` |
 | Projection | `entity.HasProjection("name").OrderBy(x => x.Col)` |
 | AggregateFunction column | `property.HasAggregateFunction("sum", typeof(decimal))` |
 | SimpleAggregateFunction | `property.HasSimpleAggregateFunction("sum")` |

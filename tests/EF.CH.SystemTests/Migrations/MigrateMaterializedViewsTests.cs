@@ -23,7 +23,7 @@ public class MigrateMaterializedViewsTests
     private string Conn => _fx.ConnectionString;
 
     [Fact]
-    public async Task RegularMv_CreatedAsMaterializedView_AndPropagatesInserts()
+    public async Task RegularMv_Created_AndPropagatesInserts()
     {
         await Reset(new[] { "MV_events_per_day", "MV_events", "__EFMigrationsHistory" });
 

@@ -67,9 +67,9 @@ public class MvTargetVersionedCollapsingMergeTreeTests
                 {
                     e.ToTable("MtToVerCollapsingTarget"); e.HasNoKey();
                     e.UseVersionedCollapsingMergeTree(x => x.AccountId).WithSign(x => x.Sign).WithVersion(x => x.Version);
-                    e.AsMaterializedView<Target, Row>(rows => rows
-                        .Select(r => new Target { AccountId = r.AccountId, Sign = r.Sign, Version = r.Version, Score = r.Score }));
                 });
+                mb.MaterializedView<Target>().From<Row>().DefinedAs(rows => rows
+                        .Select(r => new Target { AccountId = r.AccountId, Sign = r.Sign, Version = r.Version, Score = r.Score }));
             }
         }
         public class Row { public long Id { get; set; } public long AccountId { get; set; } public sbyte Sign { get; set; } public uint Version { get; set; } public int Score { get; set; } }
@@ -89,9 +89,9 @@ public class MvTargetVersionedCollapsingMergeTreeTests
                 {
                     e.ToTable("NullToVerCollapsingTarget"); e.HasNoKey();
                     e.UseVersionedCollapsingMergeTree(x => x.AccountId).WithSign(x => x.Sign).WithVersion(x => x.Version);
-                    e.AsMaterializedView<Target, Row>(rows => rows
-                        .Select(r => new Target { AccountId = r.AccountId, Sign = r.Sign, Version = r.Version, Score = r.Score }));
                 });
+                mb.MaterializedView<Target>().From<Row>().DefinedAs(rows => rows
+                        .Select(r => new Target { AccountId = r.AccountId, Sign = r.Sign, Version = r.Version, Score = r.Score }));
             }
         }
         public class Row { public long AccountId { get; set; } public sbyte Sign { get; set; } public uint Version { get; set; } public int Score { get; set; } }

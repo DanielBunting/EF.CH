@@ -265,12 +265,14 @@ public static class ClickHouseDatabaseExtensions
     #region Deferred materialised views
 
     /// <summary>
-    /// Creates a materialised view that was declared with
-    /// <see cref="ClickHouseEntityTypeBuilderExtensions.AsMaterializedViewDeferred{TEntity}"/>
-    /// or <see cref="ClickHouseEntityTypeBuilderExtensions.AsRefreshableMaterializedView{TEntity, TSource}"/>.
+    /// Creates a materialised view that was declared via
+    /// <c>modelBuilder.MaterializedView&lt;TEntity&gt;().…Deferred()</c> (or, for
+    /// refreshable MVs, <c>.RefreshEvery(...)</c> / <c>.RefreshAfter(...)</c>).
     /// The dispatch is automatic: if the entity carries a <c>MaterializedViewRefreshKind</c>
     /// annotation, the refreshable form is emitted; otherwise the standard form.
-    /// </summary>
+    /// The view's target table (when one is configured) must already exist —
+    /// normally via <c>EnsureCreatedAsync</c>.
+
     /// <typeparam name="TEntity">The materialised view entity type.</typeparam>
     /// <param name="database">The database facade.</param>
     /// <param name="configure">Optional action to configure the create call

@@ -45,9 +45,10 @@ public class MvTimeSpanRoundTripTests
             {
                 e.ToTable("MvTimeSpanTarget"); e.HasNoKey();
                 e.UseMergeTree(x => x.N);
-                e.AsMaterializedView<Tgt, Src>(rows => rows
-                    .Select(r => new Tgt { Duration = r.Duration, N = r.N }));
+
             });
+            mb.MaterializedView<Tgt>().From<Src>().DefinedAs(rows => rows
+                    .Select(r => new Tgt { Duration = r.Duration, N = r.N }));
         }
     }
 }

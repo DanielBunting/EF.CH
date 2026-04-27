@@ -49,13 +49,14 @@ public class MvDateTimeConstructorLiteralTests
             {
                 e.ToTable("MvDateTimeCtorTarget"); e.HasNoKey(); e.UseMergeTree(x => x.Id);
                 e.Property(x => x.V).HasColumnType("DateTime64(3, 'UTC')");
-                e.AsMaterializedView<Tgt, Row>(rows => rows
+
+            });
+            mb.MaterializedView<Tgt>().From<Row>().DefinedAs(rows => rows
                     .Select(r => new Tgt
                     {
                         Id = r.Id,
                         V = new DateTime(2026, 1, 15, 10, 0, 0, DateTimeKind.Utc),
                     }));
-            });
         }
     }
 }

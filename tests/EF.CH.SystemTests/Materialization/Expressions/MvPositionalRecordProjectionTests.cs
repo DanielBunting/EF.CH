@@ -56,10 +56,11 @@ public class MvPositionalRecordProjectionTests
             mb.Entity<Tgt>(e =>
             {
                 e.ToTable("MvRecordProjTarget"); e.HasNoKey(); e.UseSummingMergeTree(x => x.A);
-                e.AsMaterializedView<Tgt, Row>(rows => rows
+
+            });
+            mb.MaterializedView<Tgt>().From<Row>().DefinedAs(rows => rows
                     .GroupBy(r => r.A)
                     .Select(g => new Tgt(g.Key, g.Sum(r => r.N))));
-            });
         }
     }
 }

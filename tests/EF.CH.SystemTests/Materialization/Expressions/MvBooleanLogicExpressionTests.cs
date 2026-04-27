@@ -62,10 +62,11 @@ public class MvBooleanLogicExpressionTests
             mb.Entity<Target>(e =>
             {
                 e.ToTable("MvBoolAndTarget"); e.HasNoKey(); e.UseMergeTree(x => x.Id);
-                e.AsMaterializedView<Target, Row>(rows => rows
+
+            });
+            mb.MaterializedView<Target>().From<Row>().DefinedAs(rows => rows
                     .Where(r => r.A > 1 && r.B < 50)
                     .Select(r => new Target { Id = r.Id, A = r.A, B = r.B }));
-            });
         }
     }
     public sealed class OrCtx(DbContextOptions<OrCtx> o) : DbContext(o)
@@ -77,10 +78,11 @@ public class MvBooleanLogicExpressionTests
             mb.Entity<Target>(e =>
             {
                 e.ToTable("MvBoolOrTarget"); e.HasNoKey(); e.UseMergeTree(x => x.Id);
-                e.AsMaterializedView<Target, Row>(rows => rows
+
+            });
+            mb.MaterializedView<Target>().From<Row>().DefinedAs(rows => rows
                     .Where(r => r.A == 1 || r.B == 50)
                     .Select(r => new Target { Id = r.Id, A = r.A, B = r.B }));
-            });
         }
     }
     public sealed class MixedCtx(DbContextOptions<MixedCtx> o) : DbContext(o)
@@ -92,10 +94,11 @@ public class MvBooleanLogicExpressionTests
             mb.Entity<Target>(e =>
             {
                 e.ToTable("MvBoolMixedTarget"); e.HasNoKey(); e.UseMergeTree(x => x.Id);
-                e.AsMaterializedView<Target, Row>(rows => rows
+
+            });
+            mb.MaterializedView<Target>().From<Row>().DefinedAs(rows => rows
                     .Where(r => r.A < 3 || (r.A > 4 && r.B == 50))
                     .Select(r => new Target { Id = r.Id, A = r.A, B = r.B }));
-            });
         }
     }
 }

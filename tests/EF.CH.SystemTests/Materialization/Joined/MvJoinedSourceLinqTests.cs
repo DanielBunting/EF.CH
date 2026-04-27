@@ -117,14 +117,15 @@ public class MvJoinedSourceLinqTests
             {
                 e.ToTable("LinqInnerJoinTarget"); e.HasNoKey();
                 e.UseSummingMergeTree(x => x.Region);
-                e.AsMaterializedView<RevenueByRegion, Order>(orders => orders
+
+            });
+            mb.MaterializedView<RevenueByRegion>().From<Order>().DefinedAs(orders => orders
                     .Join(_customers,
                         o => o.CustomerId,
                         c => c.Id,
                         (o, c) => new { o.Amount, c.Region })
                     .GroupBy(x => x.Region)
                     .Select(g => new RevenueByRegion { Region = g.Key, Total = g.Sum(x => x.Amount) }));
-            });
         }
     }
 
@@ -141,7 +142,9 @@ public class MvJoinedSourceLinqTests
             {
                 e.ToTable("LinqGroupJoinTarget"); e.HasNoKey();
                 e.UseMergeTree(x => x.OrderId);
-                e.AsMaterializedView<OrderRegion, Order>(orders => orders
+
+            });
+            mb.MaterializedView<OrderRegion>().From<Order>().DefinedAs(orders => orders
                     .GroupJoin(_customers,
                         o => o.CustomerId,
                         c => c.Id,
@@ -151,7 +154,6 @@ public class MvJoinedSourceLinqTests
                             Region = cs.Select(c => c.Region).FirstOrDefault() ?? "",
                             Amount = o.Amount,
                         }));
-            });
         }
     }
 }

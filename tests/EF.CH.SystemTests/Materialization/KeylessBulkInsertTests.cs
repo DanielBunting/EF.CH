@@ -67,14 +67,15 @@ public class KeylessBulkInsertTests
                 e.ToTable("KeylessAggTarget"); e.HasNoKey();
                 e.UseAggregatingMergeTree(x => x.Key);
                 e.Property(x => x.AmountTotal).HasAggregateFunction("sum", typeof(double));
-                e.AsMaterializedView<Target, Row>(src => src
+
+            });
+            mb.MaterializedView<Target>().From<Row>().DefinedAs(src => src
                     .GroupBy(r => r.Key)
                     .Select(g => new Target
                     {
                         Key = g.Key,
                         AmountTotal = g.SumState(r => r.Amount),
                     }));
-            });
         }
     }
 }

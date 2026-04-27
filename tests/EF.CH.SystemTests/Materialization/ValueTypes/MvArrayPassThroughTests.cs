@@ -52,9 +52,10 @@ public class MvArrayPassThroughTests
                 e.ToTable("MvArrayTarget"); e.HasNoKey();
                 e.UseMergeTree(x => x.N);
                 e.Property(x => x.Tags).HasColumnType("Array(String)");
-                e.AsMaterializedView<Tgt, Src>(rows => rows
-                    .Select(r => new Tgt { Tags = r.Tags, N = r.N }));
+
             });
+            mb.MaterializedView<Tgt>().From<Src>().DefinedAs(rows => rows
+                    .Select(r => new Tgt { Tags = r.Tags, N = r.N }));
         }
     }
 }

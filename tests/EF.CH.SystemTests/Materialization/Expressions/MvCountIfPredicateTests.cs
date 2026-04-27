@@ -56,7 +56,9 @@ public class MvCountIfPredicateTests
             mb.Entity<Tgt>(e =>
             {
                 e.ToTable("MvCountIfTarget"); e.HasNoKey(); e.UseSummingMergeTree(x => x.Bucket);
-                e.AsMaterializedView<Tgt, Row>(rows => rows
+
+            });
+            mb.MaterializedView<Tgt>().From<Row>().DefinedAs(rows => rows
                     .GroupBy(r => r.Bucket)
                     .Select(g => new Tgt
                     {
@@ -64,7 +66,6 @@ public class MvCountIfPredicateTests
                         Total = g.Count(),
                         Failures = g.Count(r => r.Status == "fail"),
                     }));
-            });
         }
     }
 }

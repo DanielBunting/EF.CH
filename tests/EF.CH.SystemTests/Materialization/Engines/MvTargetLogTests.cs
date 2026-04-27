@@ -51,9 +51,10 @@ public class MvTargetLogTests
                 {
                     e.ToTable("MtToLogTarget"); e.HasNoKey();
                     e.UseLogEngine();
-                    e.AsMaterializedView<Target, Row>(rows => rows
-                        .Select(r => new Target { Code = r.Code, N = r.N }));
+
                 });
+                mb.MaterializedView<Target>().From<Row>().DefinedAs(rows => rows
+                        .Select(r => new Target { Code = r.Code, N = r.N }));
             }
         }
         public class Row { public long Id { get; set; } public string Code { get; set; } = ""; public long N { get; set; } }

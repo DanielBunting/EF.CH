@@ -76,9 +76,10 @@ public class MvArrayJoinSourceLinqTests
             {
                 e.ToTable("ArrayJoinTarget"); e.HasNoKey();
                 e.UseMergeTree(x => x.EventId);
-                e.AsMaterializedView<FlatTag, EvtRow>(events => events
-                    .ArrayJoin(x => x.Tags, (x, tag) => new FlatTag { EventId = x.Id, Tag = tag }));
+
             });
+            mb.MaterializedView<FlatTag>().From<EvtRow>().DefinedAs(events => events
+                    .ArrayJoin(x => x.Tags, (x, tag) => new FlatTag { EventId = x.Id, Tag = tag }));
         }
     }
 
@@ -93,9 +94,10 @@ public class MvArrayJoinSourceLinqTests
             {
                 e.ToTable("LeftArrayJoinTarget"); e.HasNoKey();
                 e.UseMergeTree(x => x.EventId);
-                e.AsMaterializedView<FlatTag, EvtRow>(events => events
-                    .LeftArrayJoin(x => x.Tags, (x, tag) => new FlatTag { EventId = x.Id, Tag = tag }));
+
             });
+            mb.MaterializedView<FlatTag>().From<EvtRow>().DefinedAs(events => events
+                    .LeftArrayJoin(x => x.Tags, (x, tag) => new FlatTag { EventId = x.Id, Tag = tag }));
         }
     }
 }

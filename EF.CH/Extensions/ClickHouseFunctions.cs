@@ -8,17 +8,17 @@ namespace EF.CH.Extensions;
 /// <para>
 /// These are stub methods - they throw at runtime if accidentally invoked directly.
 /// They are intended for use in:
-/// - Materialized view definitions with <c>AsMaterializedView()</c>
+/// - Materialized view definitions via <c>modelBuilder.MaterializedView&lt;T&gt;().From&lt;S&gt;().DefinedAs(...)</c>
 /// - LINQ queries that will be translated to ClickHouse SQL
 /// </para>
 /// <para>
 /// Example usage in a materialized view:
 /// <code>
-/// entity.AsMaterializedView&lt;HourlySummary, RawEvent&gt;(
-///     source: events => events,
-///     query: events => events
-///         .GroupBy(e => e.EventTime.ToStartOfHour())
-///         .Select(g => new HourlySummary
+/// modelBuilder.MaterializedView&lt;HourlySummary&gt;()
+///     .From&lt;RawEvent&gt;()
+///     .DefinedAs(events =&gt; events
+///         .GroupBy(e =&gt; e.EventTime.ToStartOfHour())
+///         .Select(g =&gt; new HourlySummary
 ///         {
 ///             Hour = g.Key,
 ///             EventCount = g.Count()

@@ -195,7 +195,7 @@ public class MaterializedViewTests : IAsyncLifetime
     #region Fluent API Tests
 
     [Fact]
-    public void AsMaterializedViewRaw_SetsCorrectAnnotations()
+    public void MaterializedViewRaw_SetsCorrectAnnotations()
     {
         using var context = CreateContext<RawSqlMaterializedViewContext>();
         var entityType = context.Model.FindEntityType(typeof(MvDailySummary));
@@ -208,7 +208,7 @@ public class MaterializedViewTests : IAsyncLifetime
     }
 
     [Fact]
-    public void AsMaterializedView_Linq_SetsCorrectAnnotations()
+    public void MaterializedView_Linq_SetsCorrectAnnotations()
     {
         using var context = CreateContext<LinqMaterializedViewContext>();
         var entityType = context.Model.FindEntityType(typeof(MvHourlySummary));
@@ -228,7 +228,7 @@ public class MaterializedViewTests : IAsyncLifetime
     }
 
     [Fact]
-    public void AsMaterializedView_SimpleProjection_SetsCorrectAnnotations()
+    public void MaterializedView_SimpleProjection_SetsCorrectAnnotations()
     {
         using var context = CreateContext<SimpleProjectionMaterializedViewContext>();
         var entityType = context.Model.FindEntityType(typeof(MvProcessedEvent));
@@ -251,7 +251,7 @@ public class MaterializedViewTests : IAsyncLifetime
     }
 
     [Fact]
-    public void AsMaterializedView_AllAggregates_TranslatesWithColumnReferences()
+    public void MaterializedView_AllAggregates_TranslatesWithColumnReferences()
     {
         using var context = CreateContext<AllAggregatesContext>();
         var entityType = context.Model.FindEntityType(typeof(MvAllAggregatesSummary));
@@ -273,7 +273,7 @@ public class MaterializedViewTests : IAsyncLifetime
     }
 
     [Fact]
-    public void AsMaterializedView_SingleKey_TranslatesDirectKeyAccess()
+    public void MaterializedView_SingleKey_TranslatesDirectKeyAccess()
     {
         using var context = CreateContext<SingleKeyGroupByContext>();
         var entityType = context.Model.FindEntityType(typeof(MvDailyStats));
@@ -294,7 +294,7 @@ public class MaterializedViewTests : IAsyncLifetime
     }
 
     [Fact]
-    public void AsMaterializedView_CountIf_TranslatesConditionalCount()
+    public void MaterializedView_CountIf_TranslatesConditionalCount()
     {
         using var context = CreateContext<CountIfContext>();
         var entityType = context.Model.FindEntityType(typeof(MvCountIfSummary));
@@ -313,7 +313,7 @@ public class MaterializedViewTests : IAsyncLifetime
     }
 
     [Fact]
-    public void AsMaterializedView_ClickHouseAggregates_TranslatesCorrectly()
+    public void MaterializedView_ClickHouseAggregates_TranslatesCorrectly()
     {
         using var context = CreateContext<ClickHouseAggregatesContext>();
         var entityType = context.Model.FindEntityType(typeof(MvClickHouseAggregatesSummary));
@@ -333,7 +333,7 @@ public class MaterializedViewTests : IAsyncLifetime
     }
 
     [Fact]
-    public void AsMaterializedView_ToStartOfHour_TranslatesDateTimeFunction()
+    public void MaterializedView_ToStartOfHour_TranslatesDateTimeFunction()
     {
         using var context = CreateContext<DateTimeFunctionsContext>();
         var entityType = context.Model.FindEntityType(typeof(MvHourlyByStartOfHour));
@@ -350,7 +350,7 @@ public class MaterializedViewTests : IAsyncLifetime
     }
 
     [Fact]
-    public void AsMaterializedView_AnyJoin_EmitsAnyInnerJoin()
+    public void MaterializedView_AnyJoin_EmitsAnyInnerJoin()
     {
         using var context = CreateContext<AnyInnerJoinContext>();
         var entityType = context.Model.FindEntityType(typeof(JoinedRevenue));
@@ -361,7 +361,7 @@ public class MaterializedViewTests : IAsyncLifetime
     }
 
     [Fact]
-    public void AsMaterializedView_AnyLeftJoin_EmitsAnyLeftJoin()
+    public void MaterializedView_AnyLeftJoin_EmitsAnyLeftJoin()
     {
         using var context = CreateContext<AnyLeftJoinContext>();
         var entityType = context.Model.FindEntityType(typeof(JoinedRevenue));
@@ -372,7 +372,7 @@ public class MaterializedViewTests : IAsyncLifetime
     }
 
     [Fact]
-    public void AsMaterializedView_AnyRightJoin_EmitsAnyRightJoin()
+    public void MaterializedView_AnyRightJoin_EmitsAnyRightJoin()
     {
         using var context = CreateContext<AnyRightJoinContext>();
         var entityType = context.Model.FindEntityType(typeof(JoinedRevenue));
@@ -383,7 +383,7 @@ public class MaterializedViewTests : IAsyncLifetime
     }
 
     [Fact]
-    public void AsMaterializedView_RightJoin_EmitsRightJoin()
+    public void MaterializedView_RightJoin_EmitsRightJoin()
     {
         using var context = CreateContext<RightJoinContext>();
         var entityType = context.Model.FindEntityType(typeof(JoinedRevenue));
@@ -394,7 +394,7 @@ public class MaterializedViewTests : IAsyncLifetime
     }
 
     [Fact]
-    public void AsMaterializedView_FullOuterJoin_EmitsFullOuterJoin()
+    public void MaterializedView_FullOuterJoin_EmitsFullOuterJoin()
     {
         using var context = CreateContext<FullOuterJoinContext>();
         var entityType = context.Model.FindEntityType(typeof(JoinedRevenue));
@@ -405,7 +405,7 @@ public class MaterializedViewTests : IAsyncLifetime
     }
 
     [Fact]
-    public void AsMaterializedView_LeftSemiJoin_EmitsLeftSemiJoin()
+    public void MaterializedView_LeftSemiJoin_EmitsLeftSemiJoin()
     {
         using var context = CreateContext<LeftSemiJoinContext>();
         var entityType = context.Model.FindEntityType(typeof(SingleSideOrder));
@@ -419,7 +419,7 @@ public class MaterializedViewTests : IAsyncLifetime
     }
 
     [Fact]
-    public void AsMaterializedView_LeftAntiJoin_EmitsLeftAntiJoin()
+    public void MaterializedView_LeftAntiJoin_EmitsLeftAntiJoin()
     {
         using var context = CreateContext<LeftAntiJoinContext>();
         var entityType = context.Model.FindEntityType(typeof(SingleSideOrder));
@@ -430,7 +430,7 @@ public class MaterializedViewTests : IAsyncLifetime
     }
 
     [Fact]
-    public void AsMaterializedView_RightSemiJoin_EmitsRightSemiJoin()
+    public void MaterializedView_RightSemiJoin_EmitsRightSemiJoin()
     {
         using var context = CreateContext<RightSemiJoinContext>();
         var entityType = context.Model.FindEntityType(typeof(SingleSideCustomer));
@@ -443,7 +443,7 @@ public class MaterializedViewTests : IAsyncLifetime
     }
 
     [Fact]
-    public void AsMaterializedView_RightAntiJoin_EmitsRightAntiJoin()
+    public void MaterializedView_RightAntiJoin_EmitsRightAntiJoin()
     {
         using var context = CreateContext<RightAntiJoinContext>();
         var entityType = context.Model.FindEntityType(typeof(SingleSideCustomer));
@@ -454,7 +454,7 @@ public class MaterializedViewTests : IAsyncLifetime
     }
 
     [Fact]
-    public void AsMaterializedView_ArrayJoin_EmitsArrayJoinClause()
+    public void MaterializedView_ArrayJoin_EmitsArrayJoinClause()
     {
         using var context = CreateContext<ArrayJoinContext>();
         var entityType = context.Model.FindEntityType(typeof(ArrayJoinedRow));
@@ -468,7 +468,7 @@ public class MaterializedViewTests : IAsyncLifetime
     }
 
     [Fact]
-    public void AsMaterializedView_LeftArrayJoin_EmitsLeftArrayJoinClause()
+    public void MaterializedView_LeftArrayJoin_EmitsLeftArrayJoinClause()
     {
         using var context = CreateContext<LeftArrayJoinContext>();
         var entityType = context.Model.FindEntityType(typeof(ArrayJoinedRow));
@@ -479,7 +479,7 @@ public class MaterializedViewTests : IAsyncLifetime
     }
 
     [Fact]
-    public void AsMaterializedView_CrossJoin_EmitsCrossJoinNoOnClause()
+    public void MaterializedView_CrossJoin_EmitsCrossJoinNoOnClause()
     {
         using var context = CreateContext<CrossJoinContext>();
         var entityType = context.Model.FindEntityType(typeof(CrossJoinedRow));
@@ -492,7 +492,7 @@ public class MaterializedViewTests : IAsyncLifetime
     }
 
     [Fact]
-    public void AsMaterializedView_LinqAsofJoin_EmitsAsofInnerJoinWithInequality()
+    public void MaterializedView_LinqAsofJoin_EmitsAsofInnerJoinWithInequality()
     {
         using var context = CreateContext<LinqAsofInnerJoinContext>();
         var entityType = context.Model.FindEntityType(typeof(AsofTradeWithQuote));
@@ -509,7 +509,7 @@ public class MaterializedViewTests : IAsyncLifetime
     }
 
     [Fact]
-    public void AsMaterializedView_LinqAsofLeftJoin_EmitsAsofLeftJoinWithInequality()
+    public void MaterializedView_LinqAsofLeftJoin_EmitsAsofLeftJoinWithInequality()
     {
         using var context = CreateContext<LinqAsofLeftJoinContext>();
         var entityType = context.Model.FindEntityType(typeof(AsofTradeWithQuote));
@@ -523,7 +523,7 @@ public class MaterializedViewTests : IAsyncLifetime
     }
 
     [Fact]
-    public void AsMaterializedView_LinqJoin_EmitsInnerJoinAndAliasedColumns()
+    public void MaterializedView_LinqJoin_EmitsInnerJoinAndAliasedColumns()
     {
         using var context = CreateContext<LinqInnerJoinContext>();
         var entityType = context.Model.FindEntityType(typeof(JoinedRevenue));
@@ -544,7 +544,7 @@ public class MaterializedViewTests : IAsyncLifetime
     }
 
     [Fact]
-    public void AsMaterializedView_LinqJoin_OnDictionaryEntity_EmitsDictionaryTableFunction()
+    public void MaterializedView_LinqJoin_OnDictionaryEntity_EmitsDictionaryTableFunction()
     {
         using var context = CreateContext<LinqJoinDictionaryContext>();
         var entityType = context.Model.FindEntityType(typeof(JoinedRevenue));
@@ -559,7 +559,7 @@ public class MaterializedViewTests : IAsyncLifetime
     }
 
     [Fact]
-    public void AsMaterializedView_LinqGroupJoin_EmitsLeftJoinAndCoalesceFirstOrDefault()
+    public void MaterializedView_LinqGroupJoin_EmitsLeftJoinAndCoalesceFirstOrDefault()
     {
         using var context = CreateContext<LinqGroupJoinContext>();
         var entityType = context.Model.FindEntityType(typeof(GroupJoinedOrderRegion));
@@ -578,7 +578,7 @@ public class MaterializedViewTests : IAsyncLifetime
     }
 
     [Fact]
-    public void AsMaterializedView_MergeStateAggregates_TranslatesAllTenCombinators()
+    public void MaterializedView_MergeStateAggregates_TranslatesAllTenCombinators()
     {
         using var context = CreateContext<MergeStateAggregatesContext>();
         var entityType = context.Model.FindEntityType(typeof(MvMergeStateRollup));
@@ -1148,9 +1148,9 @@ public class RawSqlMaterializedViewContext : DbContext
         {
             entity.ToTable("DailySummary_MV");
             entity.UseSummingMergeTree(x => new { x.Date, x.ProductId });
-            entity.AsMaterializedViewRaw(
-                sourceTable: "Orders",
-                selectSql: @"
+
+        });
+        modelBuilder.MaterializedView<MvDailySummary>().FromTable("Orders").DefinedAsRaw(@"
                     SELECT
                         toDate(OrderDate) AS Date,
                         ProductId,
@@ -1158,10 +1158,7 @@ public class RawSqlMaterializedViewContext : DbContext
                         sum(Revenue) AS TotalRevenue
                     FROM Orders
                     GROUP BY Date, ProductId
-                ",
-                populate: false
-            );
-        });
+                ");
     }
 }
 
@@ -1186,8 +1183,9 @@ public class LinqMaterializedViewContext : DbContext
         {
             entity.ToTable("HourlySummary_MV");
             entity.UseSummingMergeTree(x => new { x.Hour, x.ProductId });
-            entity.AsMaterializedView<MvHourlySummary, MvOrder>(
-                query: orders => orders
+
+        });
+        modelBuilder.MaterializedView<MvHourlySummary>().From<MvOrder>().DefinedAs(orders => orders
                     .GroupBy(o => new { Hour = o.OrderDate.Date, o.ProductId })
                     .Select(g => new MvHourlySummary
                     {
@@ -1195,10 +1193,7 @@ public class LinqMaterializedViewContext : DbContext
                         ProductId = g.Key.ProductId,
                         OrderCount = g.Count(),
                         TotalRevenue = g.Sum(o => o.Revenue)
-                    }),
-                populate: false
-            );
-        });
+                    }));
     }
 }
 
@@ -1230,17 +1225,16 @@ public class SimpleProjectionMaterializedViewContext : DbContext
             entity.ToTable("ProcessedEvents_MV");
             entity.UseReplacingMergeTree(x => new { x.EventNameId, x.EventTime }).WithVersion(x => x.Version);
 
-            entity.AsMaterializedView<MvProcessedEvent, MvRawEvent>(
-                query: raw => raw.Select(r => new MvProcessedEvent
+
+        });
+        modelBuilder.MaterializedView<MvProcessedEvent>().From<MvRawEvent>().DefinedAs(raw => raw.Select(r => new MvProcessedEvent
                 {
                     EventNameId = r.EventName.CityHash64(),
                     EventTime = r.EventTime,
                     Version = r.EventTime.ToUnixTimestamp64Milli(),
                     Value = r.Value,
                     IsActive = 1
-                }),
-                populate: false);
-        });
+                }));
     }
 }
 
@@ -1269,8 +1263,9 @@ public class AllAggregatesContext : DbContext
         {
             entity.ToTable("AllAggregates_MV");
             entity.UseSummingMergeTree(x => x.ProductId);
-            entity.AsMaterializedView<MvAllAggregatesSummary, MvOrder>(
-                query: orders => orders
+
+        });
+        modelBuilder.MaterializedView<MvAllAggregatesSummary>().From<MvOrder>().DefinedAs(orders => orders
                     .GroupBy(o => o.ProductId)
                     .Select(g => new MvAllAggregatesSummary
                     {
@@ -1280,9 +1275,7 @@ public class AllAggregatesContext : DbContext
                         MinRevenue = g.Min(o => o.Revenue),
                         MaxRevenue = g.Max(o => o.Revenue),
                         OrderCount = g.Count()
-                    }),
-                populate: false);
-        });
+                    }));
     }
 }
 
@@ -1324,17 +1317,16 @@ public class SingleKeyGroupByContext : DbContext
             entity.ToTable("DailyStats_MV");
             entity.UseSummingMergeTree(x => x.Date);
             // Single-value key: g.Key is directly the DateTime
-            entity.AsMaterializedView<MvDailyStats, MvOrder>(
-                query: orders => orders
+
+        });
+        modelBuilder.MaterializedView<MvDailyStats>().From<MvOrder>().DefinedAs(orders => orders
                     .GroupBy(o => o.OrderDate.Date)
                     .Select(g => new MvDailyStats
                     {
                         Date = g.Key,  // Direct g.Key access
                         TotalOrders = g.Count(),
                         TotalRevenue = g.Sum(o => o.Revenue)
-                    }),
-                populate: false);
-        });
+                    }));
     }
 }
 
@@ -1372,17 +1364,16 @@ public class CountIfContext : DbContext
         {
             entity.ToTable("CountIf_MV");
             entity.UseSummingMergeTree(x => x.ProductId);
-            entity.AsMaterializedView<MvCountIfSummary, MvOrder>(
-                query: orders => orders
+
+        });
+        modelBuilder.MaterializedView<MvCountIfSummary>().From<MvOrder>().DefinedAs(orders => orders
                     .GroupBy(o => o.ProductId)
                     .Select(g => new MvCountIfSummary
                     {
                         ProductId = g.Key,
                         TotalOrders = g.Count(),
                         HighValueOrders = g.Count(o => o.Revenue > 100)
-                    }),
-                populate: false);
-        });
+                    }));
     }
 }
 
@@ -1420,17 +1411,16 @@ public class ClickHouseAggregatesContext : DbContext
         {
             entity.ToTable("ClickHouseAggregates_MV");
             entity.UseSummingMergeTree(x => x.EventName);
-            entity.AsMaterializedView<MvClickHouseAggregatesSummary, MvRawEvent>(
-                query: events => events
+
+        });
+        modelBuilder.MaterializedView<MvClickHouseAggregatesSummary>().From<MvRawEvent>().DefinedAs(events => events
                     .GroupBy(e => e.EventName)
                     .Select(g => new MvClickHouseAggregatesSummary
                     {
                         EventName = g.Key,
                         UniqueUsers = g.Uniq(e => e.UserId),
                         AnyUserId = g.AnyValue(e => e.UserId)
-                    }),
-                populate: false);
-        });
+                    }));
     }
 }
 
@@ -1468,17 +1458,16 @@ public class DateTimeFunctionsContext : DbContext
         {
             entity.ToTable("HourlyByStartOfHour_MV");
             entity.UseSummingMergeTree(x => x.Hour);
-            entity.AsMaterializedView<MvHourlyByStartOfHour, MvOrder>(
-                query: orders => orders
+
+        });
+        modelBuilder.MaterializedView<MvHourlyByStartOfHour>().From<MvOrder>().DefinedAs(orders => orders
                     .GroupBy(o => o.OrderDate.ToStartOfHour())
                     .Select(g => new MvHourlyByStartOfHour
                     {
                         Hour = g.Key,
                         TotalOrders = g.Count(),
                         TotalRevenue = g.Sum(o => o.Revenue)
-                    }),
-                populate: false);
-        });
+                    }));
     }
 }
 
@@ -1539,11 +1528,12 @@ public class AnyInnerJoinContext : DbContext
         {
             e.ToTable("AnyInnerRevenue_MV"); e.HasNoKey();
             e.UseSummingMergeTree(x => x.Region);
-            e.AsMaterializedView<JoinedRevenue, JoinOrder>(orders => orders
+
+        });
+        mb.MaterializedView<JoinedRevenue>().From<JoinOrder>().DefinedAs(orders => orders
                 .AnyJoin(_stub, o => o.CustomerId, c => c.Id, (o, c) => new { o.Amount, c.Region })
                 .GroupBy(x => x.Region)
                 .Select(g => new JoinedRevenue { Region = g.Key, Total = g.Sum(x => x.Amount) }));
-        });
     }
 }
 
@@ -1562,11 +1552,12 @@ public class AnyLeftJoinContext : DbContext
         {
             e.ToTable("AnyLeftRevenue_MV"); e.HasNoKey();
             e.UseSummingMergeTree(x => x.Region);
-            e.AsMaterializedView<JoinedRevenue, JoinOrder>(orders => orders
+
+        });
+        mb.MaterializedView<JoinedRevenue>().From<JoinOrder>().DefinedAs(orders => orders
                 .AnyLeftJoin(_stub, o => o.CustomerId, c => c.Id, (o, c) => new { o.Amount, c.Region })
                 .GroupBy(x => x.Region)
                 .Select(g => new JoinedRevenue { Region = g.Key, Total = g.Sum(x => x.Amount) }));
-        });
     }
 }
 
@@ -1585,11 +1576,12 @@ public class AnyRightJoinContext : DbContext
         {
             e.ToTable("AnyRightRevenue_MV"); e.HasNoKey();
             e.UseSummingMergeTree(x => x.Region);
-            e.AsMaterializedView<JoinedRevenue, JoinOrder>(orders => orders
+
+        });
+        mb.MaterializedView<JoinedRevenue>().From<JoinOrder>().DefinedAs(orders => orders
                 .AnyRightJoin(_stub, o => o.CustomerId, c => c.Id, (o, c) => new { o.Amount, c.Region })
                 .GroupBy(x => x.Region)
                 .Select(g => new JoinedRevenue { Region = g.Key, Total = g.Sum(x => x.Amount) }));
-        });
     }
 }
 
@@ -1608,11 +1600,12 @@ public class RightJoinContext : DbContext
         {
             e.ToTable("RightJoinRevenue_MV"); e.HasNoKey();
             e.UseSummingMergeTree(x => x.Region);
-            e.AsMaterializedView<JoinedRevenue, JoinOrder>(orders => orders
+
+        });
+        mb.MaterializedView<JoinedRevenue>().From<JoinOrder>().DefinedAs(orders => orders
                 .RightJoin(_stub, o => o.CustomerId, c => c.Id, (o, c) => new { o.Amount, c.Region })
                 .GroupBy(x => x.Region)
                 .Select(g => new JoinedRevenue { Region = g.Key, Total = g.Sum(x => x.Amount) }));
-        });
     }
 }
 
@@ -1631,11 +1624,12 @@ public class FullOuterJoinContext : DbContext
         {
             e.ToTable("FullOuterRevenue_MV"); e.HasNoKey();
             e.UseSummingMergeTree(x => x.Region);
-            e.AsMaterializedView<JoinedRevenue, JoinOrder>(orders => orders
+
+        });
+        mb.MaterializedView<JoinedRevenue>().From<JoinOrder>().DefinedAs(orders => orders
                 .FullOuterJoin(_stub, o => o.CustomerId, c => c.Id, (o, c) => new { o.Amount, c.Region })
                 .GroupBy(x => x.Region)
                 .Select(g => new JoinedRevenue { Region = g.Key, Total = g.Sum(x => x.Amount) }));
-        });
     }
 }
 
@@ -1654,10 +1648,11 @@ public class LeftSemiJoinContext : DbContext
         {
             e.ToTable("LeftSemi_MV"); e.HasNoKey();
             e.UseMergeTree(x => x.OrderId);
-            e.AsMaterializedView<SingleSideOrder, JoinOrder>(orders => orders
+
+        });
+        mb.MaterializedView<SingleSideOrder>().From<JoinOrder>().DefinedAs(orders => orders
                 .LeftSemiJoin(_stub, o => o.CustomerId, c => c.Id,
                     o => new SingleSideOrder { OrderId = o.Id, Amount = o.Amount }));
-        });
     }
 }
 
@@ -1676,10 +1671,11 @@ public class LeftAntiJoinContext : DbContext
         {
             e.ToTable("LeftAnti_MV"); e.HasNoKey();
             e.UseMergeTree(x => x.OrderId);
-            e.AsMaterializedView<SingleSideOrder, JoinOrder>(orders => orders
+
+        });
+        mb.MaterializedView<SingleSideOrder>().From<JoinOrder>().DefinedAs(orders => orders
                 .LeftAntiJoin(_stub, o => o.CustomerId, c => c.Id,
                     o => new SingleSideOrder { OrderId = o.Id, Amount = o.Amount }));
-        });
     }
 }
 
@@ -1698,10 +1694,11 @@ public class RightSemiJoinContext : DbContext
         {
             e.ToTable("RightSemi_MV"); e.HasNoKey();
             e.UseMergeTree(x => x.CustomerId);
-            e.AsMaterializedView<SingleSideCustomer, JoinOrder>(orders => orders
+
+        });
+        mb.MaterializedView<SingleSideCustomer>().From<JoinOrder>().DefinedAs(orders => orders
                 .RightSemiJoin(_stub, o => o.CustomerId, c => c.Id,
                     c => new SingleSideCustomer { CustomerId = c.Id, Region = c.Region }));
-        });
     }
 }
 
@@ -1720,10 +1717,11 @@ public class RightAntiJoinContext : DbContext
         {
             e.ToTable("RightAnti_MV"); e.HasNoKey();
             e.UseMergeTree(x => x.CustomerId);
-            e.AsMaterializedView<SingleSideCustomer, JoinOrder>(orders => orders
+
+        });
+        mb.MaterializedView<SingleSideCustomer>().From<JoinOrder>().DefinedAs(orders => orders
                 .RightAntiJoin(_stub, o => o.CustomerId, c => c.Id,
                     c => new SingleSideCustomer { CustomerId = c.Id, Region = c.Region }));
-        });
     }
 }
 
@@ -1742,9 +1740,10 @@ public class CrossJoinContext : DbContext
         {
             e.ToTable("CrossJoin_MV"); e.HasNoKey();
             e.UseMergeTree(x => x.OrderId);
-            e.AsMaterializedView<CrossJoinedRow, JoinOrder>(orders => orders
-                .CrossJoin(_stub, (o, t) => new CrossJoinedRow { OrderId = o.Id, Tag = t.Name }));
+
         });
+        mb.MaterializedView<CrossJoinedRow>().From<JoinOrder>().DefinedAs(orders => orders
+                .CrossJoin(_stub, (o, t) => new CrossJoinedRow { OrderId = o.Id, Tag = t.Name }));
     }
 }
 
@@ -1776,9 +1775,10 @@ public class ArrayJoinContext : DbContext
         {
             e.ToTable("ArrayJoin_MV"); e.HasNoKey();
             e.UseMergeTree(x => x.EventId);
-            e.AsMaterializedView<ArrayJoinedRow, MvArrayJoinEvent>(events => events
-                .ArrayJoin(x => x.Tags, (x, tag) => new ArrayJoinedRow { EventId = x.Id, Tag = tag }));
+
         });
+        mb.MaterializedView<ArrayJoinedRow>().From<MvArrayJoinEvent>().DefinedAs(events => events
+                .ArrayJoin(x => x.Tags, (x, tag) => new ArrayJoinedRow { EventId = x.Id, Tag = tag }));
     }
 }
 
@@ -1794,9 +1794,10 @@ public class LeftArrayJoinContext : DbContext
         {
             e.ToTable("LeftArrayJoin_MV"); e.HasNoKey();
             e.UseMergeTree(x => x.EventId);
-            e.AsMaterializedView<ArrayJoinedRow, MvArrayJoinEvent>(events => events
-                .LeftArrayJoin(x => x.Tags, (x, tag) => new ArrayJoinedRow { EventId = x.Id, Tag = tag }));
+
         });
+        mb.MaterializedView<ArrayJoinedRow>().From<MvArrayJoinEvent>().DefinedAs(events => events
+                .LeftArrayJoin(x => x.Tags, (x, tag) => new ArrayJoinedRow { EventId = x.Id, Tag = tag }));
     }
 }
 
@@ -1844,13 +1845,14 @@ public class LinqAsofInnerJoinContext : DbContext
         {
             e.ToTable("AsofTradeWithQuote_MV"); e.HasNoKey();
             e.UseMergeTree(x => x.Id);
-            e.AsMaterializedView<AsofTradeWithQuote, AsofTrade>(trades => trades
+
+        });
+        mb.MaterializedView<AsofTradeWithQuote>().From<AsofTrade>().DefinedAs(trades => trades
                 .AsofJoin(_quotesStub,
                     t => t.Symbol,
                     q => q.Symbol,
                     (t, q) => t.T >= q.T,
                     (t, q) => new AsofTradeWithQuote { Id = t.Id, T = t.T, Price = q.Price }));
-        });
     }
 }
 
@@ -1871,13 +1873,14 @@ public class LinqAsofLeftJoinContext : DbContext
         {
             e.ToTable("AsofLeftTradeWithQuote_MV"); e.HasNoKey();
             e.UseMergeTree(x => x.Id);
-            e.AsMaterializedView<AsofTradeWithQuote, AsofTrade>(trades => trades
+
+        });
+        mb.MaterializedView<AsofTradeWithQuote>().From<AsofTrade>().DefinedAs(trades => trades
                 .AsofLeftJoin(_quotesStub,
                     t => t.Symbol,
                     q => q.Symbol,
                     (t, q) => t.T >= q.T,
                     (t, q) => new AsofTradeWithQuote { Id = t.Id, T = t.T, Price = q.Price }));
-        });
     }
 }
 
@@ -1941,14 +1944,15 @@ public class LinqInnerJoinContext : DbContext
         {
             e.ToTable("JoinRevenue_MV"); e.HasNoKey();
             e.UseSummingMergeTree(x => x.Region);
-            e.AsMaterializedView<JoinedRevenue, JoinOrder>(orders => orders
+
+        });
+        mb.MaterializedView<JoinedRevenue>().From<JoinOrder>().DefinedAs(orders => orders
                 .Join(_customersStub,
                     o => o.CustomerId,
                     c => c.Id,
                     (o, c) => new { o.Amount, c.Region })
                 .GroupBy(x => x.Region)
                 .Select(g => new JoinedRevenue { Region = g.Key, Total = g.Sum(x => x.Amount) }));
-        });
     }
 }
 
@@ -1984,14 +1988,15 @@ public class LinqJoinDictionaryContext : DbContext
         {
             e.ToTable("DictJoinRevenue_MV"); e.HasNoKey();
             e.UseSummingMergeTree(x => x.Region);
-            e.AsMaterializedView<JoinedRevenue, JoinOrder>(orders => orders
+
+        });
+        mb.MaterializedView<JoinedRevenue>().From<JoinOrder>().DefinedAs(orders => orders
                 .Join(_customersStub,
                     o => o.CustomerId,
                     c => c.Id,
                     (o, c) => new { o.Amount, c.Region })
                 .GroupBy(x => x.Region)
                 .Select(g => new JoinedRevenue { Region = g.Key, Total = g.Sum(x => x.Amount) }));
-        });
     }
 }
 
@@ -2026,7 +2031,9 @@ public class LinqGroupJoinContext : DbContext
         {
             e.ToTable("GjOrderRegion_MV"); e.HasNoKey();
             e.UseMergeTree(x => x.OrderId);
-            e.AsMaterializedView<GroupJoinedOrderRegion, JoinOrder>(orders => orders
+
+        });
+        mb.MaterializedView<GroupJoinedOrderRegion>().From<JoinOrder>().DefinedAs(orders => orders
                 .GroupJoin(_customersStub,
                     o => o.CustomerId,
                     c => c.Id,
@@ -2036,7 +2043,6 @@ public class LinqGroupJoinContext : DbContext
                         Region = cs.Select(c => c.Region).FirstOrDefault() ?? "",
                         Amount = o.Amount,
                     }));
-        });
     }
 }
 
@@ -2125,8 +2131,9 @@ public class MergeStateAggregatesContext : DbContext
             entity.Property(x => x.An).HasAggregateFunction("any", typeof(long));
             entity.Property(x => x.Al).HasAggregateFunction("anyLast", typeof(long));
             entity.Property(x => x.Q).HasAggregateFunction("quantile", typeof(double));
-            entity.AsMaterializedView<MvMergeStateRollup, MvMergeStateSource>(
-                query: rows => rows
+
+        });
+        modelBuilder.MaterializedView<MvMergeStateRollup>().From<MvMergeStateSource>().DefinedAs(rows => rows
                     .GroupBy(r => r.Bucket)
                     .Select(g => new MvMergeStateRollup
                     {
@@ -2141,9 +2148,7 @@ public class MergeStateAggregatesContext : DbContext
                         An = g.AnyMergeState(r => r.An),
                         Al = g.AnyLastMergeState(r => r.Al),
                         Q = g.QuantileMergeState(0.5, r => r.Q),
-                    }),
-                populate: false);
-        });
+                    }));
     }
 }
 

@@ -79,7 +79,9 @@ public class MvTypeInferenceCoverageTests
                 e.UseSummingMergeTree(x => x.Group);
                 e.Property(x => x.Total).HasColumnType("Decimal(18, 4)");
                 e.Property(x => x.LatestSeen).HasSimpleAggregateFunction("max");
-                e.AsMaterializedView<MvTarget, SourceRow>(src => src
+
+            });
+            mb.MaterializedView<MvTarget>().From<SourceRow>().DefinedAs(src => src
                     .GroupBy(s => s.Group)
                     .Select(g => new MvTarget
                     {
@@ -88,7 +90,6 @@ public class MvTypeInferenceCoverageTests
                         Total = g.Sum(x => x.Amount),
                         LatestSeen = g.Max(x => x.Created),
                     }));
-            });
         }
     }
 }
