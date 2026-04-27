@@ -52,15 +52,38 @@ public class OptimizeTableOptions
     /// <summary>
     /// Enables deduplication during optimization.
     /// </summary>
+    /// <remarks>
+    /// Each entry must be a non-empty, non-whitespace column name. Passing an
+    /// empty or whitespace string would otherwise produce malformed
+    /// <c>DEDUPLICATE BY a, , c</c> SQL, which ClickHouse rejects at parse time —
+    /// caught here at configuration time instead.
+    /// </remarks>
     /// <param name="columns">Optional columns to deduplicate by. If empty, deduplicates by all columns.</param>
     /// <returns>This options instance for chaining.</returns>
+    /// <exception cref="ArgumentException">
+    /// Thrown when any entry in <paramref name="columns"/> is null, empty, or whitespace.
+    /// </exception>
     public OptimizeTableOptions WithDeduplicate(params string[] columns)
     {
+        ArgumentNullException.ThrowIfNull(columns);
+
         Deduplicate = true;
-        if (columns.Length > 0)
+
+        if (columns.Length == 0)
+            return this;
+
+        for (var i = 0; i < columns.Length; i++)
         {
-            DeduplicateBy = columns;
+            if (string.IsNullOrWhiteSpace(columns[i]))
+            {
+                throw new ArgumentException(
+                    $"WithDeduplicate column names cannot be null, empty, or whitespace " +
+                    $"(index {i} was '{columns[i] ?? "<null>"}').",
+                    nameof(columns));
+            }
         }
+
+        DeduplicateBy = columns;
         return this;
     }
 }

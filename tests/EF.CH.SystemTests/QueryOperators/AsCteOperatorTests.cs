@@ -7,7 +7,7 @@ using Xunit;
 namespace EF.CH.SystemTests.QueryOperators;
 
 /// <summary>
-/// Coverage of <c>AsCte(name)</c>. Asserts both that the rendered SQL contains
+/// Coverage of <c>AsSingleCte(name)</c>. Asserts both that the rendered SQL contains
 /// the <c>WITH "name" AS (...)</c> clause (so a regression to a no-op operator
 /// fails loudly) and that the result matches the equivalent inline query.
 /// </summary>
@@ -30,12 +30,12 @@ public class AsCteOperatorTests
     }
 
     [Fact]
-    public async Task AsCte_FilteredQuery_RendersWithClause_AndReturnsExpectedRows()
+    public async Task AsSingleCte_FilteredQuery_RendersWithClause_AndReturnsExpectedRows()
     {
         await using var ctx = await SeededAsync();
         var query = ctx.Rows
             .Where(r => r.V > 15)
-            .AsCte("filtered")
+            .AsSingleCte("filtered")
             .OrderBy(r => r.Id)
             .Select(r => r.Id);
 
@@ -48,12 +48,12 @@ public class AsCteOperatorTests
     }
 
     [Fact]
-    public async Task AsCte_ComposesWithSum_RendersWithClause_AndReturnsCorrectSum()
+    public async Task AsSingleCte_ComposesWithSum_RendersWithClause_AndReturnsCorrectSum()
     {
         await using var ctx = await SeededAsync();
         var query = ctx.Rows
             .Where(r => r.V > 10)
-            .AsCte("upper")
+            .AsSingleCte("upper")
             .Select(r => (long?)r.V);
 
         var sql = query.ToQueryString();

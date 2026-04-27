@@ -560,6 +560,70 @@ public static class ClickHousePropertyBuilderExtensions
         return propertyBuilder;
     }
 
+    /// <summary>
+    /// Configures an explicit default value to use instead of NULL for this property,
+    /// overriding the inferred default. Use this overload when the desired default
+    /// does not match <c>default(T)</c>, or when you need to specify a runtime value
+    /// not known at compile time.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Same caveats as the typed overload apply: <c>p.HasValue</c> and <c>p ?? x</c>
+    /// will silently match wrong rows because the value converter rewrites null to
+    /// the default at read time. Use <c>p == null</c> instead.
+    /// </para>
+    /// <para>
+    /// The runtime CLR type of <paramref name="value"/> must match the property's
+    /// underlying (non-nullable) type. A mismatch is reported as an
+    /// <see cref="InvalidOperationException"/>.
+    /// </para>
+    /// </remarks>
+    /// <typeparam name="TProperty">The property type (must be nullable).</typeparam>
+    /// <param name="propertyBuilder">The property builder.</param>
+    /// <param name="value">The default value to represent null.</param>
+    /// <returns>The property builder for chaining.</returns>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when called on a non-nullable property, or when <paramref name="value"/>
+    /// has a CLR type incompatible with the property type.
+    /// </exception>
+    public static PropertyBuilder<TProperty> HasDefaultForNull<TProperty>(
+        this PropertyBuilder<TProperty> propertyBuilder,
+        object value)
+    {
+        ArgumentNullException.ThrowIfNull(propertyBuilder);
+        ArgumentNullException.ThrowIfNull(value);
+
+        var clrType = propertyBuilder.Metadata.ClrType;
+        var underlyingType = Nullable.GetUnderlyingType(clrType);
+        var isNullableValueType = underlyingType != null;
+        var isNullableReferenceType = !clrType.IsValueType;
+
+        if (!isNullableValueType && !isNullableReferenceType)
+        {
+            throw new InvalidOperationException(
+                $"HasDefaultForNull can only be used on nullable properties. " +
+                $"Property '{propertyBuilder.Metadata.Name}' is of non-nullable type '{clrType.Name}'.");
+        }
+
+        var expectedType = underlyingType ?? clrType;
+        if (!expectedType.IsInstanceOfType(value))
+        {
+            throw new InvalidOperationException(
+                $"HasDefaultForNull value of type '{value.GetType().Name}' is not " +
+                $"compatible with property '{propertyBuilder.Metadata.Name}' of type '{expectedType.Name}'.");
+        }
+
+        propertyBuilder.HasAnnotation(ClickHouseAnnotationNames.DefaultForNull, value);
+
+        var converter = DefaultForNullValueConverterFactory.Create(clrType, value);
+        if (converter != null)
+        {
+            propertyBuilder.HasConversion(converter);
+        }
+
+        return propertyBuilder;
+    }
+
     #endregion
 
     #region Computed Columns

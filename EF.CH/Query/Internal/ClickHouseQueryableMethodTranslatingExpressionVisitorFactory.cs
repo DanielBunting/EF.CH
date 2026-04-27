@@ -107,7 +107,7 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
         [ClickHouseQueryableExtensions.WithRollupMethodInfo] = (v, e) => v.TranslateGroupByModifier(e, GroupByModifier.Rollup),
         [ClickHouseQueryableExtensions.WithCubeMethodInfo] = (v, e) => v.TranslateGroupByModifier(e, GroupByModifier.Cube),
         [ClickHouseQueryableExtensions.WithTotalsMethodInfo] = (v, e) => v.TranslateGroupByModifier(e, GroupByModifier.Totals),
-        [ClickHouseQueryableExtensions.AsCteMethodInfo] = (v, e) => v.TranslateAsCte(e),
+        [ClickHouseQueryableExtensions.AsSingleCteMethodInfo] = (v, e) => v.TranslateAsCte(e),
         [ClickHouseQueryableExtensions.WithRawFilterMethodInfo] = (v, e) => v.TranslateWithRawFilter(e),
     };
 
@@ -377,7 +377,7 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
         var nameArg = methodCallExpression.Arguments[1];
         if (!TryGetConstantValue<string>(nameArg, out var name))
         {
-            throw new InvalidOperationException("AsCte name must be a constant string.");
+            throw new InvalidOperationException("AsSingleCte name must be a constant string.");
         }
 
         if (string.IsNullOrWhiteSpace(name))
@@ -388,7 +388,9 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
         if (_options.PendingCteName != null)
         {
             throw new InvalidOperationException(
-                $"Cannot define multiple CTEs in a single query. Already defined CTE '{_options.PendingCteName}'.");
+                $"AsSingleCte supports a single CTE per query (already defined CTE " +
+                $"'{_options.PendingCteName}'). Multi-CTE support is reserved for a " +
+                $"future release under the name AsCte.");
         }
 
         _options.PendingCteName = name;

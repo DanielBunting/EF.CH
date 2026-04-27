@@ -223,7 +223,7 @@ public class DistributedEngineTests
             entity.ToTable("events_distributed");
             entity.HasKey(e => e.Id);
             entity.UseDistributed("my_cluster", "events_local")
-                  .WithShardingKey("cityHash64(UserId)");
+                  .WithShardingKeyExpression("cityHash64(UserId)");
         });
 
         var model = builder.FinalizeModel();
