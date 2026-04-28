@@ -5,7 +5,7 @@ Demonstrates multi-node ClickHouse cluster features using EF.CH.
 ## What This Sample Shows
 
 1. **3-node cluster setup** - Docker Compose with three ClickHouse nodes configured as a cluster
-2. **Replicated engine** - `UseReplicatedMergeTree` with `.WithCluster()` and `.WithReplication()` for data replication across nodes
+2. **Replicated engine** - any `Use*MergeTree` builder with `.WithReplication()` and `.WithCluster()` for data replication across nodes
 3. **ON CLUSTER DDL** - `UseCluster()` causes DDL statements to execute on all cluster nodes
 4. **Connection routing** - `UseConnectionRouting()` splits SELECT queries to read endpoints and mutations to write endpoints
 5. **Table groups** - `AddTableGroup()` for logical grouping of tables with shared cluster/replication settings
@@ -55,10 +55,15 @@ The shared `users.xml` configures the default user for all nodes.
 ### Replicated Engines
 
 ```csharp
-entity.UseReplicatedMergeTree<Event>(x => new { x.EventDate, x.EventId })
+entity.UseMergeTree<Event>(x => new { x.EventDate, x.EventId })
     .WithCluster("sample_cluster")
     .WithReplication("/clickhouse/{database}/{table}", "{replica}");
 ```
+
+Replication is a property of the engine. The same `WithReplication` call works
+on every MergeTree-family builder — `UseReplacingMergeTree`, `UseSummingMergeTree`,
+`UseCollapsingMergeTree`, etc. — so you can keep using the engine-specific knobs
+(`WithVersion`, `WithSign`, `WithIsDeleted`) alongside it.
 
 ### Connection Routing
 

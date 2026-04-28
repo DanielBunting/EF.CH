@@ -4,6 +4,13 @@ namespace EF.CH.Metadata.Internal;
 /// ClickHouse table engine name constants used in migrations, annotation code generation,
 /// fluent API configuration, and scaffolding.
 /// </summary>
+/// <remarks>
+/// Replication is a property of the engine — call
+/// <c>WithReplication(...)</c> on any MergeTree-family builder to mark the
+/// table replicated. The <c>Replicated</c> prefix is applied at SQL-generation
+/// time based on the <c>ClickHouseAnnotationNames.IsReplicated</c> annotation,
+/// so this class only declares the base engine names.
+/// </remarks>
 public static class ClickHouseEngineNames
 {
     public const string MergeTree = "MergeTree";
@@ -13,13 +20,6 @@ public static class ClickHouseEngineNames
     public const string CollapsingMergeTree = "CollapsingMergeTree";
     public const string VersionedCollapsingMergeTree = "VersionedCollapsingMergeTree";
     public const string GraphiteMergeTree = "GraphiteMergeTree";
-
-    public const string ReplicatedMergeTree = "ReplicatedMergeTree";
-    public const string ReplicatedReplacingMergeTree = "ReplicatedReplacingMergeTree";
-    public const string ReplicatedSummingMergeTree = "ReplicatedSummingMergeTree";
-    public const string ReplicatedAggregatingMergeTree = "ReplicatedAggregatingMergeTree";
-    public const string ReplicatedCollapsingMergeTree = "ReplicatedCollapsingMergeTree";
-    public const string ReplicatedVersionedCollapsingMergeTree = "ReplicatedVersionedCollapsingMergeTree";
 
     // Non-MergeTree engines
     public const string Null = "Null";
@@ -36,11 +36,6 @@ public static class ClickHouseEngineNames
     public const string Redis = "Redis";
     public const string ODBC = "ODBC";
 
-    private const string ReplicatedPrefix = "Replicated";
-
     public static bool IsMergeTreeFamily(string engine)
         => engine.EndsWith(MergeTree, StringComparison.OrdinalIgnoreCase);
-
-    public static bool IsReplicated(string engine)
-        => engine.StartsWith(ReplicatedPrefix, StringComparison.OrdinalIgnoreCase);
 }

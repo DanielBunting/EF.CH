@@ -82,8 +82,8 @@ public class TableGroupTests
         {
             entity.ToTable("replicated_events");
             entity.HasKey(e => e.Id);
-            entity.UseReplicatedMergeTree(x => x.Id);
-            entity.HasReplication("/clickhouse/tables/{database}/{table}", "{replica}");
+            entity.UseMergeTree(x => x.Id)
+                  .WithReplication("/clickhouse/tables/{database}/{table}", "{replica}");
         });
 
         var model = builder.FinalizeModel();

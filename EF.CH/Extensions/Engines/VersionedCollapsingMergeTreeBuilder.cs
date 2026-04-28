@@ -11,16 +11,16 @@ namespace EF.CH.Extensions.Engines;
 /// Returned by <see cref="ClickHouseEntityTypeBuilderExtensions.UseVersionedCollapsingMergeTree{TEntity}(EntityTypeBuilder{TEntity}, Expression{Func{TEntity, object}})"/>.
 /// Both <see cref="WithSign"/> and <see cref="WithVersion{TProp}"/> are required —
 /// the engine uses the version column to correctly collapse rows that arrived
-/// out of order.
+/// out of order. Replication and cluster knobs are inherited from
+/// <see cref="MergeTreeFamilyBuilder{TBuilder, TEntity}"/>.
 /// </remarks>
 /// <typeparam name="TEntity">The entity type being configured.</typeparam>
-public sealed class VersionedCollapsingMergeTreeBuilder<TEntity> where TEntity : class
+public sealed class VersionedCollapsingMergeTreeBuilder<TEntity>
+    : MergeTreeFamilyBuilder<VersionedCollapsingMergeTreeBuilder<TEntity>, TEntity>
+    where TEntity : class
 {
-    private readonly EntityTypeBuilder<TEntity> _builder;
-
-    internal VersionedCollapsingMergeTreeBuilder(EntityTypeBuilder<TEntity> builder)
+    internal VersionedCollapsingMergeTreeBuilder(EntityTypeBuilder<TEntity> builder) : base(builder)
     {
-        _builder = builder;
     }
 
     /// <summary>
@@ -31,7 +31,7 @@ public sealed class VersionedCollapsingMergeTreeBuilder<TEntity> where TEntity :
     {
         ArgumentNullException.ThrowIfNull(signColumn);
         var name = ExpressionExtensions.GetPropertyName(signColumn);
-        _builder.HasAnnotation(ClickHouseAnnotationNames.SignColumn, name);
+        Builder.HasAnnotation(ClickHouseAnnotationNames.SignColumn, name);
         return this;
     }
 
@@ -43,18 +43,7 @@ public sealed class VersionedCollapsingMergeTreeBuilder<TEntity> where TEntity :
     {
         ArgumentNullException.ThrowIfNull(versionColumn);
         var name = ExpressionExtensions.GetPropertyName(versionColumn);
-        _builder.HasAnnotation(ClickHouseAnnotationNames.VersionColumn, name);
+        Builder.HasAnnotation(ClickHouseAnnotationNames.VersionColumn, name);
         return this;
     }
-
-    /// <summary>
-    /// Returns the underlying entity type builder for continued configuration.
-    /// </summary>
-    public EntityTypeBuilder<TEntity> And() => _builder;
-
-    /// <summary>
-    /// Implicit conversion back to <see cref="EntityTypeBuilder{TEntity}"/>.
-    /// </summary>
-    public static implicit operator EntityTypeBuilder<TEntity>(
-        VersionedCollapsingMergeTreeBuilder<TEntity> b) => b._builder;
 }

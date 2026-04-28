@@ -1264,11 +1264,15 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         builder.AppendLine();
         builder.Append("ENGINE = ");
 
-        // Check if this is a replicated engine
-        var isReplicated = ClickHouseEngineNames.IsReplicated(engine);
+        // Replication is a property of the engine (driven by the IsReplicated annotation),
+        // not a distinct engine type — the engine annotation always holds the base name
+        // (e.g. "ReplacingMergeTree"); we prepend the "Replicated" prefix and the ZK args
+        // here when the flag is set.
+        var isReplicated = GetAnnotation<bool?>(operation, ClickHouseAnnotationNames.IsReplicated)
+                        ?? GetEntityAnnotation<bool?>(entityType, ClickHouseAnnotationNames.IsReplicated)
+                        ?? false;
         var extension = GetOptionsExtension();
 
-        // Get replication parameters for replicated engines
         string? replicationPath = null;
         string? replicaName = null;
         if (isReplicated)
@@ -1276,6 +1280,16 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
             replicationPath = GetReplicationPath(entityType, operation.Name, extension);
             replicaName = GetReplicaName(entityType, extension);
         }
+
+        var quotedVersion = string.IsNullOrEmpty(versionColumn)
+            ? null
+            : Dependencies.SqlGenerationHelper.DelimitIdentifier(versionColumn);
+        var quotedIsDeleted = string.IsNullOrEmpty(isDeletedColumn)
+            ? null
+            : Dependencies.SqlGenerationHelper.DelimitIdentifier(isDeletedColumn);
+        var quotedSign = string.IsNullOrEmpty(signColumn)
+            ? null
+            : Dependencies.SqlGenerationHelper.DelimitIdentifier(signColumn);
 
         // Generate engine with parameters
         switch (engine)
@@ -1288,45 +1302,20 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
                 builder.Append($"{engine}({externalEngineArgs})");
                 break;
 
-            // Replicated engines
-            case ClickHouseEngineNames.ReplicatedReplacingMergeTree when !string.IsNullOrEmpty(versionColumn) && !string.IsNullOrEmpty(isDeletedColumn):
-                builder.Append($"{ClickHouseEngineNames.ReplicatedReplacingMergeTree}({replicationPath}, {replicaName}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(versionColumn)}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(isDeletedColumn)})");
+            // MergeTree family — engine-specific arg lists. Replication is applied uniformly
+            // by AppendMergeTreeFamilyEngine: it prepends "Replicated" and the ZK args when
+            // isReplicated is true.
+            case ClickHouseEngineNames.ReplacingMergeTree when quotedVersion is not null && quotedIsDeleted is not null:
+                AppendMergeTreeFamilyEngine(builder, engine, isReplicated, replicationPath, replicaName, $"{quotedVersion}, {quotedIsDeleted}");
                 break;
-            case ClickHouseEngineNames.ReplicatedReplacingMergeTree when !string.IsNullOrEmpty(versionColumn):
-                builder.Append($"{ClickHouseEngineNames.ReplicatedReplacingMergeTree}({replicationPath}, {replicaName}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(versionColumn)})");
+            case ClickHouseEngineNames.ReplacingMergeTree when quotedVersion is not null:
+                AppendMergeTreeFamilyEngine(builder, engine, isReplicated, replicationPath, replicaName, quotedVersion);
                 break;
-            case ClickHouseEngineNames.ReplicatedReplacingMergeTree:
-                builder.Append($"{ClickHouseEngineNames.ReplicatedReplacingMergeTree}({replicationPath}, {replicaName})");
+            case ClickHouseEngineNames.CollapsingMergeTree when quotedSign is not null:
+                AppendMergeTreeFamilyEngine(builder, engine, isReplicated, replicationPath, replicaName, quotedSign);
                 break;
-            case ClickHouseEngineNames.ReplicatedCollapsingMergeTree when !string.IsNullOrEmpty(signColumn):
-                builder.Append($"{ClickHouseEngineNames.ReplicatedCollapsingMergeTree}({replicationPath}, {replicaName}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(signColumn)})");
-                break;
-            case ClickHouseEngineNames.ReplicatedVersionedCollapsingMergeTree when !string.IsNullOrEmpty(signColumn) && !string.IsNullOrEmpty(versionColumn):
-                builder.Append($"{ClickHouseEngineNames.ReplicatedVersionedCollapsingMergeTree}({replicationPath}, {replicaName}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(signColumn)}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(versionColumn)})");
-                break;
-            case ClickHouseEngineNames.ReplicatedMergeTree:
-                builder.Append($"{ClickHouseEngineNames.ReplicatedMergeTree}({replicationPath}, {replicaName})");
-                break;
-            case ClickHouseEngineNames.ReplicatedSummingMergeTree:
-                builder.Append($"{ClickHouseEngineNames.ReplicatedSummingMergeTree}({replicationPath}, {replicaName})");
-                break;
-            case ClickHouseEngineNames.ReplicatedAggregatingMergeTree:
-                builder.Append($"{ClickHouseEngineNames.ReplicatedAggregatingMergeTree}({replicationPath}, {replicaName})");
-                break;
-
-            // Non-replicated engines
-            case ClickHouseEngineNames.ReplacingMergeTree when !string.IsNullOrEmpty(versionColumn) && !string.IsNullOrEmpty(isDeletedColumn):
-                // ReplacingMergeTree(version, is_deleted) - ClickHouse 23.2+
-                builder.Append($"{ClickHouseEngineNames.ReplacingMergeTree}({Dependencies.SqlGenerationHelper.DelimitIdentifier(versionColumn)}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(isDeletedColumn)})");
-                break;
-            case ClickHouseEngineNames.ReplacingMergeTree when !string.IsNullOrEmpty(versionColumn):
-                builder.Append($"{ClickHouseEngineNames.ReplacingMergeTree}({Dependencies.SqlGenerationHelper.DelimitIdentifier(versionColumn)})");
-                break;
-            case ClickHouseEngineNames.CollapsingMergeTree when !string.IsNullOrEmpty(signColumn):
-                builder.Append($"{ClickHouseEngineNames.CollapsingMergeTree}({Dependencies.SqlGenerationHelper.DelimitIdentifier(signColumn)})");
-                break;
-            case ClickHouseEngineNames.VersionedCollapsingMergeTree when !string.IsNullOrEmpty(signColumn) && !string.IsNullOrEmpty(versionColumn):
-                builder.Append($"{ClickHouseEngineNames.VersionedCollapsingMergeTree}({Dependencies.SqlGenerationHelper.DelimitIdentifier(signColumn)}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(versionColumn)})");
+            case ClickHouseEngineNames.VersionedCollapsingMergeTree when quotedSign is not null && quotedVersion is not null:
+                AppendMergeTreeFamilyEngine(builder, engine, isReplicated, replicationPath, replicaName, $"{quotedSign}, {quotedVersion}");
                 break;
 
             // Distributed engine
@@ -1362,10 +1351,13 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
                 break;
 
             default:
-                builder.Append(engine);
                 if (ClickHouseEngineNames.IsMergeTreeFamily(engine))
                 {
-                    builder.Append("()");
+                    AppendMergeTreeFamilyEngine(builder, engine, isReplicated, replicationPath, replicaName, engineSpecificArgs: null);
+                }
+                else
+                {
+                    builder.Append(engine);
                 }
                 break;
         }
@@ -2512,6 +2504,36 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
 
         // 3. Default cluster from extension
         return extension?.ClusterName;
+    }
+
+    /// <summary>
+    /// Emits an <c>ENGINE = …</c> clause for a MergeTree-family engine,
+    /// applying the <c>Replicated</c> prefix and ZooKeeper / replica name
+    /// arguments uniformly when <paramref name="isReplicated"/> is true.
+    /// </summary>
+    private static void AppendMergeTreeFamilyEngine(
+        MigrationCommandListBuilder builder,
+        string baseEngine,
+        bool isReplicated,
+        string? replicationPath,
+        string? replicaName,
+        string? engineSpecificArgs)
+    {
+        if (isReplicated)
+        {
+            var args = engineSpecificArgs is null
+                ? $"{replicationPath}, {replicaName}"
+                : $"{replicationPath}, {replicaName}, {engineSpecificArgs}";
+            builder.Append($"Replicated{baseEngine}({args})");
+        }
+        else if (engineSpecificArgs is not null)
+        {
+            builder.Append($"{baseEngine}({engineSpecificArgs})");
+        }
+        else
+        {
+            builder.Append($"{baseEngine}()");
+        }
     }
 
     /// <summary>

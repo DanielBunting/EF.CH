@@ -37,15 +37,19 @@ public class ClickHouseDesignTimeServices : IDesignTimeServices
         // Register model code generator (provider-specific service in EF Core 10+)
         services.TryAddSingleton<IModelCodeGenerator, ClickHouseCSharpModelGenerator>();
 
-        // Register migrations code generator to include ClickHouse extension namespaces
+        // Register migrations code generator to include ClickHouse extension namespaces.
+        // Lifetime mirrors EF Core's default for IMigrationsCodeGenerator (Singleton); see
+        // DesignTimeServiceLifetimeTests.IMigrationsCodeGenerator_default_is_Singleton.
         services.Replace(ServiceDescriptor.Singleton<IMigrationsCodeGenerator, ClickHouseCSharpMigrationsGenerator>());
 
         // Register step migrations infrastructure for ClickHouse
         // The splitter splits operations into individual step migrations
         services.AddSingleton<ClickHouseMigrationsSplitter>();
 
-        // The scaffolder generates multiple migration files (one per operation)
-        // This enables atomic execution and resume after partial failure
+        // The scaffolder generates multiple migration files (one per operation),
+        // enabling atomic execution and resume after partial failure.
+        // Lifetime mirrors EF Core's default for IMigrationsScaffolder (Scoped); see
+        // DesignTimeServiceLifetimeTests.IMigrationsScaffolder_default_is_Scoped.
         services.Replace(ServiceDescriptor.Scoped<IMigrationsScaffolder, ClickHouseMigrationsScaffolder>());
     }
 }

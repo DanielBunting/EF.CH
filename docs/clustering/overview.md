@@ -69,10 +69,10 @@ EF.CH references these cluster names in entity configuration and DDL operations.
 
 ### Replicated Engines
 
-Six replicated engine variants mirror the non-replicated MergeTree family, adding automatic data synchronization between replicas.
+Replication is a property of every MergeTree-family engine — call `WithReplication(...)` on any `Use*MergeTree` builder and EF.CH emits the matching `Replicated*` variant.
 
 ```csharp
-entity.UseReplicatedMergeTree(x => x.Id)
+entity.UseMergeTree(x => x.Id)
     .WithCluster("my_cluster")
     .WithReplication("/clickhouse/{database}/{table}");
 ```
@@ -126,7 +126,7 @@ A common production topology with 2 shards and 2 replicas per shard:
 ```
 
 EF.CH entities in this topology would use:
-- `UseReplicatedMergeTree` for the local tables on each replica
+- `UseMergeTree(...).WithReplication(...)` (or any other `Use*MergeTree` with `WithReplication`) for the local tables on each replica
 - `UseDistributed` for the distributed table that spans all shards
 - `WithCluster` for DDL to propagate across nodes
 

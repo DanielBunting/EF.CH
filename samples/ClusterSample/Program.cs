@@ -3,7 +3,7 @@
 // -----------------------------------------------------------------
 // Demonstrates:
 //   1. 3-node cluster setup via docker-compose
-//   2. Replicated engine (UseReplicatedMergeTree) with cluster + replication
+//   2. Replicated engine (UseMergeTree(...).WithReplication(...)) with cluster + replication
 //   3. ON CLUSTER DDL (UseCluster for distributed table creation)
 //   4. Connection routing (read/write endpoint splitting)
 //   5. Table groups (AddTableGroup for logical grouping)
@@ -76,10 +76,11 @@ static async Task DemoReplicatedEngine(string connectionString)
 
     await using var context = new ClusterDemoContext(connectionString);
 
-    Console.WriteLine("UseReplicatedMergeTree creates tables that replicate across cluster nodes.");
+    Console.WriteLine("Replication is a property of the engine — call WithReplication");
+    Console.WriteLine("on any MergeTree-family builder to mark the table replicated.");
     Console.WriteLine("Configuration in OnModelCreating:\n");
     Console.WriteLine("""
-      entity.UseReplicatedMergeTree<Event>(x => new { x.EventDate, x.EventId })
+      entity.UseMergeTree<Event>(x => new { x.EventDate, x.EventId })
           .WithCluster()          // defers to the server's {cluster} macro
           .WithReplication(
               "/clickhouse/{database}/{table}",
@@ -208,7 +209,8 @@ static void DemoTableGroups()
     Console.WriteLine("\nThen assign tables to groups:");
     Console.WriteLine("""
       // In OnModelCreating:
-      entity.UseReplicatedMergeTree<Event>(x => x.EventId)
+      entity.UseMergeTree<Event>(x => x.EventId)
+          .WithReplication("/clickhouse/{database}/{table}")
           .WithTableGroup("Core");
 
       // Local-only tables skip ON CLUSTER:
@@ -287,7 +289,7 @@ public class ClusterDemoContext : DbContext
             // Fluent replicated-engine configuration with the {cluster} macro —
             // EF.CH emits ON CLUSTER '{cluster}' and lets ClickHouse expand it
             // per node. No raw DDL required.
-            entity.UseReplicatedMergeTree(x => new { x.EventDate, x.EventId })
+            entity.UseMergeTree(x => new { x.EventDate, x.EventId })
                 .WithCluster()
                 .WithReplication("/clickhouse/{database}/{table}", "{replica}");
         });

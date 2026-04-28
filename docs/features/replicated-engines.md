@@ -1,6 +1,6 @@
 # Replicated MergeTree Engines
 
-Every MergeTree engine has a `Replicated` variant that synchronizes data across cluster nodes using ClickHouse Keeper (or ZooKeeper).
+Every MergeTree engine has a replicated mode that synchronizes data across cluster nodes using ClickHouse Keeper (or ZooKeeper). Replication is a *property* of the engine — not a separate kind of engine. Call `WithReplication(...)` on any `Use*MergeTree` builder and EF.CH emits the `Replicated*` engine variant at SQL-generation time.
 
 ## Why Replicated Engines?
 
@@ -28,21 +28,23 @@ This provides:
 
 ## Supported Engines
 
-| Method | Engine | Additional Parameters |
-|--------|--------|----------------------|
-| `UseReplicatedMergeTree` | ReplicatedMergeTree | - |
-| `UseReplicatedReplacingMergeTree` | ReplicatedReplacingMergeTree | version column |
-| `UseReplicatedSummingMergeTree` | ReplicatedSummingMergeTree | - |
-| `UseReplicatedAggregatingMergeTree` | ReplicatedAggregatingMergeTree | - |
-| `UseReplicatedCollapsingMergeTree` | ReplicatedCollapsingMergeTree | sign column |
-| `UseReplicatedVersionedCollapsingMergeTree` | ReplicatedVersionedCollapsingMergeTree | sign + version columns |
+Any of the standard MergeTree-family builders can be replicated. The engine-specific knobs (`WithVersion`, `WithSign`, `WithIsDeleted`) compose with `WithReplication` in any order.
+
+| Builder | Engine emitted (replicated) | Engine-specific knobs |
+|---------|------------------------------|-----------------------|
+| `UseMergeTree` | `ReplicatedMergeTree` | – |
+| `UseReplacingMergeTree` | `ReplicatedReplacingMergeTree` | `WithVersion`, `WithIsDeleted` |
+| `UseSummingMergeTree` | `ReplicatedSummingMergeTree` | – |
+| `UseAggregatingMergeTree` | `ReplicatedAggregatingMergeTree` | – |
+| `UseCollapsingMergeTree` | `ReplicatedCollapsingMergeTree` | `WithSign` |
+| `UseVersionedCollapsingMergeTree` | `ReplicatedVersionedCollapsingMergeTree` | `WithSign`, `WithVersion` |
 
 ## Fluent Chain API
 
-All replicated engine methods return a `ReplicatedEngineBuilder<TEntity>` that enables fluent configuration:
+`WithReplication`, `WithCluster`, and `WithTableGroup` come from the shared `MergeTreeFamilyBuilder<TBuilder, TEntity>` base, so they're available on every typed builder. Chained calls return the leaf builder, so you can keep calling engine-specific knobs in any order:
 
 ```csharp
-entity.UseReplicatedMergeTree(x => x.Id)
+entity.UseMergeTree(x => x.Id)
       .WithCluster("my_cluster")
       .WithReplication("/clickhouse/tables/{database}/{table}")
       .WithTableGroup("Core")
@@ -54,10 +56,11 @@ entity.UseReplicatedMergeTree(x => x.Id)
 
 | Method | Description |
 |--------|-------------|
-| `WithCluster(string)` | Sets the cluster name for ON CLUSTER DDL |
-| `WithReplication(string, string?)` | Sets ZooKeeper path and replica name |
-| `WithTableGroup(string)` | Assigns entity to a table group |
-| `And()` | Explicitly returns `EntityTypeBuilder<TEntity>` |
+| `WithReplication(string, string?)` | Marks the engine replicated. Sets ZooKeeper path and replica name. |
+| `WithCluster(string)` | Sets the cluster name for ON CLUSTER DDL. |
+| `WithCluster()` | Emits `ON CLUSTER '{cluster}'`, deferring to the server's `<macros><cluster>` config. |
+| `WithTableGroup(string)` | Assigns the entity to a table group. |
+| `And()` | Returns the underlying `EntityTypeBuilder<TEntity>`. |
 
 ### Implicit Conversion
 
@@ -65,13 +68,13 @@ The builder implicitly converts to `EntityTypeBuilder<TEntity>`, so `.And()` is 
 
 ```csharp
 // These are equivalent
-entity.UseReplicatedMergeTree(x => x.Id)
-      .WithCluster("my_cluster")
+entity.UseMergeTree(x => x.Id)
+      .WithReplication("/clickhouse/tables/{database}/{table}")
       .And()
       .HasPartitionBy(x => x.CreatedAt, PartitionGranularity.Month);
 
-entity.UseReplicatedMergeTree(x => x.Id)
-      .WithCluster("my_cluster")
+entity.UseMergeTree(x => x.Id)
+      .WithReplication("/clickhouse/tables/{database}/{table}")
       .HasPartitionBy(x => x.CreatedAt, PartitionGranularity.Month);  // Implicit conversion
 ```
 
@@ -85,7 +88,7 @@ Basic append-only replicated table:
 modelBuilder.Entity<Event>(entity =>
 {
     entity.HasKey(e => e.Id);
-    entity.UseReplicatedMergeTree(x => new { x.Timestamp, x.Id })
+    entity.UseMergeTree(x => new { x.Timestamp, x.Id })
           .WithCluster("events_cluster")
           .WithReplication("/clickhouse/tables/{database}/{table}");
 
@@ -116,9 +119,8 @@ Deduplication by key with version column:
 modelBuilder.Entity<User>(entity =>
 {
     entity.HasKey(e => e.Id);
-    entity.UseReplicatedReplacingMergeTree(
-              versionColumnExpression: x => x.Version,
-              orderByExpression: x => x.Id)
+    entity.UseReplacingMergeTree(x => x.Id)
+          .WithVersion(x => x.Version)
           .WithCluster("users_cluster")
           .WithReplication("/clickhouse/tables/{database}/{table}");
 });
@@ -138,6 +140,15 @@ ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/mydb/Users', '{replica
 ORDER BY ("Id")
 ```
 
+Soft-delete via `WithIsDeleted` works the same way (ClickHouse 23.2+):
+
+```csharp
+entity.UseReplacingMergeTree(x => x.Id)
+      .WithVersion(x => x.Version)
+      .WithIsDeleted(x => x.Deleted)
+      .WithReplication("/clickhouse/tables/{uuid}");
+```
+
 ### ReplicatedSummingMergeTree
 
 Auto-sum numeric columns during merges:
@@ -146,7 +157,7 @@ Auto-sum numeric columns during merges:
 modelBuilder.Entity<DailySummary>(entity =>
 {
     entity.HasNoKey();
-    entity.UseReplicatedSummingMergeTree(x => new { x.Date, x.ProductId })
+    entity.UseSummingMergeTree(x => new { x.Date, x.ProductId })
           .WithCluster("analytics_cluster")
           .WithReplication("/clickhouse/tables/{database}/{table}");
 });
@@ -174,7 +185,7 @@ For pre-aggregated data with aggregate function columns:
 modelBuilder.Entity<HourlyStats>(entity =>
 {
     entity.HasNoKey();
-    entity.UseReplicatedAggregatingMergeTree(x => new { x.Hour, x.Category })
+    entity.UseAggregatingMergeTree(x => new { x.Hour, x.Category })
           .WithCluster("stats_cluster")
           .WithReplication("/clickhouse/tables/{database}/{table}");
 
@@ -191,9 +202,8 @@ Row cancellation with sign column (+1 insert, -1 cancel):
 modelBuilder.Entity<UserSession>(entity =>
 {
     entity.HasKey(e => e.Id);
-    entity.UseReplicatedCollapsingMergeTree(
-              signColumnExpression: x => x.Sign,
-              orderByExpression: x => new { x.UserId, x.SessionId })
+    entity.UseCollapsingMergeTree(x => new { x.UserId, x.SessionId })
+          .WithSign(x => x.Sign)
           .WithCluster("sessions_cluster")
           .WithReplication("/clickhouse/tables/{database}/{table}");
 });
@@ -209,10 +219,9 @@ For out-of-order collapsing with version tracking:
 modelBuilder.Entity<Inventory>(entity =>
 {
     entity.HasKey(e => e.Id);
-    entity.UseReplicatedVersionedCollapsingMergeTree(
-              signColumnExpression: x => x.Sign,
-              versionColumnExpression: x => x.Version,
-              orderByExpression: x => new { x.WarehouseId, x.ProductId })
+    entity.UseVersionedCollapsingMergeTree(x => new { x.WarehouseId, x.ProductId })
+          .WithSign(x => x.Sign)
+          .WithVersion(x => x.Version)
           .WithCluster("inventory_cluster")
           .WithReplication("/clickhouse/tables/{database}/{table}");
 });
@@ -259,15 +268,16 @@ By default, `{replica}` expands to the `replica` macro configured on each ClickH
 
 ## Mixing with Standard Configuration
 
-The fluent chain pattern integrates seamlessly with other entity configuration:
+The fluent chain integrates seamlessly with other entity configuration:
 
 ```csharp
 modelBuilder.Entity<Order>(entity =>
 {
     entity.HasKey(e => e.Id);
 
-    // Replicated engine with cluster settings
-    entity.UseReplicatedReplacingMergeTree(x => x.Version, x => new { x.OrderDate, x.Id })
+    // Replacing engine with version, replication, and cluster
+    entity.UseReplacingMergeTree(x => new { x.OrderDate, x.Id })
+          .WithVersion(x => x.Version)
           .WithCluster("orders_cluster")
           .WithReplication("/clickhouse/tables/{database}/{table}")
           .WithTableGroup("Core");
@@ -283,24 +293,6 @@ modelBuilder.Entity<Order>(entity =>
           .UseBloomFilter();
 });
 ```
-
-## Backward Compatibility
-
-You can still use separate method calls instead of the fluent chain:
-
-```csharp
-// Fluent chain (recommended)
-entity.UseReplicatedMergeTree(x => x.Id)
-      .WithCluster("my_cluster")
-      .WithReplication("/clickhouse/tables/{database}/{table}");
-
-// Separate calls (equivalent)
-entity.UseReplicatedMergeTree(x => x.Id);
-entity.UseCluster("my_cluster");
-entity.HasReplication("/clickhouse/tables/{database}/{table}");
-```
-
-Both approaches produce identical DDL.
 
 ## See Also
 

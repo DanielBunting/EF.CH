@@ -10,16 +10,16 @@ namespace EF.CH.Extensions.Engines;
 /// <remarks>
 /// Returned by <see cref="ClickHouseEntityTypeBuilderExtensions.UseCollapsingMergeTree{TEntity}(EntityTypeBuilder{TEntity}, Expression{Func{TEntity, object}})"/>.
 /// The sign column is required — ClickHouse uses the +1/-1 sign during
-/// background merges to collapse cancellation pairs.
+/// background merges to collapse cancellation pairs. Replication and cluster
+/// knobs are inherited from <see cref="MergeTreeFamilyBuilder{TBuilder, TEntity}"/>.
 /// </remarks>
 /// <typeparam name="TEntity">The entity type being configured.</typeparam>
-public sealed class CollapsingMergeTreeBuilder<TEntity> where TEntity : class
+public sealed class CollapsingMergeTreeBuilder<TEntity>
+    : MergeTreeFamilyBuilder<CollapsingMergeTreeBuilder<TEntity>, TEntity>
+    where TEntity : class
 {
-    private readonly EntityTypeBuilder<TEntity> _builder;
-
-    internal CollapsingMergeTreeBuilder(EntityTypeBuilder<TEntity> builder)
+    internal CollapsingMergeTreeBuilder(EntityTypeBuilder<TEntity> builder) : base(builder)
     {
-        _builder = builder;
     }
 
     /// <summary>
@@ -31,18 +31,7 @@ public sealed class CollapsingMergeTreeBuilder<TEntity> where TEntity : class
     {
         ArgumentNullException.ThrowIfNull(signColumn);
         var name = ExpressionExtensions.GetPropertyName(signColumn);
-        _builder.HasAnnotation(ClickHouseAnnotationNames.SignColumn, name);
+        Builder.HasAnnotation(ClickHouseAnnotationNames.SignColumn, name);
         return this;
     }
-
-    /// <summary>
-    /// Returns the underlying entity type builder for continued configuration.
-    /// </summary>
-    public EntityTypeBuilder<TEntity> And() => _builder;
-
-    /// <summary>
-    /// Implicit conversion back to <see cref="EntityTypeBuilder{TEntity}"/>.
-    /// </summary>
-    public static implicit operator EntityTypeBuilder<TEntity>(
-        CollapsingMergeTreeBuilder<TEntity> b) => b._builder;
 }

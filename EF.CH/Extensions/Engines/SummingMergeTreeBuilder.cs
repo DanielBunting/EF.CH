@@ -6,25 +6,15 @@ namespace EF.CH.Extensions.Engines;
 /// A builder returned by <see cref="ClickHouseEntityTypeBuilderExtensions.UseSummingMergeTree{TEntity}(EntityTypeBuilder{TEntity}, System.Linq.Expressions.Expression{System.Func{TEntity, object}})"/>.
 /// Currently has no engine-specific knobs beyond ORDER BY but exists for shape
 /// symmetry across engines and to leave room for future SUM-column targeting.
+/// Replication and cluster knobs are inherited from
+/// <see cref="MergeTreeFamilyBuilder{TBuilder, TEntity}"/>.
 /// </summary>
 /// <typeparam name="TEntity">The entity type being configured.</typeparam>
-public sealed class SummingMergeTreeBuilder<TEntity> where TEntity : class
+public sealed class SummingMergeTreeBuilder<TEntity>
+    : MergeTreeFamilyBuilder<SummingMergeTreeBuilder<TEntity>, TEntity>
+    where TEntity : class
 {
-    private readonly EntityTypeBuilder<TEntity> _builder;
-
-    internal SummingMergeTreeBuilder(EntityTypeBuilder<TEntity> builder)
+    internal SummingMergeTreeBuilder(EntityTypeBuilder<TEntity> builder) : base(builder)
     {
-        _builder = builder;
     }
-
-    /// <summary>
-    /// Returns the underlying entity type builder for continued configuration.
-    /// </summary>
-    public EntityTypeBuilder<TEntity> And() => _builder;
-
-    /// <summary>
-    /// Implicit conversion back to <see cref="EntityTypeBuilder{TEntity}"/>.
-    /// </summary>
-    public static implicit operator EntityTypeBuilder<TEntity>(
-        SummingMergeTreeBuilder<TEntity> b) => b._builder;
 }

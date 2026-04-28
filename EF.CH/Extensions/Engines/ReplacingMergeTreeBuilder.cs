@@ -11,16 +11,16 @@ namespace EF.CH.Extensions.Engines;
 /// Returned by <see cref="ClickHouseEntityTypeBuilderExtensions.UseReplacingMergeTree{TEntity}(EntityTypeBuilder{TEntity}, Expression{Func{TEntity, object}})"/>.
 /// Add a version or is-deleted column via <see cref="WithVersion{TProp}"/> /
 /// <see cref="WithIsDeleted{TProp}"/>; these write the same annotations the
-/// legacy multi-parameter overloads wrote.
+/// legacy multi-parameter overloads wrote. Replication and cluster knobs are
+/// inherited from <see cref="MergeTreeFamilyBuilder{TBuilder, TEntity}"/>.
 /// </remarks>
 /// <typeparam name="TEntity">The entity type being configured.</typeparam>
-public sealed class ReplacingMergeTreeBuilder<TEntity> where TEntity : class
+public sealed class ReplacingMergeTreeBuilder<TEntity>
+    : MergeTreeFamilyBuilder<ReplacingMergeTreeBuilder<TEntity>, TEntity>
+    where TEntity : class
 {
-    private readonly EntityTypeBuilder<TEntity> _builder;
-
-    internal ReplacingMergeTreeBuilder(EntityTypeBuilder<TEntity> builder)
+    internal ReplacingMergeTreeBuilder(EntityTypeBuilder<TEntity> builder) : base(builder)
     {
-        _builder = builder;
     }
 
     /// <summary>
@@ -34,7 +34,7 @@ public sealed class ReplacingMergeTreeBuilder<TEntity> where TEntity : class
     {
         ArgumentNullException.ThrowIfNull(versionColumn);
         var name = ExpressionExtensions.GetPropertyName(versionColumn);
-        _builder.HasAnnotation(ClickHouseAnnotationNames.VersionColumn, name);
+        Builder.HasAnnotation(ClickHouseAnnotationNames.VersionColumn, name);
         return this;
     }
 
@@ -50,18 +50,7 @@ public sealed class ReplacingMergeTreeBuilder<TEntity> where TEntity : class
     {
         ArgumentNullException.ThrowIfNull(isDeletedColumn);
         var name = ExpressionExtensions.GetPropertyName(isDeletedColumn);
-        _builder.HasAnnotation(ClickHouseAnnotationNames.IsDeletedColumn, name);
+        Builder.HasAnnotation(ClickHouseAnnotationNames.IsDeletedColumn, name);
         return this;
     }
-
-    /// <summary>
-    /// Returns the underlying entity type builder for continued configuration.
-    /// </summary>
-    public EntityTypeBuilder<TEntity> And() => _builder;
-
-    /// <summary>
-    /// Implicit conversion back to <see cref="EntityTypeBuilder{TEntity}"/>.
-    /// </summary>
-    public static implicit operator EntityTypeBuilder<TEntity>(
-        ReplacingMergeTreeBuilder<TEntity> b) => b._builder;
 }
