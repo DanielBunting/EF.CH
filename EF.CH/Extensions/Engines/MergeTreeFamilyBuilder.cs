@@ -1,3 +1,4 @@
+using System.Linq.Expressions;
 using EF.CH.Metadata;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
@@ -75,6 +76,51 @@ public abstract class MergeTreeFamilyBuilder<TBuilder, TEntity>
     {
         Builder.UseTableGroup(tableGroupName);
         return Self;
+    }
+
+    /// <summary>
+    /// Sets an explicit <c>PRIMARY KEY</c> for the table. The columns must form a prefix of the
+    /// engine's <c>ORDER BY</c> tuple (ClickHouse rule).
+    /// </summary>
+    /// <remarks>
+    /// Use this when you want the in-memory sparse index (PRIMARY KEY) to be narrower than the
+    /// sort/uniqueness key (ORDER BY) — for example, an <c>ORDER BY (UserId, Timestamp, EventId)</c>
+    /// table where only <c>(UserId, Timestamp)</c> needs to be loaded into RAM. If you don't call
+    /// this, ClickHouse defaults <c>PRIMARY KEY</c> to <c>ORDER BY</c>, which is correct for most cases.
+    /// </remarks>
+    /// <param name="primaryKey">Expression selecting one or more columns, e.g.
+    /// <c>e =&gt; e.UserId</c> or <c>e =&gt; new { e.UserId, e.Timestamp }</c>.</param>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown if <c>ORDER BY</c> has not been set (call <c>UseMergeTree</c> / <c>UseReplacingMergeTree</c>
+    /// / etc. first), or if the supplied columns are not a prefix of <c>ORDER BY</c>.
+    /// </exception>
+    public TBuilder WithPrimaryKey(Expression<Func<TEntity, object>> primaryKey)
+    {
+        ArgumentNullException.ThrowIfNull(primaryKey);
+
+        var columns = ExpressionExtensions.GetPropertyNames(primaryKey);
+        ValidatePrimaryKeyIsPrefixOfOrderBy(columns);
+        Builder.WithMergeTreePrimaryKey(columns);
+        return Self;
+    }
+
+    private void ValidatePrimaryKeyIsPrefixOfOrderBy(string[] pkColumns)
+    {
+        var orderBy = Builder.Metadata.FindAnnotation(ClickHouseAnnotationNames.OrderBy)?.Value as string[];
+        if (orderBy is null || orderBy.Length == 0)
+        {
+            throw new InvalidOperationException(
+                "WithPrimaryKey requires ORDER BY to be set first. "
+                + "Call UseMergeTree / UseReplacingMergeTree / etc. before WithPrimaryKey.");
+        }
+
+        if (pkColumns.Length > orderBy.Length
+            || !pkColumns.SequenceEqual(orderBy.Take(pkColumns.Length)))
+        {
+            throw new InvalidOperationException(
+                $"PRIMARY KEY columns ({string.Join(", ", pkColumns)}) must form a prefix of "
+                + $"ORDER BY columns ({string.Join(", ", orderBy)}).");
+        }
     }
 
     /// <summary>Returns the underlying entity-type builder for continued configuration.</summary>

@@ -154,8 +154,11 @@ public class MigrationTests : IAsyncLifetime
     }
 
     [Fact]
-    public void MigrationsSqlGenerator_ThrowsForColumnRename()
+    public void MigrationsSqlGenerator_GeneratesRenameColumn()
     {
+        // ClickHouse 22.4+ supports `ALTER TABLE ... RENAME COLUMN ... TO ...`
+        // on MergeTree-family engines, so we emit the DDL rather than throwing.
+        // (Non-MergeTree engines that don't support it surface a server-side error.)
         using var context = CreateContext();
         var generator = context.GetService<IMigrationsSqlGenerator>();
 
@@ -166,11 +169,14 @@ public class MigrationTests : IAsyncLifetime
             Table = "TestTable"
         };
 
-        var ex = Assert.Throws<ClickHouseUnsupportedOperationException>(
-            () => generator.Generate(new[] { renameColOperation }));
+        var commands = generator.Generate(new[] { renameColOperation });
+        var sql = commands.First().CommandText;
 
-        Assert.Equal(ClickHouseUnsupportedOperationException.OperationCategory.ColumnRename, ex.Category);
-        Assert.Contains("renaming", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ALTER TABLE", sql);
+        Assert.Contains("RENAME COLUMN", sql);
+        Assert.Contains("\"TestTable\"", sql);
+        Assert.Contains("\"OldName\"", sql);
+        Assert.Contains("\"NewName\"", sql);
     }
 
     [Fact]

@@ -451,9 +451,15 @@ public class ExternalConfigResolver : IExternalConfigResolver
     }
 
     /// <summary>
-    /// Escapes single quotes in values for SQL safety.
+    /// Escapes a value for embedding inside a single-quoted ClickHouse string literal.
+    /// ClickHouse interprets <c>\</c> as a C-style escape character inside <c>'…'</c>
+    /// literals, so a value ending in <c>\</c> would otherwise escape the closing
+    /// quote and let the next character become syntactically active. We escape <c>\</c>
+    /// first (so a later <c>'</c> escape produces <c>\\'</c> = literal backslash + closing
+    /// quote), then escape <c>'</c>.
     /// </summary>
-    private static string Escape(string value) => value.Replace("'", "\\'");
+    private static string Escape(string value) =>
+        value.Replace("\\", "\\\\").Replace("'", "\\'");
 
     private static string ToSnakeCase(string str)
     {

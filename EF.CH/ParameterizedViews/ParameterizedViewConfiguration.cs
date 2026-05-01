@@ -172,7 +172,7 @@ public class ParameterizedViewConfiguration<TView, TSource>
     /// <param name="viewName">The view name in ClickHouse.</param>
     /// <returns>This builder for chaining.</returns>
     /// <remarks>
-    /// If not specified, the view name from <c>HasParameterizedView()</c> is used.
+    /// If not specified, the view name from <c>ToParameterizedView()</c> is used.
     /// </remarks>
     public ParameterizedViewConfiguration<TView, TSource> HasName(string viewName)
     {

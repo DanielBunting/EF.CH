@@ -1,5 +1,7 @@
 using System.Text;
+using EF.CH.Infrastructure;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 
 namespace EF.CH.Extensions;
 
@@ -109,9 +111,7 @@ public static class ClickHouseExportExtensions
     /// </summary>
     private static HttpClient CreateHttpClient(DbContext context)
     {
-        var connStr = context.Database.GetConnectionString()
-            ?? throw new InvalidOperationException("No connection string configured.");
-        var (_, _, username, password) = ParseConnectionString(connStr);
+        var (_, _, username, password) = ResolveExportTarget(context);
 
         var client = new HttpClient();
         if (username != null)
@@ -127,17 +127,29 @@ public static class ClickHouseExportExtensions
 
     private static string BuildRequestUrl(DbContext context)
     {
-        var connStr = context.Database.GetConnectionString()
-            ?? throw new InvalidOperationException("No connection string configured.");
-        var (baseUrl, database, _, _) = ParseConnectionString(connStr);
+        var (baseUrl, database, _, _) = ResolveExportTarget(context);
         return $"{baseUrl}/?database={Uri.EscapeDataString(database)}";
     }
 
-    private static (string BaseUrl, string Database, string? Username, string? Password) ParseConnectionString(string connectionString)
+    private static (string BaseUrl, string Database, string? Username, string? Password) ResolveExportTarget(DbContext context)
+    {
+        var connStr = context.Database.GetConnectionString()
+            ?? throw new InvalidOperationException("No connection string configured.");
+
+        var httpPortOverride = context.GetService<IDbContextOptions>()
+            .FindExtension<ClickHouseOptionsExtension>()
+            ?.HttpPort;
+
+        return ParseConnectionString(connStr, httpPortOverride);
+    }
+
+    private static (string BaseUrl, string Database, string? Username, string? Password) ParseConnectionString(
+        string connectionString,
+        int? httpPortOverride)
     {
         var parts = connectionString.Split(';', StringSplitOptions.RemoveEmptyEntries);
         string host = "localhost";
-        int port = 8123;
+        int? port = null;
         string database = "default";
         string? username = null;
         string? password = null;
@@ -173,6 +185,7 @@ public static class ClickHouseExportExtensions
             }
         }
 
-        return ($"http://{host}:{port}", database, username, password);
+        var resolvedPort = httpPortOverride ?? port ?? 8123;
+        return ($"http://{host}:{resolvedPort}", database, username, password);
     }
 }

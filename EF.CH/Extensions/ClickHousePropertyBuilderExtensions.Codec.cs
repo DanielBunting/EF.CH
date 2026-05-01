@@ -60,4 +60,21 @@ public static class ClickHousePropertyBuilderCodecExtensions
         propertyBuilder.HasAnnotation(ClickHouseAnnotationNames.CompressionCodec, codecSpec);
         return propertyBuilder;
     }
+
+    /// <summary>
+    /// Configures the compression codec for this column from a raw codec spec
+    /// (e.g. <c>"ZSTD(9), LZ4"</c>). Primarily used by the scaffolding code
+    /// generator, which round-trips the persisted annotation back to a fluent
+    /// call. For new model code, prefer the typed builder overload.
+    /// </summary>
+    public static PropertyBuilder HasCodec(
+        this PropertyBuilder propertyBuilder,
+        string codec)
+    {
+        ArgumentNullException.ThrowIfNull(propertyBuilder);
+        ArgumentException.ThrowIfNullOrWhiteSpace(codec);
+
+        propertyBuilder.HasAnnotation(ClickHouseAnnotationNames.CompressionCodec, codec);
+        return propertyBuilder;
+    }
 }

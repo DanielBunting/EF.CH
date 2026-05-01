@@ -57,7 +57,7 @@ public class UserEventView
 
 ### 2. Configure in DbContext
 
-Use `HasParameterizedView` to mark the entity as a parameterized view result type:
+Use `ToParameterizedView` to mark the entity as a parameterized view result type:
 
 ```csharp
 public class AppDbContext : DbContext
@@ -68,7 +68,7 @@ public class AppDbContext : DbContext
     {
         modelBuilder.Entity<UserEventView>(entity =>
         {
-            entity.HasParameterizedView("user_events_view");
+            entity.ToParameterizedView("user_events_view");
         });
     }
 }
@@ -140,7 +140,7 @@ public class AnalyticsDbContext : DbContext
     {
         modelBuilder.Entity<UserEventView>(entity =>
         {
-            entity.HasParameterizedView("user_events_view");
+            entity.ToParameterizedView("user_events_view");
         });
     }
 }
@@ -381,7 +381,7 @@ public class AnalyticsDbContext : DbContext
         // Parameterized view result
         modelBuilder.Entity<UserEventView>(entity =>
         {
-            entity.HasParameterizedView("user_events_view");
+            entity.ToParameterizedView("user_events_view");
         });
     }
 }

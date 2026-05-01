@@ -69,6 +69,7 @@ public class NoOpTransactionTests : IAsyncLifetime
         Assert.Single(warnings);
     }
 
+
     private TxTestContext CreateContext(ILoggerProvider loggerProvider)
     {
         var loggerFactory = LoggerFactory.Create(b => b.AddProvider(loggerProvider).SetMinimumLevel(LogLevel.Trace));

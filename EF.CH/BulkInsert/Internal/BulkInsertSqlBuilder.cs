@@ -168,6 +168,7 @@ internal sealed class BulkInsertSqlBuilder
             }
             first = false;
 
+            ValidateSettingKey(kvp.Key);
             sb.Append(kvp.Key);
             sb.Append(" = ");
 
@@ -186,5 +187,39 @@ internal sealed class BulkInsertSqlBuilder
                 sb.Append(kvp.Value);
             }
         }
+    }
+
+    /// <summary>
+    /// SETTINGS keys are emitted into raw SQL. Reject anything that isn't a
+    /// plain ClickHouse identifier so a malicious or malformed key like
+    /// <c>"foo, x = (SELECT 1) --"</c> can't inject DDL into the bulk insert.
+    /// </summary>
+    private static void ValidateSettingKey(string key)
+    {
+        if (string.IsNullOrEmpty(key))
+        {
+            throw new ArgumentException("Bulk-insert SETTINGS key cannot be null or empty.", nameof(key));
+        }
+
+        if (!IsValidIdentifier(key))
+        {
+            throw new ArgumentException(
+                $"Bulk-insert SETTINGS key '{key}' is not a valid ClickHouse identifier. " +
+                "Keys must match [A-Za-z_][A-Za-z0-9_]*.",
+                nameof(key));
+        }
+    }
+
+    private static bool IsValidIdentifier(string value)
+    {
+        if (value.Length == 0) return false;
+        var first = value[0];
+        if (!(char.IsAsciiLetter(first) || first == '_')) return false;
+        for (var i = 1; i < value.Length; i++)
+        {
+            var c = value[i];
+            if (!(char.IsAsciiLetterOrDigit(c) || c == '_')) return false;
+        }
+        return true;
     }
 }

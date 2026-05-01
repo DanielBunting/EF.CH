@@ -42,8 +42,8 @@ public static class ClickHouseDatabaseExtensions
         Action<OptimizeTableOptions>? configure = null,
         CancellationToken cancellationToken = default) where TEntity : class
     {
-        var tableName = GetTableName<TEntity>(database);
-        return OptimizeTableCoreAsync(database, tableName, configure, cancellationToken);
+        var (tableName, schema) = GetTableInfo<TEntity>(database);
+        return OptimizeTableCoreAsync(database, tableName, schema, configure, cancellationToken);
     }
 
     /// <summary>
@@ -81,7 +81,7 @@ public static class ClickHouseDatabaseExtensions
         Action<OptimizeTableOptions>? configure = null,
         CancellationToken cancellationToken = default)
     {
-        return OptimizeTableCoreAsync(database, tableName, configure, cancellationToken);
+        return OptimizeTableCoreAsync(database, tableName, schema: null, configure, cancellationToken);
     }
 
     /// <summary>
@@ -101,6 +101,7 @@ public static class ClickHouseDatabaseExtensions
     private static Task<int> OptimizeTableCoreAsync(
         DatabaseFacade database,
         string tableName,
+        string? schema,
         Action<OptimizeTableOptions>? configure,
         CancellationToken cancellationToken)
     {
@@ -110,17 +111,24 @@ public static class ClickHouseDatabaseExtensions
         var options = new OptimizeTableOptions();
         configure?.Invoke(options);
 
-        var sql = BuildOptimizeSql(database, tableName, options);
+        var sql = BuildOptimizeSql(database, tableName, schema, options);
         return database.ExecuteSqlRawAsync(sql, cancellationToken);
     }
 
     private static string BuildOptimizeSql(
         DatabaseFacade database,
         string tableName,
+        string? schema,
         OptimizeTableOptions options)
     {
         var sqlHelper = database.GetService<ISqlGenerationHelper>();
-        var quotedTable = sqlHelper.DelimitIdentifier(tableName);
+        // Qualify with the entity's mapped schema when known. Without this, OPTIMIZE
+        // runs against the connection's current database — wrong target in
+        // multi-database deployments where the entity is mapped to a non-default
+        // schema.
+        var quotedTable = string.IsNullOrEmpty(schema)
+            ? sqlHelper.DelimitIdentifier(tableName)
+            : sqlHelper.DelimitIdentifier(tableName, schema);
 
         var sql = $"OPTIMIZE TABLE {quotedTable}";
 
@@ -150,15 +158,20 @@ public static class ClickHouseDatabaseExtensions
     }
 
     private static string GetTableName<TEntity>(DatabaseFacade database) where TEntity : class
+        => GetTableInfo<TEntity>(database).tableName;
+
+    private static (string tableName, string? schema) GetTableInfo<TEntity>(DatabaseFacade database) where TEntity : class
     {
         var context = database.GetService<ICurrentDbContext>().Context;
         var entityType = context.Model.FindEntityType(typeof(TEntity))
             ?? throw new InvalidOperationException(
                 $"Entity type '{typeof(TEntity).Name}' is not part of the model.");
 
-        return entityType.GetTableName()
+        var tableName = entityType.GetTableName()
             ?? throw new InvalidOperationException(
                 $"Entity type '{typeof(TEntity).Name}' does not have a table name.");
+
+        return (tableName, entityType.GetSchema());
     }
 
     #endregion
@@ -249,8 +262,42 @@ public static class ClickHouseDatabaseExtensions
     public static Task<int> SyncReplicaAsync(this DatabaseFacade database, string tableName, bool strict = false, CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
+        return SyncReplicaCoreAsync(database, tableName, schema: null, strict, ct);
+    }
+
+    /// <summary>
+    /// Typed overload that resolves the table name and schema from the EF Core
+    /// model. Prefer this when the entity is mapped via <c>ToTable("name", "schema")</c>
+    /// — the string overload only sees the name and would otherwise emit an unqualified
+    /// command that targets the connection's current database.
+    /// </summary>
+    public static Task<int> SyncReplicaAsync<TEntity>(
+        this DatabaseFacade database,
+        bool strict = false,
+        CancellationToken ct = default) where TEntity : class
+    {
+        var (tableName, schema) = GetTableInfo<TEntity>(database);
+        return SyncReplicaCoreAsync(database, tableName, schema, strict, ct);
+    }
+
+    /// <summary>
+    /// Synchronous counterpart of <see cref="SyncReplicaAsync{TEntity}"/>.
+    /// </summary>
+    public static int SyncReplica<TEntity>(this DatabaseFacade database, bool strict = false) where TEntity : class
+        => SyncReplicaAsync<TEntity>(database, strict).GetAwaiter().GetResult();
+
+    private static Task<int> SyncReplicaCoreAsync(
+        DatabaseFacade database,
+        string tableName,
+        string? schema,
+        bool strict,
+        CancellationToken ct)
+    {
         var helper = database.GetService<ISqlGenerationHelper>();
-        var sql = $"SYSTEM SYNC REPLICA {helper.DelimitIdentifier(tableName)}" + (strict ? " STRICT" : string.Empty);
+        var qualified = string.IsNullOrEmpty(schema)
+            ? helper.DelimitIdentifier(tableName)
+            : helper.DelimitIdentifier(tableName, schema);
+        var sql = $"SYSTEM SYNC REPLICA {qualified}" + (strict ? " STRICT" : string.Empty);
         return database.ExecuteSqlRawAsync(sql, ct);
     }
 
@@ -732,7 +779,7 @@ public static class ClickHouseDatabaseExtensions
     /// CREATE VIEW statements.
     /// </para>
     /// <para>
-    /// Views configured with only <c>HasParameterizedView(name)</c> (without fluent configuration)
+    /// Views configured with only <c>ToParameterizedView(name)</c> (without fluent configuration)
     /// are skipped since they don't have the projection and parameter metadata.
     /// </para>
     /// </remarks>
@@ -750,30 +797,10 @@ public static class ClickHouseDatabaseExtensions
         ArgumentNullException.ThrowIfNull(database);
 
         var context = database.GetService<ICurrentDbContext>().Context;
-        var model = context.Model;
         var viewsCreated = 0;
 
-        foreach (var entityType in model.GetEntityTypes())
+        foreach (var sql in Views.ViewCreationHelpers.EnumerateParameterizedViewDdl(context.Model))
         {
-            // Check if this is a parameterized view with fluent configuration
-            var isParameterizedView = entityType.FindAnnotation(
-                Metadata.ClickHouseAnnotationNames.ParameterizedView)?.Value as bool? ?? false;
-
-            if (!isParameterizedView)
-                continue;
-
-            var metadata = entityType.FindAnnotation(
-                Metadata.ClickHouseAnnotationNames.ParameterizedViewMetadata)?.Value as ParameterizedViews.ParameterizedViewMetadataBase;
-
-            if (metadata == null)
-            {
-                // Skip views configured with HasParameterizedView() only (no fluent configuration)
-                continue;
-            }
-
-            var sql = ParameterizedViews.ParameterizedViewSqlGenerator.GenerateCreateViewSql(model, metadata, ifNotExists: true);
-
-            // Escape curly braces for ExecuteSqlRawAsync
             var escapedSql = sql.Replace("{", "{{").Replace("}", "}}");
             await database.ExecuteSqlRawAsync(escapedSql, cancellationToken);
             viewsCreated++;
@@ -835,7 +862,7 @@ public static class ClickHouseDatabaseExtensions
             Metadata.ClickHouseAnnotationNames.ParameterizedViewMetadata)?.Value as ParameterizedViews.ParameterizedViewMetadataBase
             ?? throw new InvalidOperationException(
                 $"Entity type '{typeof(TView).Name}' does not have fluent view configuration. " +
-                "Use AsParameterizedView<TView, TSource>() instead of HasParameterizedView() to enable DDL generation.");
+                "Use AsParameterizedView<TView, TSource>() instead of ToParameterizedView() to enable DDL generation.");
 
         var sql = ParameterizedViews.ParameterizedViewSqlGenerator.GenerateCreateViewSql(model, metadata, ifNotExists: true);
 
@@ -988,27 +1015,10 @@ public static class ClickHouseDatabaseExtensions
         ArgumentNullException.ThrowIfNull(database);
 
         var context = database.GetService<ICurrentDbContext>().Context;
-        var model = context.Model;
         var viewsCreated = 0;
 
-        foreach (var entityType in model.GetEntityTypes())
+        foreach (var sql in Views.ViewCreationHelpers.EnumeratePlainViewDdl(context.Model))
         {
-            var isView = entityType.FindAnnotation(
-                Metadata.ClickHouseAnnotationNames.View)?.Value as bool? ?? false;
-            if (!isView)
-                continue;
-
-            var deferred = entityType.FindAnnotation(
-                Metadata.ClickHouseAnnotationNames.ViewDeferred)?.Value as bool? ?? false;
-            if (deferred)
-                continue;
-
-            var metadata = entityType.FindAnnotation(
-                Metadata.ClickHouseAnnotationNames.ViewMetadata)?.Value as Views.ViewMetadataBase;
-            if (metadata == null)
-                continue;
-
-            var sql = Views.ViewSqlGenerator.GenerateCreateViewSql(model, ForceIfNotExists(metadata));
             var escapedSql = sql.Replace("{", "{{").Replace("}", "}}");
             await database.ExecuteSqlRawAsync(escapedSql, cancellationToken);
             viewsCreated++;
@@ -1060,30 +1070,11 @@ public static class ClickHouseDatabaseExtensions
                 $"Entity type '{typeof(TView).Name}' does not have view DDL metadata. " +
                 "Use AsView<TView, TSource>() or AsViewRaw<TView>() instead of HasView() to enable DDL generation.");
 
-        var sql = Views.ViewSqlGenerator.GenerateCreateViewSql(model, ForceIfNotExists(metadata));
+        var sql = Views.ViewSqlGenerator.GenerateCreateViewSql(
+            model, Views.ViewCreationHelpers.ForceIfNotExists(metadata));
         var escapedSql = sql.Replace("{", "{{").Replace("}", "}}");
         return database.ExecuteSqlRawAsync(escapedSql, cancellationToken);
     }
-
-    // Ensure* methods are idempotent by contract: clone the configured view metadata
-    // with IF NOT EXISTS forced on (and OR REPLACE off — the two are mutually exclusive
-    // in ClickHouse). Used by EnsureViewsAsync / EnsureViewAsync<T> so the user's
-    // AsView(...orReplace: true) configuration doesn't bleed into the runtime ensure path.
-    private static Views.ViewMetadataBase ForceIfNotExists(Views.ViewMetadataBase source)
-        => new()
-        {
-            ViewName = source.ViewName,
-            ResultType = source.ResultType,
-            SourceType = source.SourceType,
-            SourceTable = source.SourceTable,
-            ProjectionExpression = source.ProjectionExpression,
-            WhereExpressions = source.WhereExpressions,
-            RawSelectSql = source.RawSelectSql,
-            IfNotExists = true,
-            OrReplace = false,
-            OnCluster = source.OnCluster,
-            Schema = source.Schema
-        };
 
     /// <summary>
     /// Returns the CREATE VIEW SQL for a plain view configured via <c>AsView</c> / <c>AsViewRaw</c>

@@ -3,7 +3,9 @@ using EF.CH.Metadata;
 using EF.CH.Migrations.Internal;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.EntityFrameworkCore.Migrations.Internal;
 using Microsoft.EntityFrameworkCore.Migrations.Operations;
 using Microsoft.Extensions.DependencyInjection;
 using EF.CH.Tests.Sql;
@@ -276,6 +278,197 @@ public class MergeTreeDdlTests
         Assert.Contains("ORDER BY (\"Id\")", sql);
     }
 
+    // -- Regression pins for the fluent ReplacingMergeTree builder ----------------
+    // The old multi-parameter overloads (UseReplacingMergeTree<T, TVersion>(...),
+    // UseReplacingMergeTree<T, TVersion, TIsDeleted>(...)) were removed in favor of
+    // the .WithVersion / .WithIsDeleted builder. These tests pin that the fluent
+    // form produces the same DDL contract those overloads upheld:
+    //   ENGINE = ReplacingMergeTree([ver [, is_deleted]]) ... ORDER BY (...)
+    //
+    // Routed through the real MigrationsModelDiffer + SQL generator so any future
+    // annotation the production migration path emits is automatically observed.
+
+    [Fact]
+    public void ModelBuilder_UseReplacingMergeTree_Fluent_WithVersion_GeneratesExpectedDdl()
+    {
+        var sql = GenerateDdlFromModelViaRealDiffer<TestReplacingWithDeleteEntity>(
+            entity =>
+            {
+                entity.ToTable("versioned");
+                entity.HasKey(e => e.Id);
+                entity.UseReplacingMergeTree(x => x.Id).WithVersion(x => x.Version);
+            });
+
+        Assert.Contains("ENGINE = ReplacingMergeTree(\"Version\")", sql);
+        Assert.Contains("ORDER BY (\"Id\")", sql);
+        Assert.DoesNotContain("IsDeleted)", sql);
+    }
+
+    [Fact]
+    public void ModelBuilder_UseReplacingMergeTree_Fluent_WithVersionAndIsDeleted_GeneratesExpectedDdl()
+    {
+        var sql = GenerateDdlFromModelViaRealDiffer<TestReplacingWithDeleteEntity>(
+            entity =>
+            {
+                entity.ToTable("deletable");
+                entity.HasKey(e => e.Id);
+                entity.UseReplacingMergeTree(x => x.Id)
+                    .WithVersion(x => x.Version)
+                    .WithIsDeleted(x => x.IsDeleted);
+            });
+
+        Assert.Contains("ENGINE = ReplacingMergeTree(\"Version\", \"IsDeleted\")", sql);
+        Assert.Contains("ORDER BY (\"Id\")", sql);
+    }
+
+    [Fact]
+    public void CreateTable_WithPrimaryKey_ShorterThanOrderBy_GeneratesPrimaryKeyClause()
+    {
+        using var context = CreateContext();
+        var generator = GetMigrationsSqlGenerator(context);
+
+        var operation = new CreateTableOperation
+        {
+            Name = "events",
+            Columns =
+            {
+                new AddColumnOperation { Name = "UserId", ClrType = typeof(Guid), ColumnType = "UUID" },
+                new AddColumnOperation { Name = "Timestamp", ClrType = typeof(DateTime), ColumnType = "DateTime64(3)" },
+                new AddColumnOperation { Name = "EventId", ClrType = typeof(Guid), ColumnType = "UUID" }
+            }
+        };
+
+        operation.AddAnnotation(ClickHouseAnnotationNames.Engine, "MergeTree");
+        operation.AddAnnotation(ClickHouseAnnotationNames.OrderBy, new[] { "UserId", "Timestamp", "EventId" });
+        operation.AddAnnotation(ClickHouseAnnotationNames.PrimaryKey, new[] { "UserId", "Timestamp" });
+
+        var sql = GenerateSql(generator, operation);
+
+        Assert.Contains("ORDER BY (\"UserId\", \"Timestamp\", \"EventId\")", sql);
+        Assert.Contains("PRIMARY KEY (\"UserId\", \"Timestamp\")", sql);
+        Assert.True(
+            sql.IndexOf("ORDER BY", StringComparison.Ordinal)
+                < sql.IndexOf("PRIMARY KEY", StringComparison.Ordinal),
+            "PRIMARY KEY must follow ORDER BY in ClickHouse syntax order.");
+    }
+
+    [Fact]
+    public void ModelBuilder_WithPrimaryKey_PrefixOfOrderBy_SetsAnnotation()
+    {
+        var builder = new ModelBuilder();
+
+        builder.Entity<TestMergeTreeEntity>(entity =>
+        {
+            entity.ToTable("events");
+            entity.HasKey(e => e.Id);
+            entity.UseMergeTree(e => new { e.EventTime, e.Id })
+                .WithPrimaryKey(e => e.EventTime);
+        });
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(TestMergeTreeEntity))!;
+
+        Assert.Equal(
+            new[] { "EventTime" },
+            entityType.FindAnnotation(ClickHouseAnnotationNames.PrimaryKey)?.Value);
+        Assert.Equal(
+            new[] { "EventTime", "Id" },
+            entityType.FindAnnotation(ClickHouseAnnotationNames.OrderBy)?.Value);
+    }
+
+    [Fact]
+    public void ModelBuilder_WithPrimaryKey_Composite_SetsAnnotation()
+    {
+        var builder = new ModelBuilder();
+
+        builder.Entity<TestMergeTreeEntity>(entity =>
+        {
+            entity.ToTable("events");
+            entity.HasKey(e => e.Id);
+            entity.UseReplacingMergeTree(e => new { e.EventTime, e.Id, e.EventType })
+                .WithPrimaryKey(e => new { e.EventTime, e.Id });
+        });
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(TestMergeTreeEntity))!;
+
+        Assert.Equal(
+            new[] { "EventTime", "Id" },
+            entityType.FindAnnotation(ClickHouseAnnotationNames.PrimaryKey)?.Value);
+    }
+
+    [Fact]
+    public void ModelBuilder_WithPrimaryKey_NotAPrefixOfOrderBy_Throws()
+    {
+        var builder = new ModelBuilder();
+
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            builder.Entity<TestMergeTreeEntity>(entity =>
+            {
+                entity.ToTable("events");
+                entity.HasKey(e => e.Id);
+                entity.UseMergeTree(e => new { e.EventTime, e.Id })
+                    .WithPrimaryKey(e => e.Id);
+            }));
+
+        Assert.Contains("must form a prefix", ex.Message);
+    }
+
+    [Fact]
+    public void ModelBuilder_WithPrimaryKey_ColumnNotInOrderBy_Throws()
+    {
+        var builder = new ModelBuilder();
+
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            builder.Entity<TestMergeTreeEntity>(entity =>
+            {
+                entity.ToTable("events");
+                entity.HasKey(e => e.Id);
+                entity.UseMergeTree(e => e.EventTime)
+                    .WithPrimaryKey(e => e.EventType);
+            }));
+
+        Assert.Contains("must form a prefix", ex.Message);
+    }
+
+    [Fact]
+    public void ModelBuilder_WithPrimaryKey_LongerThanOrderBy_Throws()
+    {
+        var builder = new ModelBuilder();
+
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            builder.Entity<TestMergeTreeEntity>(entity =>
+            {
+                entity.ToTable("events");
+                entity.HasKey(e => e.Id);
+                entity.UseMergeTree(e => e.EventTime)
+                    .WithPrimaryKey(e => new { e.EventTime, e.Id });
+            }));
+
+        Assert.Contains("must form a prefix", ex.Message);
+    }
+
+    [Fact]
+    public void ModelBuilder_WithPrimaryKey_EqualToOrderBy_Allowed()
+    {
+        var builder = new ModelBuilder();
+
+        builder.Entity<TestMergeTreeEntity>(entity =>
+        {
+            entity.ToTable("events");
+            entity.HasKey(e => e.Id);
+            entity.UseMergeTree(e => new { e.EventTime, e.Id })
+                .WithPrimaryKey(e => new { e.EventTime, e.Id });
+        });
+
+        var model = builder.FinalizeModel();
+        var entityType = model.FindEntityType(typeof(TestMergeTreeEntity))!;
+
+        Assert.Equal(
+            new[] { "EventTime", "Id" },
+            entityType.FindAnnotation(ClickHouseAnnotationNames.PrimaryKey)?.Value);
+    }
+
     private static TestDbContext CreateContext()
     {
         var options = new DbContextOptionsBuilder<TestDbContext>()
@@ -294,6 +487,51 @@ public class MergeTreeDdlTests
     {
         var commands = generator.Generate(new[] { operation });
         return string.Join("\n", commands.Select(c => c.CommandText));
+    }
+
+    /// <summary>
+    /// Routes the model through the real <see cref="IMigrationsModelDiffer"/>
+    /// + <see cref="IMigrationsSqlGenerator"/> pipeline. No annotation
+    /// allowlist, no CLR-type fallback table — anything the production
+    /// migration path emits, this test sees.
+    /// </summary>
+    private static string GenerateDdlFromModelViaRealDiffer<TEntity>(
+        Action<EntityTypeBuilder<TEntity>> configure)
+        where TEntity : class
+    {
+        // EF Core caches the model per context type. Two tests sharing
+        // FluentDdlContext would otherwise see the first test's frozen model.
+        // EnableServiceProviderCaching(false) gives each call a fresh
+        // service provider (and therefore a fresh model cache).
+        var options = new DbContextOptionsBuilder<FluentDdlContext>()
+            .UseClickHouse("Host=localhost;Database=test")
+            .EnableServiceProviderCaching(false)
+            .Options;
+        using var context = new FluentDdlContext(options, mb => mb.Entity<TEntity>(configure));
+
+        var sp = ((IInfrastructure<IServiceProvider>)context).Instance;
+        var differ = sp.GetRequiredService<IMigrationsModelDiffer>();
+        var generator = sp.GetRequiredService<IMigrationsSqlGenerator>();
+        // The diff requires the design-time relational model (IsExcludedFromMigrations
+        // and other diff inputs are stored there, not on the read-optimized context.Model).
+        var designModel = sp.GetRequiredService<Microsoft.EntityFrameworkCore.Metadata.IDesignTimeModel>().Model;
+
+        var operations = differ.GetDifferences(source: null, target: designModel.GetRelationalModel());
+        // Pass the design-time model — the SQL generator's engine-clause path
+        // falls back to entity-type annotations when operation annotations are
+        // absent (which the differ doesn't propagate for engine knobs).
+        var commands = generator.Generate(operations, designModel);
+        return string.Join("\n", commands.Select(c => c.CommandText));
+    }
+
+    private sealed class FluentDdlContext : DbContext
+    {
+        private readonly Action<ModelBuilder> _configure;
+
+        public FluentDdlContext(DbContextOptions<FluentDdlContext> options, Action<ModelBuilder> configure)
+            : base(options) => _configure = configure;
+
+        protected override void OnModelCreating(ModelBuilder mb) => _configure(mb);
     }
 }
 

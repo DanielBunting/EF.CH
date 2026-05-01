@@ -647,9 +647,15 @@ public class DictionaryConfigResolver : IDictionaryConfigResolver
         return $"\"{identifier.Replace("\"", "\\\"")}\"";
     }
 
+    /// <summary>
+    /// Escapes a value for embedding inside a single-quoted ClickHouse string literal.
+    /// ClickHouse interprets <c>\</c> as a C-style escape character inside <c>'…'</c>
+    /// literals, so the backslash must be escaped first (otherwise a value ending in
+    /// <c>\</c> escapes the closing quote and breaks out of the literal).
+    /// </summary>
     private static string EscapeSql(string value)
     {
-        return value.Replace("'", "\\'");
+        return value.Replace("\\", "\\\\").Replace("'", "\\'");
     }
 
     private static string ConvertToSnakeCase(string name)

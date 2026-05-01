@@ -2,6 +2,7 @@ using System.Linq.Expressions;
 using System.Text;
 using EF.CH.External;
 using EF.CH.Metadata;
+using EF.CH.Metadata.Internal;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
@@ -32,6 +33,12 @@ public class ClickHouseQueryTranslationPostprocessor : RelationalQueryTranslatio
 
     public override Expression Process(Expression query)
     {
+        // Clear any thread-local state left by a prior query. Most of the Set* calls
+        // below are conditional, so without this reset, fields a previous query
+        // populated but never consumed (e.g. translation threw before SQL generation
+        // reached the consumption site) would leak into this query's SQL.
+        ClickHouseQuerySqlGenerator.ResetThreadLocalState();
+
         // Set up default-for-null mappings for null comparison rewriting in SQL nullability processor
         ClickHouseSqlNullabilityProcessor.SetDefaultForNullMappings(_queryCompilationContext.Model);
 
@@ -58,7 +65,7 @@ public class ClickHouseQueryTranslationPostprocessor : RelationalQueryTranslatio
         // Apply FINAL/SAMPLE modifiers to table expressions (only applies to native ClickHouse tables)
         if (options.UseFinal || options.SampleFraction.HasValue)
         {
-            query = new ClickHouseTableModifierApplyingVisitor(options).Visit(query);
+            query = new ClickHouseTableModifierApplyingVisitor(options, _queryCompilationContext.Model).Visit(query);
         }
 
         // Pass SETTINGS via thread-local to SQL generator
@@ -160,10 +167,14 @@ public class ClickHouseQueryTranslationPostprocessor : RelationalQueryTranslatio
 internal class ClickHouseTableModifierApplyingVisitor : ExpressionVisitor
 {
     private readonly ClickHouseQueryCompilationContextOptions _options;
+    private readonly IModel _model;
 
-    public ClickHouseTableModifierApplyingVisitor(ClickHouseQueryCompilationContextOptions options)
+    public ClickHouseTableModifierApplyingVisitor(
+        ClickHouseQueryCompilationContextOptions options,
+        IModel model)
     {
         _options = options;
+        _model = model;
     }
 
     protected override Expression VisitExtension(Expression node)
@@ -171,6 +182,16 @@ internal class ClickHouseTableModifierApplyingVisitor : ExpressionVisitor
         // Wrap TableExpression with our modifier expression
         if (node is TableExpression tableExpression)
         {
+            if (_options.UseFinal)
+            {
+                ValidateFinalEngine(tableExpression);
+            }
+
+            if (_options.SampleFraction.HasValue)
+            {
+                ValidateSampleableTable(tableExpression);
+            }
+
             return new ClickHouseTableModifierExpression(
                 tableExpression,
                 _options.UseFinal,
@@ -203,6 +224,87 @@ internal class ClickHouseTableModifierApplyingVisitor : ExpressionVisitor
         // For other extension expressions, use the default visitor behavior
         // base.VisitExtension calls node.VisitChildren which works for most expression types
         return base.VisitExtension(node);
+    }
+
+    /// <summary>
+    /// Throws when <c>.Final()</c> is applied to a table whose engine does not
+    /// support FINAL. ClickHouse only honours FINAL on MergeTree-family engines;
+    /// applying it to Memory / Log / Distributed / etc. errors at execution with
+    /// a confusing server-side message. We catch it here so the failure surfaces
+    /// at the offending call site instead.
+    /// </summary>
+    private void ValidateFinalEngine(TableExpression tableExpression)
+    {
+        var entityType = FindEntityTypeByTableName(tableExpression.Name, tableExpression.Schema);
+        if (entityType is null)
+        {
+            return; // Unknown table (e.g. a CTE alias or table function) — let the server decide.
+        }
+
+        var engine = entityType.FindAnnotation(ClickHouseAnnotationNames.Engine)?.Value as string;
+        if (engine is null || ClickHouseEngineNames.IsMergeTreeFamily(engine))
+        {
+            return;
+        }
+
+        throw new InvalidOperationException(
+            $".Final() is only supported on MergeTree-family engines. Entity '{entityType.ClrType.Name}' " +
+            $"is mapped to table '{tableExpression.Name}' using the '{engine}' engine, which does not support FINAL.");
+    }
+
+    private IEntityType? FindEntityTypeByTableName(string tableName, string? schema)
+    {
+        foreach (var entityType in _model.GetEntityTypes())
+        {
+            var entityTableName = entityType.GetTableName();
+            var entitySchema = entityType.GetSchema() ?? _model.GetDefaultSchema();
+            if (entityTableName == tableName && entitySchema == schema)
+            {
+                return entityType;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Throws when <c>.Sample()</c> would wrap a table that has a ClickHouse engine
+    /// declared in the model but no <c>SAMPLE BY</c> expression. The table modifier
+    /// visitor wraps every <see cref="TableExpression"/> with the SAMPLE modifier,
+    /// so a query that joins a sampled table with a lookup would otherwise emit
+    /// SAMPLE on both — and the server returns "Storage X doesn't support sampling"
+    /// if the lookup has no <c>SAMPLE BY</c>. Catching it here surfaces the failure at
+    /// the offending call site (and forces the user to sample-then-join in two steps
+    /// when only one of the tables is sampleable).
+    ///
+    /// We only validate when the entity has an Engine annotation: tests and minimal
+    /// models that don't configure CH-specific metadata fall through to the server
+    /// (which is what they did before this validation was added).
+    /// </summary>
+    private void ValidateSampleableTable(TableExpression tableExpression)
+    {
+        var entityType = FindEntityTypeByTableName(tableExpression.Name, tableExpression.Schema);
+        if (entityType is null)
+        {
+            return; // unknown — let the server decide.
+        }
+
+        var engine = entityType.FindAnnotation(ClickHouseAnnotationNames.Engine)?.Value as string;
+        if (string.IsNullOrEmpty(engine))
+        {
+            return; // no CH-specific metadata at all — let the server decide.
+        }
+
+        var sampleBy = entityType.FindAnnotation(ClickHouseAnnotationNames.SampleBy)?.Value as string;
+        if (!string.IsNullOrWhiteSpace(sampleBy))
+        {
+            return;
+        }
+
+        throw new InvalidOperationException(
+            $".Sample() is only supported on tables that declare a SAMPLE BY clause. " +
+            $"Entity '{entityType.ClrType.Name}' is mapped to table '{tableExpression.Name}' " +
+            $"and has no HasSampleBy(...) configured. If you intended to sample one side of a " +
+            $"join, materialise the sampled query first and then join the result.");
     }
 }
 

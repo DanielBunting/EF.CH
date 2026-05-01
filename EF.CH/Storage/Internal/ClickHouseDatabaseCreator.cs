@@ -71,26 +71,24 @@ public class ClickHouseDatabaseCreator : RelationalDatabaseCreator
         if (string.IsNullOrEmpty(database))
             return true;
 
+        // Configuration / network / permission errors propagate. Previously every
+        // exception was caught and returned as `false`, which made misconfigured
+        // connection strings look identical to "database does not exist" — and
+        // EnsureCreated() then attempted CREATE DATABASE, which failed with an
+        // unrelated error. Let the real cause surface.
+        using var masterConnection = CreateMasterConnection();
+        using var command = masterConnection.CreateCommand();
+        command.CommandText = $"SELECT count() FROM system.databases WHERE name = '{EscapeStringLiteral(database)}'";
+
+        masterConnection.Open();
         try
         {
-            using var masterConnection = CreateMasterConnection();
-            using var command = masterConnection.CreateCommand();
-            command.CommandText = $"SELECT count() FROM system.databases WHERE name = '{database}'";
-
-            masterConnection.Open();
-            try
-            {
-                var result = command.ExecuteScalar();
-                return result is not null && Convert.ToInt64(result) > 0;
-            }
-            finally
-            {
-                masterConnection.Close();
-            }
+            var result = command.ExecuteScalar();
+            return result is not null && Convert.ToInt64(result) > 0;
         }
-        catch
+        finally
         {
-            return false;
+            masterConnection.Close();
         }
     }
 
@@ -100,28 +98,23 @@ public class ClickHouseDatabaseCreator : RelationalDatabaseCreator
         if (string.IsNullOrEmpty(database))
             return true;
 
+        await using var masterConnection = CreateMasterConnection();
+        await using var command = masterConnection.CreateCommand();
+        command.CommandText = $"SELECT count() FROM system.databases WHERE name = '{EscapeStringLiteral(database)}'";
+
+        await masterConnection.OpenAsync(cancellationToken);
         try
         {
-            await using var masterConnection = CreateMasterConnection();
-            await using var command = masterConnection.CreateCommand();
-            command.CommandText = $"SELECT count() FROM system.databases WHERE name = '{database}'";
-
-            await masterConnection.OpenAsync(cancellationToken);
-            try
-            {
-                var result = await command.ExecuteScalarAsync(cancellationToken);
-                return result is not null && Convert.ToInt64(result) > 0;
-            }
-            finally
-            {
-                await masterConnection.CloseAsync();
-            }
+            var result = await command.ExecuteScalarAsync(cancellationToken);
+            return result is not null && Convert.ToInt64(result) > 0;
         }
-        catch
+        finally
         {
-            return false;
+            await masterConnection.CloseAsync();
         }
     }
+
+    private static string EscapeStringLiteral(string value) => value.Replace("'", "''");
 
     public override bool HasTables()
     {
@@ -250,8 +243,12 @@ public class ClickHouseDatabaseCreator : RelationalDatabaseCreator
     }
 
     /// <summary>
-    /// Creates all tables for the current model in the database.
-    /// ClickHouse does not support transactions, so we execute each command directly.
+    /// Creates all tables for the current model in the database, followed by any
+    /// configured views (plain via <c>AsView</c> / <c>AsViewRaw</c> and parameterized
+    /// via <c>AsParameterizedView</c>). EF Core's standard differ does not emit DDL
+    /// for view-mapped entities, so the view post-pass is required to make
+    /// <c>EnsureCreated</c> match the model. ClickHouse does not support transactions,
+    /// so we execute each command directly.
     /// </summary>
     public override void CreateTables()
     {
@@ -266,6 +263,8 @@ public class ClickHouseDatabaseCreator : RelationalDatabaseCreator
                 dbCommand.CommandText = command.CommandText;
                 dbCommand.ExecuteNonQuery();
             }
+
+            CreateViewsAfterTables();
         }
         finally
         {
@@ -274,8 +273,8 @@ public class ClickHouseDatabaseCreator : RelationalDatabaseCreator
     }
 
     /// <summary>
-    /// Asynchronously creates all tables for the current model in the database.
-    /// ClickHouse does not support transactions, so we execute each command directly.
+    /// Asynchronously creates all tables for the current model in the database, followed
+    /// by any configured views. See <see cref="CreateTables"/> for rationale.
     /// </summary>
     public override async Task CreateTablesAsync(CancellationToken cancellationToken = default)
     {
@@ -290,10 +289,50 @@ public class ClickHouseDatabaseCreator : RelationalDatabaseCreator
                 dbCommand.CommandText = command.CommandText;
                 await dbCommand.ExecuteNonQueryAsync(cancellationToken);
             }
+
+            await CreateViewsAfterTablesAsync(cancellationToken);
         }
         finally
         {
             await _connection.CloseAsync();
+        }
+    }
+
+    private void CreateViewsAfterTables()
+    {
+        var model = Dependencies.CurrentContext.Context.Model;
+
+        foreach (var sql in Views.ViewCreationHelpers.EnumeratePlainViewDdl(model))
+        {
+            using var cmd = _connection.DbConnection.CreateCommand();
+            cmd.CommandText = sql;
+            cmd.ExecuteNonQuery();
+        }
+
+        foreach (var sql in Views.ViewCreationHelpers.EnumerateParameterizedViewDdl(model))
+        {
+            using var cmd = _connection.DbConnection.CreateCommand();
+            cmd.CommandText = sql;
+            cmd.ExecuteNonQuery();
+        }
+    }
+
+    private async Task CreateViewsAfterTablesAsync(CancellationToken cancellationToken)
+    {
+        var model = Dependencies.CurrentContext.Context.Model;
+
+        foreach (var sql in Views.ViewCreationHelpers.EnumeratePlainViewDdl(model))
+        {
+            await using var cmd = _connection.DbConnection.CreateCommand();
+            cmd.CommandText = sql;
+            await cmd.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        foreach (var sql in Views.ViewCreationHelpers.EnumerateParameterizedViewDdl(model))
+        {
+            await using var cmd = _connection.DbConnection.CreateCommand();
+            cmd.CommandText = sql;
+            await cmd.ExecuteNonQueryAsync(cancellationToken);
         }
     }
 }

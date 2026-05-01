@@ -42,7 +42,10 @@ public sealed class ClickHouseTempTableManager : IClickHouseTempTableManager
     {
         var propertyInfo = _propertyCache.GetPropertyInfo<T>();
 
-        var name = tableName ?? $"_tmp_{typeof(T).Name}_{Guid.NewGuid().ToString("N")[..8]}";
+        // Use the full 32-char hex GUID (~128 bits of entropy) instead of the
+        // first 8 chars (32 bits, ~50% birthday-collision at √2³² ≈ 65k
+        // concurrently-living temp tables — reachable in CI fleets).
+        var name = tableName ?? $"_tmp_{typeof(T).Name}_{Guid.NewGuid():N}";
         var quotedName = _sqlGenerationHelper.DelimitIdentifier(name);
 
         var ddl = BuildCreateDdl(quotedName, propertyInfo);

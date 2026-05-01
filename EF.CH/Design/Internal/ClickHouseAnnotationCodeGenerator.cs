@@ -91,6 +91,21 @@ public class ClickHouseAnnotationCodeGenerator : AnnotationCodeGenerator
             nameof(ClickHouseEntityTypeBuilderExtensions.HasTtl),
             [typeof(EntityTypeBuilder), typeof(string)])!;
 
+    private static readonly MethodInfo WithMergeTreePrimaryKeyMethodInfo
+        = typeof(ClickHouseEntityTypeBuilderExtensions).GetRuntimeMethod(
+            nameof(ClickHouseEntityTypeBuilderExtensions.WithMergeTreePrimaryKey),
+            [typeof(EntityTypeBuilder), typeof(string[])])!;
+
+    private static readonly MethodInfo HasEngineSettingsMethodInfo
+        = typeof(ClickHouseEntityTypeBuilderExtensions).GetRuntimeMethod(
+            nameof(ClickHouseEntityTypeBuilderExtensions.HasEngineSettings),
+            [typeof(EntityTypeBuilder), typeof(IDictionary<string, string>)])!;
+
+    private static readonly MethodInfo HasReplicationMethodInfo
+        = typeof(ClickHouseEntityTypeBuilderExtensions).GetRuntimeMethod(
+            nameof(ClickHouseEntityTypeBuilderExtensions.HasReplication),
+            [typeof(EntityTypeBuilder), typeof(string), typeof(string)])!;
+
     #endregion
 
     #region MethodInfo References - Property Level
@@ -304,6 +319,43 @@ public class ClickHouseAnnotationCodeGenerator : AnnotationCodeGenerator
         {
             calls.Add(new MethodCallCodeFragment(HasTtlMethodInfo, ttl));
             annotations.Remove(ClickHouseAnnotationNames.Ttl);
+        }
+
+        // Handle PrimaryKey (only present when it differs from ORDER BY — see ClickHouseDatabaseModelFactory)
+        if (annotations.TryGetValue(ClickHouseAnnotationNames.PrimaryKey, out var primaryKeyAnnotation)
+            && primaryKeyAnnotation.Value is string[] primaryKeyColumns
+            && primaryKeyColumns.Length > 0)
+        {
+            calls.Add(new MethodCallCodeFragment(WithMergeTreePrimaryKeyMethodInfo, [primaryKeyColumns]));
+            annotations.Remove(ClickHouseAnnotationNames.PrimaryKey);
+        }
+
+        // Handle EngineSettings — round-trip the dictionary so scaffolded migrations
+        // re-emit a HasEngineSettings(...) call instead of leaving a raw HasAnnotation.
+        if (annotations.TryGetValue(ClickHouseAnnotationNames.Settings, out var settingsAnnotation)
+            && settingsAnnotation.Value is IDictionary<string, string> settings
+            && settings.Count > 0)
+        {
+            calls.Add(new MethodCallCodeFragment(HasEngineSettingsMethodInfo, settings));
+            annotations.Remove(ClickHouseAnnotationNames.Settings);
+        }
+
+        // Handle replication — emitted by WithReplication on the MergeTree-family
+        // builders. Round-trips ReplicatedPath + ReplicaName as a single
+        // HasReplication(zooKeeperPath, replicaName) call. IsReplicated is
+        // implied by the presence of the path; consumed alongside.
+        if (annotations.TryGetValue(ClickHouseAnnotationNames.ReplicatedPath, out var replicatedPathAnnotation)
+            && replicatedPathAnnotation.Value is string zooKeeperPath
+            && !string.IsNullOrWhiteSpace(zooKeeperPath))
+        {
+            var replicaName = annotations.TryGetValue(ClickHouseAnnotationNames.ReplicaName, out var replicaNameAnnotation)
+                ? replicaNameAnnotation.Value as string ?? "{replica}"
+                : "{replica}";
+
+            calls.Add(new MethodCallCodeFragment(HasReplicationMethodInfo, zooKeeperPath, replicaName));
+            annotations.Remove(ClickHouseAnnotationNames.ReplicatedPath);
+            annotations.Remove(ClickHouseAnnotationNames.ReplicaName);
+            annotations.Remove(ClickHouseAnnotationNames.IsReplicated);
         }
 
         return calls;

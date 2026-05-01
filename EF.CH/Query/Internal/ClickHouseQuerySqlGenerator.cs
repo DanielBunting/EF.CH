@@ -29,6 +29,18 @@ public class ClickHouseQuerySqlGenerator : QuerySqlGenerator
     private static ClickHouseQueryGenerationContext GetOrCreateContext()
         => _context ??= new ClickHouseQueryGenerationContext();
 
+    /// <summary>
+    /// Clears any state left on the thread from a prior query. Called at the start of
+    /// each translation pass — most setters in the postprocessor are conditional, so
+    /// without this any field a previous query populated but never consumed would leak
+    /// into the next query's SQL.
+    /// </summary>
+    internal static void ResetThreadLocalState()
+    {
+        _context?.Reset();
+        _currentEphemeralColumns = null;
+    }
+
     // Thread-local storage for ephemeral column names. Columns in this set are
     // rewritten to NULL during VisitColumn so ClickHouse doesn't reject the
     // SELECT — ephemeral columns cannot be read back. Keyed on column name only

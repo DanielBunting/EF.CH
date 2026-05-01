@@ -784,6 +784,10 @@ public class EventsDbContext : DbContext
             entity.ToTable("Events");
             entity.HasKey(e => e.Id);
             entity.UseMergeTree("EventTime", "Id");
+            // The .Sample() integration test creates the underlying table with
+            // SAMPLE BY xxHash32(Id) via raw DDL; declare the same on the model so
+            // the postprocessor's SAMPLE-validation guard recognises it.
+            entity.HasSampleBy("xxHash32(\"Id\")");
         });
     }
 }

@@ -36,12 +36,16 @@ public static class ClickHouseQueryableParameterExtensions
                 "Use modelBuilder.Entity<T>().ToParameterizedView(\"view_name\") first.");
 
         var viewName = entityType.GetViewName()
+            ?? entityType.FindAnnotation(ClickHouseAnnotationNames.ParameterizedViewName)?.Value as string
             ?? throw new InvalidOperationException($"Entity '{typeof(TEntity).Name}' has no view name.");
 
-        var args = string.Join(", ", parameters.Select(kv => $"{kv.Key}={FormatLiteral(kv.Value)}"));
-        var sql = $"SELECT * FROM {QuoteIdentifier(viewName)}({args})";
+        var sql = $"SELECT * FROM {QuoteIdentifier(viewName)}({BuildParameterArgs(parameters)})";
         return await context.Database.SqlQueryRaw<TEntity>(sql).ToListAsync(cancellationToken);
     }
+
+    internal static string BuildParameterArgs(IReadOnlyDictionary<string, object?> parameters)
+        => string.Join(", ", parameters.Select(kv =>
+            $"{kv.Key}={ClickHouseParameterizedViewExtensions.FormatParameterValue(kv.Value)}"));
 
     /// <summary>
     /// Convenience helper for a single parameter.
@@ -69,16 +73,6 @@ public static class ClickHouseQueryableParameterExtensions
         _ = name; _ = value;
         return source;
     }
-
-    private static string FormatLiteral(object? value) => value switch
-    {
-        null => "NULL",
-        string s => "'" + s.Replace("'", "''") + "'",
-        bool b => b ? "1" : "0",
-        DateTime dt => "toDateTime('" + dt.ToString("yyyy-MM-dd HH:mm:ss") + "')",
-        IFormattable f => f.ToString(null, System.Globalization.CultureInfo.InvariantCulture),
-        _ => value.ToString() ?? "NULL",
-    };
 
     private static string QuoteIdentifier(string identifier)
         => "\"" + identifier.Replace("\"", "\\\"") + "\"";

@@ -104,11 +104,13 @@ This generates a `DEFAULT now()` clause in the column definition. The value is c
 
 ### Migrations: Limited ALTER TABLE Support
 
-ClickHouse's `ALTER TABLE` supports adding columns, dropping columns, modifying columns, and renaming columns. It does not support:
+ClickHouse's `ALTER TABLE` supports adding columns, dropping columns, modifying columns, and renaming columns (the latter requires ClickHouse 22.4+ on MergeTree-family engines). It does not support:
 
-- Renaming tables (use `RENAME TABLE` via raw SQL)
 - Changing the ORDER BY or ENGINE of an existing table
 - Adding or removing partitioning from an existing table
+- Down-migrations / rollbacks
+
+> **Note on column type changes**: `MODIFY COLUMN` accepts any type, but ClickHouse rejects incompatible conversions at apply time (e.g. `String → UInt8`). The provider does not pre-validate type compatibility — the matrix of allowed casts is too large to mirror — so review type-change migrations carefully before applying them to production. Consider adding the new column, copying with a transform, dropping the old, and renaming if you need a non-trivial conversion.
 
 **Workaround:** For schema changes that ClickHouse does not support via `ALTER TABLE`, create a new table with the desired schema and use `INSERT ... SELECT` to migrate data.
 
@@ -190,6 +192,10 @@ ClickHouse mutation syntax does not support table aliases in the column referenc
 ### WHERE Required for UPDATE Mutations
 
 `ALTER TABLE UPDATE` requires a `WHERE` clause. If no predicate is specified, EF.CH emits `WHERE 1` to satisfy the syntax requirement.
+
+### `.PreWhere()` and `.LimitBy()` Require MergeTree-Family Engines
+
+`PREWHERE` is a MergeTree-only optimisation in ClickHouse — applied to a `Memory`, `Log`, or external integration engine the server returns an error. `.PreWhere(...)` does not pre-validate the engine, so the failure surfaces at execution time rather than at translation. The same applies to `.LimitBy(...)` when used inside a subquery that becomes the source of a join — EF Core's navigation expander throws "could not be translated"; materialise the LimitBy result first and join the result if you need this composition.
 
 ## Known Issues
 

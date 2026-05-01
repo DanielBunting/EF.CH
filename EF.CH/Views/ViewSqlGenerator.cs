@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Text;
+using EF.CH.Metadata;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 
@@ -41,11 +42,10 @@ public static class ViewSqlGenerator
 
         AppendQualifiedName(sb, metadata.Schema, metadata.ViewName);
 
-        if (!string.IsNullOrEmpty(metadata.OnCluster))
-        {
-            sb.Append(" ON CLUSTER ");
-            sb.Append(metadata.OnCluster);
-        }
+        // Use the shared classifier so views match the MV / migration / db-creator
+        // emission shape: macros (`{cluster}`) → single-quoted literal so the
+        // server substitutes; literal names → backticked identifier.
+        sb.Append(ClickHouseClusterMacros.FormatOnClusterClause(metadata.OnCluster));
 
         sb.Append(" AS\n");
 
@@ -96,11 +96,7 @@ public static class ViewSqlGenerator
 
         AppendQualifiedName(sb, schema, viewName);
 
-        if (!string.IsNullOrEmpty(onCluster))
-        {
-            sb.Append(" ON CLUSTER ");
-            sb.Append(onCluster);
-        }
+        sb.Append(ClickHouseClusterMacros.FormatOnClusterClause(onCluster));
 
         return sb.ToString();
     }

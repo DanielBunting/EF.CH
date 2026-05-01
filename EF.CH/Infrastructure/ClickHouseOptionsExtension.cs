@@ -43,6 +43,7 @@ public class ClickHouseOptionsExtension : RelationalOptionsExtension
     private ClickHouseConfiguration? _configuration;
     private string? _clusterName;
     private bool _useConnectionRouting;
+    private int? _httpPort;
 
     /// <summary>
     /// Creates a new instance of <see cref="ClickHouseOptionsExtension"/>.
@@ -63,6 +64,7 @@ public class ClickHouseOptionsExtension : RelationalOptionsExtension
         _configuration = copyFrom._configuration;
         _clusterName = copyFrom._clusterName;
         _useConnectionRouting = copyFrom._useConnectionRouting;
+        _httpPort = copyFrom._httpPort;
     }
 
     /// <summary>
@@ -104,6 +106,12 @@ public class ClickHouseOptionsExtension : RelationalOptionsExtension
     /// Gets whether connection routing (read/write splitting) is enabled.
     /// </summary>
     public virtual bool UseConnectionRouting => _useConnectionRouting;
+
+    /// <summary>
+    /// Gets the HTTP port used by the export APIs. When unset, the export code falls back to the
+    /// <c>HttpPort=</c> field of the connection string, then to the <c>Port=</c> field.
+    /// </summary>
+    public virtual int? HttpPort => _httpPort;
 
     /// <summary>
     /// Creates a copy with the specified connection string.
@@ -204,6 +212,17 @@ public class ClickHouseOptionsExtension : RelationalOptionsExtension
     }
 
     /// <summary>
+    /// Creates a copy with the specified HTTP port for the export APIs.
+    /// </summary>
+    /// <param name="httpPort">The HTTP port (typically 8123), or <c>null</c> to clear the override.</param>
+    public virtual ClickHouseOptionsExtension WithHttpPort(int? httpPort)
+    {
+        var clone = (ClickHouseOptionsExtension)Clone();
+        clone._httpPort = httpPort;
+        return clone;
+    }
+
+    /// <summary>
     /// Creates a copy of this extension.
     /// </summary>
     protected override RelationalOptionsExtension Clone()
@@ -280,6 +299,11 @@ public class ClickHouseOptionsExtension : RelationalOptionsExtension
                         builder.Append(CultureInfo.InvariantCulture, $"Cluster={Extension.ClusterName} ");
                     }
 
+                    if (Extension.HttpPort.HasValue)
+                    {
+                        builder.Append(CultureInfo.InvariantCulture, $"HttpPort={Extension.HttpPort} ");
+                    }
+
                     builder.Append(CultureInfo.InvariantCulture, $"MaxBatchSize={Extension.MaxBatchSize} ");
 
                     _logFragment = builder.ToString();
@@ -298,6 +322,7 @@ public class ClickHouseOptionsExtension : RelationalOptionsExtension
             hashCode.Add(Extension.DeleteStrategy);
             hashCode.Add(Extension.ClusterName);
             hashCode.Add(Extension.UseConnectionRouting);
+            hashCode.Add(Extension.HttpPort);
             // Configuration is reference-compared intentionally - same object = same hash
             hashCode.Add(Extension.Configuration?.GetHashCode() ?? 0);
             return hashCode.ToHashCode();
@@ -311,6 +336,7 @@ public class ClickHouseOptionsExtension : RelationalOptionsExtension
                && Extension.DeleteStrategy == otherInfo.Extension.DeleteStrategy
                && Extension.ClusterName == otherInfo.Extension.ClusterName
                && Extension.UseConnectionRouting == otherInfo.Extension.UseConnectionRouting
+               && Extension.HttpPort == otherInfo.Extension.HttpPort
                && ReferenceEquals(Extension.Configuration, otherInfo.Extension.Configuration);
 
         public override void PopulateDebugInfo(IDictionary<string, string> debugInfo)
@@ -324,6 +350,7 @@ public class ClickHouseOptionsExtension : RelationalOptionsExtension
             debugInfo["ClickHouse:DeleteStrategy"] = Extension.DeleteStrategy.ToString();
             debugInfo["ClickHouse:ClusterName"] = Extension.ClusterName ?? "(null)";
             debugInfo["ClickHouse:ConnectionRouting"] = Extension.UseConnectionRouting.ToString();
+            debugInfo["ClickHouse:HttpPort"] = Extension.HttpPort?.ToString() ?? "(null)";
             debugInfo["ClickHouse:HasConfiguration"] = (Extension.Configuration != null).ToString();
         }
     }

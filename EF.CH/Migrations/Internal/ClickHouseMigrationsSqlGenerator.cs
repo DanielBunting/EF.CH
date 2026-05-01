@@ -351,6 +351,22 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
             return;
         }
 
+        // Plain views and parameterized views are emitted by the post-pass in
+        // ClickHouseDatabaseCreator (and by EnsureViewsAsync / EnsureParameterizedViewsAsync
+        // for ad-hoc creation). The differ shouldn't produce a CreateTableOperation for
+        // ToView-mapped entities, but suppress it defensively in case any path slips through.
+        var isView = GetAnnotation<bool?>(operation, ClickHouseAnnotationNames.View)
+                  ?? GetEntityAnnotation<bool?>(entityType, ClickHouseAnnotationNames.View)
+                  ?? false;
+        if (isView)
+            return;
+
+        var isParamView = GetAnnotation<bool?>(operation, ClickHouseAnnotationNames.ParameterizedView)
+                       ?? GetEntityAnnotation<bool?>(entityType, ClickHouseAnnotationNames.ParameterizedView)
+                       ?? false;
+        if (isParamView)
+            return;
+
         var deferredMv = GetAnnotation<bool?>(operation, ClickHouseAnnotationNames.MaterializedViewDeferred)
                       ?? GetEntityAnnotation<bool?>(entityType, ClickHouseAnnotationNames.MaterializedViewDeferred)
                       ?? false;
@@ -1916,15 +1932,36 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
     }
 
     /// <summary>
-    /// Throws NotSupportedException for renaming columns.
-    /// ClickHouse doesn't support RENAME COLUMN.
+    /// Generates <c>ALTER TABLE ... RENAME COLUMN ... TO ...</c>. Supported on
+    /// MergeTree-family engines from ClickHouse 22.4 onwards. For engines that
+    /// do not support RENAME COLUMN (e.g. <c>Memory</c>, some <c>Log</c> family
+    /// engines, integration engines) the server returns a clear error at apply
+    /// time — we do not pre-validate the engine here because the migrations sql
+    /// generator does not always have a populated model and the server's error
+    /// message is itself accurate.
     /// </summary>
     protected override void Generate(
         RenameColumnOperation operation,
         IModel? model,
         MigrationCommandListBuilder builder)
     {
-        throw ClickHouseUnsupportedOperationException.RenameColumn(operation.Table, operation.Name);
+        ArgumentNullException.ThrowIfNull(operation);
+        ArgumentNullException.ThrowIfNull(builder);
+
+        var qualifiedTable = Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Table, operation.Schema);
+        var oldColumn = Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name);
+        var newColumn = Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.NewName ?? operation.Name);
+
+        builder
+            .Append("ALTER TABLE ")
+            .Append(qualifiedTable)
+            .Append(" RENAME COLUMN ")
+            .Append(oldColumn)
+            .Append(" TO ")
+            .Append(newColumn)
+            .AppendLine(Dependencies.SqlGenerationHelper.StatementTerminator);
+
+        EndStatement(builder);
     }
 
     /// <summary>
@@ -2065,9 +2102,18 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         var tableName = Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Table, operation.Schema);
         var indexName = Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name);
 
+        // Resolve cluster annotation. Without ON CLUSTER, ALTER TABLE ADD INDEX
+        // only applies to the local replica — silent replication divergence on
+        // multi-replica clusters.
+        var entityType = model?.GetEntityTypes().FirstOrDefault(e =>
+            e.GetTableName() == operation.Table
+            && (e.GetSchema() ?? model.GetDefaultSchema()) == operation.Schema);
+        var onClusterClause = GetOnClusterClause(operation.Table, operation.Schema, entityType, model, operation);
+
         builder
             .Append("ALTER TABLE ")
             .Append(tableName)
+            .Append(onClusterClause)
             .Append(" ADD INDEX IF NOT EXISTS ")
             .Append(indexName)
             .Append(" (");
@@ -2331,8 +2377,17 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
             operation.Table, operation.Schema);
         var projectionName = Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name);
 
+        // Resolve cluster annotation. Without ON CLUSTER the projection only
+        // applies to one replica — silent replication divergence on multi-
+        // replica clusters.
+        var entityType = model?.GetEntityTypes().FirstOrDefault(e =>
+            e.GetTableName() == operation.Table
+            && (e.GetSchema() ?? model.GetDefaultSchema()) == operation.Schema);
+        var onClusterClause = GetOnClusterClause(operation.Table, operation.Schema, entityType, model, operation);
+
         builder.Append("ALTER TABLE ");
         builder.Append(tableName);
+        builder.Append(onClusterClause);
         builder.Append(" ADD PROJECTION IF NOT EXISTS ");
         builder.Append(projectionName);
         builder.Append(" (");
@@ -2346,6 +2401,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         {
             builder.Append("ALTER TABLE ");
             builder.Append(tableName);
+            builder.Append(onClusterClause);
             builder.Append(" MATERIALIZE PROJECTION ");
             builder.Append(projectionName);
             builder.AppendLine(Dependencies.SqlGenerationHelper.StatementTerminator);

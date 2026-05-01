@@ -2,21 +2,20 @@ using EF.CH.Extensions;
 using EF.CH.Metadata;
 using EF.CH.Views;
 using Microsoft.EntityFrameworkCore;
-using Testcontainers.ClickHouse;
 using Xunit;
 
 namespace EF.CH.Tests.Features;
 
-public class ViewTests : IAsyncLifetime
+// Live-ClickHouse integration coverage for plain views lives in
+// tests/EF.CH.SystemTests/Schema/PlainViewLifecycleTests.cs. This file covers SQL-shape,
+// configuration validation, annotation, migration-builder, WHERE-translator, projection,
+// and metadata-only error-path behaviour — none of which require a running container.
+public class ViewTests
 {
-    private readonly ClickHouseContainer _container = new ClickHouseBuilder()
-        .WithImage("clickhouse/clickhouse-server:25.6")
-        .Build();
+    private const string StubConnectionString =
+        "Host=localhost;Port=9000;Database=default;Username=default;Password=";
 
-    public async Task InitializeAsync() => await _container.StartAsync();
-    public async Task DisposeAsync() => await _container.DisposeAsync();
-
-    private string GetConnectionString() => _container.GetConnectionString();
+    private static string GetConnectionString() => StubConnectionString;
 
     #region SQL-shape unit tests
 
@@ -51,8 +50,11 @@ public class ViewTests : IAsyncLifetime
     [Fact]
     public void GenerateDropViewSql_WithSchemaAndCluster()
     {
+        // Literal cluster names are emitted as backticked identifiers — see
+        // ClickHouseClusterMacros.FormatOnClusterClause; macros (e.g. "{cluster}")
+        // are emitted as single-quoted literals so the server substitutes them.
         var sql = ViewSqlGenerator.GenerateDropViewSql("v", schema: "s", ifExists: false, onCluster: "main");
-        Assert.Equal("DROP VIEW \"s\".\"v\" ON CLUSTER main", sql);
+        Assert.Equal("DROP VIEW \"s\".\"v\" ON CLUSTER `main`", sql);
     }
 
     [Fact]
@@ -83,7 +85,7 @@ public class ViewTests : IAsyncLifetime
         };
 
         var sql = ViewSqlGenerator.GenerateCreateViewSql(EmptyModel(), metadata);
-        Assert.Equal("CREATE OR REPLACE VIEW \"s\".\"v\" ON CLUSTER main AS\nSELECT 1", sql);
+        Assert.Equal("CREATE OR REPLACE VIEW \"s\".\"v\" ON CLUSTER `main` AS\nSELECT 1", sql);
     }
 
     [Fact]
@@ -224,137 +226,6 @@ public class ViewTests : IAsyncLifetime
         Assert.Contains("AS \"Name\"", sql);
         Assert.Contains("FROM \"users\"", sql);
         Assert.Contains("WHERE", sql);
-    }
-
-    #endregion
-
-    #region Integration tests
-
-    [Fact]
-    public async Task HasView_RoundTrip_QueryViaFromView()
-    {
-        await using var context = CreateHasViewContext();
-
-        await context.Database.ExecuteSqlRawAsync(@"
-            CREATE TABLE IF NOT EXISTS source_rows (
-                id UInt64,
-                name String
-            ) ENGINE = MergeTree() ORDER BY id");
-
-        await context.Database.ExecuteSqlRawAsync(@"
-            INSERT INTO source_rows (id, name) VALUES (1, 'one'), (2, 'two')");
-
-        await context.Database.CreateViewAsync(
-            "basic_view",
-            "SELECT id AS \"Id\", name AS \"Name\" FROM source_rows");
-
-        var rows = await context.FromView<BasicView>("basic_view")
-            .OrderBy(r => r.Id)
-            .ToListAsync();
-
-        Assert.Equal(2, rows.Count);
-        Assert.Equal("one", rows[0].Name);
-        Assert.Equal("two", rows[1].Name);
-    }
-
-    [Fact]
-    public async Task AsView_EnsureViewAsync_CreatesAndQueries()
-    {
-        await using var context = CreateFluentViewContext();
-
-        await context.Database.ExecuteSqlRawAsync(@"
-            CREATE TABLE IF NOT EXISTS users (
-                user_id UInt64,
-                name String,
-                is_active UInt8
-            ) ENGINE = MergeTree() ORDER BY user_id");
-
-        await context.Database.EnsureViewAsync<ActiveUserView>();
-
-        await context.Database.ExecuteSqlRawAsync(@"
-            INSERT INTO users (user_id, name, is_active) VALUES
-            (1, 'Alice', 1),
-            (2, 'Bob', 0),
-            (3, 'Carol', 1)");
-
-        var rows = await context.Set<ActiveUserView>()
-            .OrderBy(u => u.UserId)
-            .ToListAsync();
-
-        Assert.Equal(2, rows.Count);
-        Assert.Equal("Alice", rows[0].Name);
-        Assert.Equal("Carol", rows[1].Name);
-    }
-
-    [Fact]
-    public async Task AsView_OrReplace_SwapsViewBody()
-    {
-        await using var context = CreateFluentViewContext();
-
-        await context.Database.ExecuteSqlRawAsync(@"
-            CREATE TABLE IF NOT EXISTS users (
-                user_id UInt64,
-                name String,
-                is_active UInt8
-            ) ENGINE = MergeTree() ORDER BY user_id");
-
-        await context.Database.ExecuteSqlRawAsync(@"
-            INSERT INTO users (user_id, name, is_active) VALUES (1, 'Alice', 1)");
-
-        await context.Database.EnsureViewAsync<ActiveUserView>();
-
-        var firstSql = context.Database.GetViewSql<ActiveUserView>();
-        Assert.Contains("OR REPLACE", firstSql);
-
-        // Re-running EnsureViewAsync should succeed because OR REPLACE is set on the view config.
-        await context.Database.EnsureViewAsync<ActiveUserView>();
-
-        var rows = await context.Set<ActiveUserView>().ToListAsync();
-        Assert.Single(rows);
-    }
-
-    [Fact]
-    public async Task EnsureViewsAsync_CreatesAllNonDeferredViews()
-    {
-        await using var context = CreateMixedViewContext();
-
-        await context.Database.ExecuteSqlRawAsync(@"
-            CREATE TABLE IF NOT EXISTS users (
-                user_id UInt64,
-                name String,
-                is_active UInt8
-            ) ENGINE = MergeTree() ORDER BY user_id");
-
-        await context.Database.ExecuteSqlRawAsync(@"
-            CREATE TABLE IF NOT EXISTS source_rows (
-                id UInt64,
-                name String
-            ) ENGINE = MergeTree() ORDER BY id");
-
-        var created = await context.Database.EnsureViewsAsync();
-
-        // ActiveUserView (AsView) + RawSampleView is deferred, so it's skipped.
-        Assert.Equal(1, created);
-    }
-
-    [Fact]
-    public async Task DropViewIfExistsAsync_IsSilent_DropViewAsync_Throws()
-    {
-        await using var context = CreateHasViewContext();
-
-        // CreateViewAsync emits IF NOT EXISTS by default — idempotent.
-        await context.Database.CreateViewAsync("temp_v", "SELECT 1 AS x");
-        await context.Database.CreateViewAsync("temp_v", "SELECT 1 AS x");
-
-        // DropViewAsync (strict) drops the view.
-        await context.Database.DropViewAsync("temp_v");
-
-        // Second strict drop throws because the view is gone.
-        await Assert.ThrowsAsync<ClickHouse.Driver.ClickHouseServerException>(() =>
-            context.Database.DropViewAsync("temp_v"));
-
-        // The IfExists variant is silent on missing views.
-        await context.Database.DropViewIfExistsAsync("temp_v");
     }
 
     #endregion
@@ -588,7 +459,7 @@ public class ViewTests : IAsyncLifetime
         };
 
         var sql = ViewSqlGenerator.GenerateCreateViewSql(EmptyModel(), metadata);
-        Assert.Equal("CREATE VIEW \"v\" ON CLUSTER main AS\nSELECT 1", sql);
+        Assert.Equal("CREATE VIEW \"v\" ON CLUSTER `main` AS\nSELECT 1", sql);
     }
 
     [Fact]
@@ -638,38 +509,6 @@ public class ViewTests : IAsyncLifetime
 
     #endregion
 
-    #region FromView schema integration
-
-    [Fact]
-    public async Task FromView_WithSchema_QueriesQualifiedView()
-    {
-        await using var context = CreateHasViewContext();
-
-        await context.Database.ExecuteSqlRawAsync(@"
-            CREATE TABLE IF NOT EXISTS schema_rows (
-                id UInt64,
-                name String
-            ) ENGINE = MergeTree() ORDER BY id");
-        await context.Database.ExecuteSqlRawAsync(
-            "INSERT INTO schema_rows (id, name) VALUES (1, 'one'), (2, 'two')");
-
-        // ClickHouse always has a `default` database — emit a CREATE VIEW that
-        // qualifies the view name with it and verify FromView<T>(name, schema)
-        // composes the same identifier.
-        await context.Database.ExecuteSqlRawAsync(@"
-            CREATE VIEW IF NOT EXISTS ""default"".""schema_view"" AS
-            SELECT id AS ""Id"", name AS ""Name"" FROM schema_rows");
-
-        var rows = await context.FromView<BasicView>("schema_view", schema: "default")
-            .OrderBy(r => r.Id)
-            .ToListAsync();
-
-        Assert.Equal(2, rows.Count);
-        Assert.Equal("one", rows[0].Name);
-    }
-
-    #endregion
-
     private HasViewContext CreateHasViewContext()
     {
         var options = new DbContextOptionsBuilder<HasViewContext>()
@@ -694,13 +533,6 @@ public class ViewTests : IAsyncLifetime
         return new RawViewContext(options);
     }
 
-    private MixedViewContext CreateMixedViewContext()
-    {
-        var options = new DbContextOptionsBuilder<MixedViewContext>()
-            .UseClickHouse(GetConnectionString())
-            .Options;
-        return new MixedViewContext(options);
-    }
 }
 
 #region Test entities
@@ -799,46 +631,6 @@ public class RawViewContext : DbContext
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
-        modelBuilder.Entity<RawSampleView>(entity =>
-        {
-            entity.AsViewRaw(
-                viewName: "raw_sample",
-                selectSql: "SELECT id AS \"Id\", name AS \"Name\" FROM source_rows",
-                ifNotExists: true);
-            entity.AsViewDeferred();
-        });
-    }
-}
-
-public class MixedViewContext : DbContext
-{
-    public MixedViewContext(DbContextOptions<MixedViewContext> options) : base(options) { }
-    public DbSet<ActiveUser> Users => Set<ActiveUser>();
-    public DbSet<ActiveUserView> ActiveUsers => Set<ActiveUserView>();
-    public DbSet<RawSampleView> RawSamples => Set<RawSampleView>();
-
-    protected override void OnModelCreating(ModelBuilder modelBuilder)
-    {
-        modelBuilder.Entity<ActiveUser>(entity =>
-        {
-            entity.ToTable("users");
-            entity.HasKey(e => e.UserId);
-            entity.UseMergeTree(e => e.UserId);
-            entity.Property(e => e.UserId).HasColumnName("user_id");
-            entity.Property(e => e.Name).HasColumnName("name");
-            entity.Property(e => e.IsActive).HasColumnName("is_active");
-        });
-
-        modelBuilder.Entity<ActiveUserView>(entity =>
-        {
-            entity.AsView<ActiveUserView, ActiveUser>(cfg => cfg
-                .HasName("active_users")
-                .FromTable()
-                .Select(u => new ActiveUserView { UserId = u.UserId, Name = u.Name })
-                .Where(u => u.IsActive)
-                .OrReplace());
-        });
-
         modelBuilder.Entity<RawSampleView>(entity =>
         {
             entity.AsViewRaw(

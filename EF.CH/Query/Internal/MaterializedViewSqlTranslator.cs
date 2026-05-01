@@ -8,8 +8,21 @@ namespace EF.CH.Query.Internal;
 
 /// <summary>
 /// Translates LINQ expressions into ClickHouse SQL for materialized view definitions.
-/// This is a design-time translator that processes expressions during OnModelCreating.
+/// This is a design-time translator that runs during <c>OnModelCreating</c>.
 /// </summary>
+/// <remarks>
+/// Five <see cref="Translate{T1, TResult}"/> arities are exposed (one to five
+/// source <see cref="IQueryable{T}"/> parameters). The cap is intentional —
+/// it matches ClickHouse's practical join arity for triggered materialized
+/// views and avoids unbounded overload duplication; if a sixth source is
+/// genuinely needed, raise an issue rather than silently expanding.
+/// In every overload <c>T1</c> is the <strong>INSERT trigger</strong> source:
+/// only writes into <c>T1</c> fire the MV. Additional source types
+/// (<c>T2..Tn</c>) are joined sources — they are looked up at trigger time
+/// and only contribute to the SQL when referenced in the lambda body. A
+/// declared-but-unreferenced source type argument is rejected at translate
+/// time (see <see cref="TranslateLambda"/>) to surface the misuse early.
+/// </remarks>
 internal class MaterializedViewSqlTranslator
 {
     private readonly IModel _model;
@@ -25,7 +38,8 @@ internal class MaterializedViewSqlTranslator
     }
 
     /// <summary>
-    /// Translates a single-source LINQ query expression into a ClickHouse SELECT statement.
+    /// Translates a single-source LINQ query expression into a ClickHouse SELECT
+    /// statement. <typeparamref name="T1"/> is the INSERT trigger source.
     /// </summary>
     public string Translate<T1, TResult>(
         Expression<Func<IQueryable<T1>, IQueryable<TResult>>> queryExpression)
@@ -34,7 +48,10 @@ internal class MaterializedViewSqlTranslator
         => TranslateLambda(queryExpression);
 
     /// <summary>
-    /// Translates a two-source LINQ query expression. T1 is the INSERT trigger.
+    /// Translates a two-source LINQ query expression. <typeparamref name="T1"/>
+    /// is the INSERT trigger; <typeparamref name="T2"/> is a joined source and
+    /// must be referenced in <paramref name="queryExpression"/> — declaring it
+    /// without using it throws.
     /// </summary>
     public string Translate<T1, T2, TResult>(
         Expression<Func<IQueryable<T1>, IQueryable<T2>, IQueryable<TResult>>> queryExpression)
@@ -42,7 +59,9 @@ internal class MaterializedViewSqlTranslator
         => TranslateLambda(queryExpression);
 
     /// <summary>
-    /// Translates a three-source LINQ query expression. T1 is the INSERT trigger.
+    /// Translates a three-source LINQ query expression. <typeparamref name="T1"/>
+    /// is the INSERT trigger; <typeparamref name="T2"/> and <typeparamref name="T3"/>
+    /// are joined sources and must be referenced in <paramref name="queryExpression"/>.
     /// </summary>
     public string Translate<T1, T2, T3, TResult>(
         Expression<Func<IQueryable<T1>, IQueryable<T2>, IQueryable<T3>, IQueryable<TResult>>> queryExpression)
@@ -50,7 +69,10 @@ internal class MaterializedViewSqlTranslator
         => TranslateLambda(queryExpression);
 
     /// <summary>
-    /// Translates a four-source LINQ query expression. T1 is the INSERT trigger.
+    /// Translates a four-source LINQ query expression. <typeparamref name="T1"/>
+    /// is the INSERT trigger; <typeparamref name="T2"/>, <typeparamref name="T3"/>,
+    /// and <typeparamref name="T4"/> are joined sources and must be referenced in
+    /// <paramref name="queryExpression"/>.
     /// </summary>
     public string Translate<T1, T2, T3, T4, TResult>(
         Expression<Func<IQueryable<T1>, IQueryable<T2>, IQueryable<T3>, IQueryable<T4>, IQueryable<TResult>>> queryExpression)
@@ -58,7 +80,10 @@ internal class MaterializedViewSqlTranslator
         => TranslateLambda(queryExpression);
 
     /// <summary>
-    /// Translates a five-source LINQ query expression. T1 is the INSERT trigger.
+    /// Translates a five-source LINQ query expression — the maximum supported
+    /// arity. <typeparamref name="T1"/> is the INSERT trigger; <typeparamref name="T2"/>
+    /// through <typeparamref name="T5"/> are joined sources and must be
+    /// referenced in <paramref name="queryExpression"/>.
     /// </summary>
     public string Translate<T1, T2, T3, T4, T5, TResult>(
         Expression<Func<IQueryable<T1>, IQueryable<T2>, IQueryable<T3>, IQueryable<T4>, IQueryable<T5>, IQueryable<TResult>>> queryExpression)
@@ -66,18 +91,56 @@ internal class MaterializedViewSqlTranslator
         => TranslateLambda(queryExpression);
 
     /// <summary>
-    /// Shared translation entry point. Reflects over the first lambda parameter
-    /// (the trigger <c>IQueryable&lt;T1&gt;</c>) to construct the typed visitor,
-    /// then visits the lambda body directly.
+    /// Shared translation entry point. Only the first lambda parameter (the
+    /// trigger <c>IQueryable&lt;T1&gt;</c>) is introspected here to seed the
+    /// typed <see cref="MaterializedViewExpressionVisitor{TSource}"/>; remaining
+    /// joined sources are discovered by tree-walking the body inside the visitor,
+    /// so a declared-but-unreferenced source would otherwise be silently dropped.
+    /// <see cref="EnsureAllParametersReferenced"/> guards against that.
     /// </summary>
     private string TranslateLambda(LambdaExpression queryExpression)
     {
+        EnsureAllParametersReferenced(queryExpression);
+
         // T1 (the first generic argument) is the trigger table.
         var triggerType = queryExpression.Parameters[0].Type.GetGenericArguments()[0];
         var visitorType = typeof(MaterializedViewExpressionVisitor<>).MakeGenericType(triggerType);
         var visitor = (IMaterializedViewVisitor)Activator.CreateInstance(
             visitorType, _model, _sourceTableName)!;
         return visitor.TranslateBody(queryExpression.Body);
+    }
+
+    private static void EnsureAllParametersReferenced(LambdaExpression lambda)
+    {
+        if (lambda.Parameters.Count <= 1) return;
+
+        var seen = new HashSet<ParameterExpression>();
+        new ParameterReferenceCollector(seen).Visit(lambda.Body);
+
+        for (var i = 0; i < lambda.Parameters.Count; i++)
+        {
+            var p = lambda.Parameters[i];
+            if (seen.Contains(p)) continue;
+
+            var sourceType = p.Type.IsGenericType
+                ? p.Type.GetGenericArguments()[0]
+                : p.Type;
+            throw new InvalidOperationException(
+                $"MaterializedView source '{sourceType.Name}' (parameter index {i}) " +
+                "declared in the Translate<...> overload was not referenced in the lambda body. " +
+                "Either remove the unused type argument or include the source in the query.");
+        }
+    }
+
+    private sealed class ParameterReferenceCollector : ExpressionVisitor
+    {
+        private readonly HashSet<ParameterExpression> _seen;
+        public ParameterReferenceCollector(HashSet<ParameterExpression> seen) => _seen = seen;
+        protected override Expression VisitParameter(ParameterExpression node)
+        {
+            _seen.Add(node);
+            return base.VisitParameter(node);
+        }
     }
 }
 

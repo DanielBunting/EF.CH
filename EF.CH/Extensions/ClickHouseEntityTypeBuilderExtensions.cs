@@ -1173,6 +1173,7 @@ public static class ClickHouseEntityTypeBuilderExtensions
         builder.HasNoKey();
         builder.ToView(viewName);
         builder.HasAnnotation(EF.CH.Metadata.ClickHouseAnnotationNames.ParameterizedView, true);
+        builder.HasAnnotation(EF.CH.Metadata.ClickHouseAnnotationNames.ParameterizedViewName, viewName);
         return builder;
     }
 
@@ -1280,7 +1281,15 @@ public static class ClickHouseEntityTypeBuilderExtensions
         return builder;
     }
 
-    private static string SqlLiteral(string value) => "'" + value.Replace("'", "''") + "'";
+    /// <summary>
+    /// Wraps a value as a single-quoted ClickHouse string literal. Backslash is
+    /// escaped first (ClickHouse interprets <c>\</c> as a C-style escape inside
+    /// <c>'…'</c>, so a value ending in <c>\</c> would otherwise escape the
+    /// closing quote and break out of the literal), then apostrophe is doubled
+    /// per SQL standard.
+    /// </summary>
+    private static string SqlLiteral(string value) =>
+        "'" + value.Replace("\\", "\\\\").Replace("'", "''") + "'";
 
     #endregion
 
@@ -1667,11 +1676,67 @@ public static class ClickHouseEntityTypeBuilderExtensions
         IDictionary<string, string> settings)
         where TEntity : class
     {
+        ((EntityTypeBuilder)builder).HasEngineSettings(settings);
+        return builder;
+    }
+
+    /// <summary>
+    /// Non-generic <see cref="HasEngineSettings{TEntity}(EntityTypeBuilder{TEntity}, IDictionary{string, string})"/>
+    /// used by the annotation code generator when round-tripping a scaffolded model
+    /// — <see cref="MethodCallCodeFragment"/> resolves overloads on the non-generic
+    /// builder type.
+    /// </summary>
+    public static EntityTypeBuilder HasEngineSettings(
+        this EntityTypeBuilder builder,
+        IDictionary<string, string> settings)
+    {
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(settings);
 
         builder.HasAnnotation(ClickHouseAnnotationNames.Settings, settings);
 
+        return builder;
+    }
+
+    /// <summary>
+    /// Sets an explicit <c>PRIMARY KEY</c> for a MergeTree-family table when the primary key
+    /// should be a strict prefix of <c>ORDER BY</c>. ClickHouse loads the PRIMARY KEY columns
+    /// into RAM as the sparse index; keeping it shorter than ORDER BY saves memory while ORDER BY
+    /// still controls row ordering and uniqueness/dedup granularity.
+    /// </summary>
+    /// <remarks>
+    /// Used by the scaffolding code generator when reverse-engineering tables whose PRIMARY KEY
+    /// differs from ORDER BY. For typed model configuration, prefer
+    /// <see cref="EF.CH.Extensions.Engines.MergeTreeFamilyBuilder{TBuilder, TEntity}.WithPrimaryKey{TProperty}(System.Linq.Expressions.Expression{System.Func{TEntity, TProperty}})"/>
+    /// chained off <c>UseMergeTree</c> / <c>UseReplacingMergeTree</c> / etc., which validates the
+    /// prefix rule at config time.
+    /// </remarks>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <param name="builder">The entity type builder.</param>
+    /// <param name="columns">The PRIMARY KEY columns, in order.</param>
+    /// <returns>The entity type builder for chaining.</returns>
+    public static EntityTypeBuilder WithMergeTreePrimaryKey(
+        this EntityTypeBuilder builder,
+        params string[] columns)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        ArgumentNullException.ThrowIfNull(columns);
+        if (columns.Length == 0)
+        {
+            throw new ArgumentException("At least one PRIMARY KEY column is required.", nameof(columns));
+        }
+
+        builder.HasAnnotation(ClickHouseAnnotationNames.PrimaryKey, columns);
+        return builder;
+    }
+
+    /// <inheritdoc cref="WithMergeTreePrimaryKey(EntityTypeBuilder, string[])"/>
+    public static EntityTypeBuilder<TEntity> WithMergeTreePrimaryKey<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        params string[] columns)
+        where TEntity : class
+    {
+        ((EntityTypeBuilder)builder).WithMergeTreePrimaryKey(columns);
         return builder;
     }
 
@@ -2010,7 +2075,7 @@ public static class ClickHouseEntityTypeBuilderExtensions
     /// // Configure the result entity
     /// modelBuilder.Entity&lt;UserEventView&gt;(entity =>
     /// {
-    ///     entity.HasParameterizedView("user_events_view");
+    ///     entity.ToParameterizedView("user_events_view");
     /// });
     ///
     /// // Query the view
@@ -2021,6 +2086,7 @@ public static class ClickHouseEntityTypeBuilderExtensions
     ///     .ToListAsync();
     /// </code>
     /// </example>
+    [Obsolete("Use ToParameterizedView(name) instead. ToParameterizedView matches EF Core's ToView/ToTable naming convention; both methods are now functionally equivalent.")]
     public static EntityTypeBuilder<TEntity> HasParameterizedView<TEntity>(
         this EntityTypeBuilder<TEntity> builder,
         string viewName)
@@ -2029,10 +2095,9 @@ public static class ClickHouseEntityTypeBuilderExtensions
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentException.ThrowIfNullOrWhiteSpace(viewName);
 
-        // Mark as keyless since views don't have keys
         builder.HasNoKey();
+        builder.ToView(viewName);
 
-        // Store view configuration as annotations
         builder.HasAnnotation(ClickHouseAnnotationNames.ParameterizedView, true);
         builder.HasAnnotation(ClickHouseAnnotationNames.ParameterizedViewName, viewName);
 
@@ -2046,6 +2111,7 @@ public static class ClickHouseEntityTypeBuilderExtensions
     /// <param name="builder">The entity type builder.</param>
     /// <param name="viewName">The name of the parameterized view.</param>
     /// <returns>The entity type builder for chaining.</returns>
+    [Obsolete("Use ToParameterizedView(name) instead. ToParameterizedView matches EF Core's ToView/ToTable naming convention; both methods are now functionally equivalent.")]
     public static EntityTypeBuilder HasParameterizedView(
         this EntityTypeBuilder builder,
         string viewName)
@@ -2054,6 +2120,8 @@ public static class ClickHouseEntityTypeBuilderExtensions
         ArgumentException.ThrowIfNullOrWhiteSpace(viewName);
 
         builder.HasNoKey();
+        builder.ToView(viewName);
+
         builder.HasAnnotation(ClickHouseAnnotationNames.ParameterizedView, true);
         builder.HasAnnotation(ClickHouseAnnotationNames.ParameterizedViewName, viewName);
 
@@ -2111,17 +2179,14 @@ public static class ClickHouseEntityTypeBuilderExtensions
         var configuration = new ParameterizedViews.ParameterizedViewConfiguration<TView, TSource>();
         configure(configuration);
 
-        // Get or generate view name
         var viewName = configuration.ViewName ?? ConvertToSnakeCase(typeof(TView).Name);
 
-        // Mark as keyless (views don't have keys)
         builder.HasNoKey();
+        builder.ToView(viewName);
 
-        // Store basic annotations
         builder.HasAnnotation(ClickHouseAnnotationNames.ParameterizedView, true);
         builder.HasAnnotation(ClickHouseAnnotationNames.ParameterizedViewName, viewName);
 
-        // Build and store the full metadata
         var metadata = configuration.BuildMetadata(viewName);
         builder.HasAnnotation(ClickHouseAnnotationNames.ParameterizedViewMetadata, metadata);
 

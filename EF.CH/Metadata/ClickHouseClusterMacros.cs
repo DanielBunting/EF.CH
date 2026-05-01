@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace EF.CH.Metadata;
 
 /// <summary>
@@ -33,16 +35,37 @@ public static class ClickHouseClusterMacros
     public const string Replica = "{replica}";
 
     /// <summary>
-    /// Returns true when <paramref name="value"/> contains a ClickHouse macro
-    /// (any <c>{name}</c> token). Macro-containing names must be emitted as
-    /// string literals, not backticked identifiers.
+    /// Returns true when <paramref name="value"/> contains a ClickHouse server-side
+    /// macro of the form <c>{name}</c> where <c>name</c> is a valid identifier
+    /// (alphanumeric or underscore, not starting with a digit). Macro-containing
+    /// names must be emitted as string literals so the server performs substitution;
+    /// literal cluster names — including names that happen to contain unrelated
+    /// braces like <c>my{bad-name}cluster</c> — must stay as backticked identifiers.
     /// </summary>
     public static bool ContainsMacro(string? value)
     {
         if (string.IsNullOrEmpty(value)) return false;
-        var open = value.IndexOf('{');
-        if (open < 0) return false;
-        var close = value.IndexOf('}', open + 1);
-        return close > open + 1;
+        return MacroPattern.IsMatch(value);
+    }
+
+    private static readonly Regex MacroPattern = new(
+        @"\{[A-Za-z_][A-Za-z0-9_]*\}",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// Formats a cluster name for emission inside an <c>ON CLUSTER …</c> clause.
+    /// Macros (anything matching <see cref="ContainsMacro"/>) are emitted as
+    /// single-quoted string literals so the server performs substitution; literal
+    /// names are emitted as backtick-quoted identifiers. Returns the empty string
+    /// when <paramref name="clusterName"/> is null or empty so callers can
+    /// concatenate unconditionally.
+    /// </summary>
+    public static string FormatOnClusterClause(string? clusterName)
+    {
+        if (string.IsNullOrEmpty(clusterName)) return string.Empty;
+        var formatted = ContainsMacro(clusterName)
+            ? $"'{clusterName.Replace("'", "''")}'"
+            : $"`{clusterName.Replace("`", "``")}`";
+        return $" ON CLUSTER {formatted}";
     }
 }
