@@ -210,12 +210,23 @@ public class SqlGenerationTests
         Assert.Contains("generateUUIDv4", sql);
     }
 
-    [Fact(Skip = "Aggregate methods require different testing approach")]
+    [Fact]
     public void Sum_GeneratesSumOrNull()
     {
-        // Aggregate methods like Sum() can't be tested via ToQueryString()
-        // because they execute immediately. Would need actual database connection
-        // or mock to test these.
+        // EF Core's `.Sum()` over a GroupBy projects through a Select, so
+        // ToQueryString does work — it returns the projection's SQL without
+        // executing it. ClickHouse's `sumOrNull` is the standard mapping for
+        // a nullable aggregate so the result type matches CLR `int?`.
+        using var context = CreateContext();
+
+        var sql = context.TestEntities
+            .GroupBy(e => e.Name)
+            .Select(g => new { g.Key, Total = g.Sum(e => e.Value) })
+            .ToQueryString();
+
+        Assert.Contains("sum", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("\"Value\"", sql);
+        Assert.Contains("GROUP BY", sql);
     }
 
     [Fact]

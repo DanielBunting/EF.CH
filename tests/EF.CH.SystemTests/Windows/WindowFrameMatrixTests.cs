@@ -42,51 +42,77 @@ public class WindowFrameMatrixTests
 
     /// <summary>
     /// ROWS BETWEEN N PRECEDING AND CURRENT ROW — the most error-prone frame.
-    /// For N=1 over [10,20,30,40,50] the expected sums are:
-    ///   id 1: 10                 (no preceding row in partition)
-    ///   id 2: 10+20 = 30
-    ///   id 3: 20+30 = 50
-    ///   id 4: 30+40 = 70
-    ///   id 5: 40+50 = 90
+    /// Each test uses a literal int so the offset can be const-folded; passing
+    /// a captured Theory param fails translation today (clear error from the
+    /// translator) because EF Core promotes captured locals to query
+    /// parameters before our preprocessor sees them.
     /// </summary>
-    [Theory]
-    [InlineData(1, new[] { 10L, 30L, 50L, 70L, 90L })]
-    [InlineData(2, new[] { 10L, 30L, 60L, 90L, 120L })]
-    [InlineData(3, new[] { 10L, 30L, 60L, 100L, 140L })]
-    public async Task RowsBetween_NPreceding_AndCurrentRow(int n, long[] expectedPerRow)
+    [Fact]
+    public async Task RowsBetween_OnePreceding_AndCurrentRow()
     {
         await using var ctx = await SeededAsync();
         var rows = await ctx.Rows.Select(r => new
         {
             r.Id,
             S = Window.Sum<long>(r.V, w => w.PartitionBy(r.G).OrderBy(r.Id)
-                .Rows().Preceding(n).CurrentRow()),
+                .Rows().Preceding(1).CurrentRow()),
         }).OrderBy(r => r.Id).ToListAsync();
-        AssertRowsEqual(expectedPerRow, rows.Select(x => x.S));
+        AssertRowsEqual(new long[] { 10, 30, 50, 70, 90 }, rows.Select(x => x.S));
+    }
+
+    [Fact]
+    public async Task RowsBetween_TwoPreceding_AndCurrentRow()
+    {
+        await using var ctx = await SeededAsync();
+        var rows = await ctx.Rows.Select(r => new
+        {
+            r.Id,
+            S = Window.Sum<long>(r.V, w => w.PartitionBy(r.G).OrderBy(r.Id)
+                .Rows().Preceding(2).CurrentRow()),
+        }).OrderBy(r => r.Id).ToListAsync();
+        AssertRowsEqual(new long[] { 10, 30, 60, 90, 120 }, rows.Select(x => x.S));
+    }
+
+    [Fact]
+    public async Task RowsBetween_ThreePreceding_AndCurrentRow()
+    {
+        await using var ctx = await SeededAsync();
+        var rows = await ctx.Rows.Select(r => new
+        {
+            r.Id,
+            S = Window.Sum<long>(r.V, w => w.PartitionBy(r.G).OrderBy(r.Id)
+                .Rows().Preceding(3).CurrentRow()),
+        }).OrderBy(r => r.Id).ToListAsync();
+        AssertRowsEqual(new long[] { 10, 30, 60, 100, 140 }, rows.Select(x => x.S));
     }
 
     /// <summary>
-    /// ROWS BETWEEN CURRENT ROW AND N FOLLOWING.
-    /// For N=1 over [10,20,30,40,50] the expected sums are:
-    ///   id 1: 10+20 = 30
-    ///   id 2: 20+30 = 50
-    ///   id 3: 30+40 = 70
-    ///   id 4: 40+50 = 90
-    ///   id 5: 50                 (no following row in partition)
+    /// ROWS BETWEEN CURRENT ROW AND N FOLLOWING — also literal-only.
     /// </summary>
-    [Theory]
-    [InlineData(1, new[] { 30L, 50L, 70L, 90L, 50L })]
-    [InlineData(2, new[] { 60L, 90L, 120L, 90L, 50L })]
-    public async Task RowsBetween_CurrentRow_AndNFollowing(int n, long[] expectedPerRow)
+    [Fact]
+    public async Task RowsBetween_CurrentRow_AndOneFollowing()
     {
         await using var ctx = await SeededAsync();
         var rows = await ctx.Rows.Select(r => new
         {
             r.Id,
             S = Window.Sum<long>(r.V, w => w.PartitionBy(r.G).OrderBy(r.Id)
-                .Rows().CurrentRow().Following(n)),
+                .Rows().CurrentRow().Following(1)),
         }).OrderBy(r => r.Id).ToListAsync();
-        AssertRowsEqual(expectedPerRow, rows.Select(x => x.S));
+        AssertRowsEqual(new long[] { 30, 50, 70, 90, 50 }, rows.Select(x => x.S));
+    }
+
+    [Fact]
+    public async Task RowsBetween_CurrentRow_AndTwoFollowing()
+    {
+        await using var ctx = await SeededAsync();
+        var rows = await ctx.Rows.Select(r => new
+        {
+            r.Id,
+            S = Window.Sum<long>(r.V, w => w.PartitionBy(r.G).OrderBy(r.Id)
+                .Rows().CurrentRow().Following(2)),
+        }).OrderBy(r => r.Id).ToListAsync();
+        AssertRowsEqual(new long[] { 60, 90, 120, 90, 50 }, rows.Select(x => x.S));
     }
 
     /// <summary>

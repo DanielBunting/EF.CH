@@ -43,7 +43,61 @@ public static class ClickHouseDatabaseExtensions
         CancellationToken cancellationToken = default) where TEntity : class
     {
         var (tableName, schema) = GetTableInfo<TEntity>(database);
-        return OptimizeTableCoreAsync(database, tableName, schema, configure, cancellationToken);
+
+        // Wrap configure with a model-aware preflight: when WithDeduplicate
+        // is called with an explicit column list, every primary-key column
+        // of TEntity must appear. Without this, ClickHouse rejects the
+        // OPTIMIZE … DEDUPLICATE BY at execution time with a generic
+        // server-side error and a much later failure point.
+        Action<OptimizeTableOptions>? wrapped = null;
+        if (configure is not null)
+        {
+            wrapped = options =>
+            {
+                configure(options);
+                ValidateDeduplicateAgainstModel<TEntity>(database, options);
+            };
+        }
+
+        return OptimizeTableCoreAsync(database, tableName, schema, wrapped ?? configure, cancellationToken);
+    }
+
+    private static void ValidateDeduplicateAgainstModel<TEntity>(
+        DatabaseFacade database,
+        OptimizeTableOptions options) where TEntity : class
+    {
+        if (!options.Deduplicate || options.DeduplicateBy is null || options.DeduplicateBy.Length == 0)
+            return;
+
+        var context = database.GetService<ICurrentDbContext>().Context;
+        var entityType = context.Model.FindEntityType(typeof(TEntity));
+        if (entityType is null) return;
+
+        var pk = entityType.FindPrimaryKey();
+        if (pk is null || pk.Properties.Count == 0) return;
+
+        var pkColumnNames = pk.Properties
+            .Select(p => p.GetColumnName())
+            .Where(n => !string.IsNullOrEmpty(n))
+            .ToHashSet(StringComparer.Ordinal);
+
+        var dedupSet = new HashSet<string>(options.DeduplicateBy, StringComparer.Ordinal);
+
+        var missing = pkColumnNames
+            .Where(pkCol => !dedupSet.Contains(pkCol)
+                && !dedupSet.Any(d => string.Equals(d, pkCol, StringComparison.Ordinal)))
+            .ToList();
+
+        if (missing.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"WithDeduplicate column list for {typeof(TEntity).Name} omits primary key " +
+                $"column(s): {string.Join(", ", missing)}. ClickHouse requires every column in " +
+                "the table's ORDER BY (which the EF Core primary key maps to) to appear in " +
+                "DEDUPLICATE BY; otherwise the merge picks an arbitrary surviving row. " +
+                "Either add the missing column(s) to WithDeduplicate, or call WithDeduplicate() " +
+                "with no arguments to deduplicate by every column.");
+        }
     }
 
     /// <summary>

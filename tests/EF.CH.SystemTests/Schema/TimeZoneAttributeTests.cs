@@ -47,12 +47,16 @@ public class TimeZoneAttributeTests
     /// DateTimeOffset (UTC=01:30 → BST would be 02:30 local). Round-tripping
     /// must preserve the absolute instant.
     /// <para>
-    /// EXPECTED TO FAIL TODAY: the round-trip applies a local-time
-    /// interpretation that shifts the inserted instant by one hour across
-    /// the DST boundary. Left failing intentionally (see the audit's
-    /// "specification" pattern) so the gap is visible in CI rather than
-    /// hidden behind a skip; remove this xmldoc note once the driver or
-    /// provider preserves the inserted DateTimeOffset across spring-forward.
+    /// EXPECTED TO FAIL TODAY: ClickHouse.Driver 1.0.0's bind path renders
+    /// DateTime values as a wall-clock string in the column's timezone via
+    /// <c>FormatDateTime64InTargetTimezone</c>. On the spring-forward day
+    /// the wall-clock string for the UTC instant lands in the "skipped"
+    /// hour; CH then parses the ambiguous local string with the GMT offset,
+    /// shifting the stored instant by one hour. Provider-side fix would
+    /// require either driver-level UTC-binding (DateTime64UTC route) or
+    /// SQL-level wrapping of every parameter binding with
+    /// <c>fromUnixTimestamp64Milli(?, 'TZ')</c>. Tracked in
+    /// <c>.tmp/notes/known-issues.md</c>.
     /// </para>
     /// </summary>
     [Fact]
@@ -80,14 +84,6 @@ public class TimeZoneAttributeTests
     /// shifts from BST back to GMT and the local instant 01:30 occurs twice.
     /// The DateTimeOffset carries an explicit UTC offset, so the absolute
     /// instant is unambiguous in principle; round-trip must preserve it.
-    /// <para>
-    /// EXPECTED TO FAIL TODAY: the ClickHouse driver appears to round-trip
-    /// the value through local-time interpretation, so the first occurrence
-    /// (00:30 UTC = 01:30 BST) and the second (01:30 UTC = 01:30 GMT) read
-    /// back as the same instant, off by one hour. Left failing intentionally
-    /// (the audit's "specification" pattern) so the round-trip hazard is
-    /// loud in CI rather than hidden behind a skip.
-    /// </para>
     /// </summary>
     [Fact]
     public async Task HasTimeZone_RoundTripsAcrossFallBackBoundary()

@@ -12,6 +12,14 @@ public static class ClickHouseUuidDbFunctionsExtensions
     /// Translates to ClickHouse <c>generateUUIDv7()</c>.
     /// Generates a time-sortable UUID v7 value.
     /// </summary>
+    /// <remarks>
+    /// .NET's default <see cref="Guid.CompareTo(Guid)"/> does NOT preserve the
+    /// time-order of v7 UUIDs because the first three groups are laid out
+    /// little-endian, while the v7 timestamp prefix is big-endian. To time-order
+    /// client-side, sort with <see cref="UuidV7Comparer.Instance"/>; to
+    /// time-order server-side just <c>ORDER BY</c> the column (CH's UUID type
+    /// sorts in big-endian byte order).
+    /// </remarks>
     public static Guid NewGuidV7(this DbFunctions _)
         => throw new InvalidOperationException("This method is for LINQ translation only.");
 

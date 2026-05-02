@@ -1,3 +1,4 @@
+using EF.CH;
 using EF.CH.Extensions;
 using EF.CH.SystemTests.Fixtures;
 using EF.CH.SystemTests.Infrastructure;
@@ -51,28 +52,32 @@ public class IdentifierGeneratorUniquenessTests
     {
         await using var ctx = await PrepareContextAsync<UuidV7Ctx>();
 
-        // Insert two batches separated by a short delay; the second batch's
-        // minimum UUIDv7 must compare strictly greater than the first
-        // batch's maximum.
-        ctx.Rows.AddRange(Enumerable.Range(0, 50).Select(_ => new UuidV7Row()));
-        await ctx.SaveChangesAsync();
-        ctx.ChangeTracker.Clear();
+        // Insert via raw SQL so CH's `generateUUIDv7()` runs server-side. EF
+        // Core's built-in GuidValueGenerator otherwise mints client-side
+        // (v4) UUIDs before the INSERT lands, ignoring the server default.
+        // Two batches separated by a short delay so the v7 timestamp prefix
+        // advances; UuidV7Comparer must sort the second batch strictly after
+        // the first.
+        for (int i = 0; i < 50; i++)
+            await ctx.Database.ExecuteSqlRawAsync(
+                "INSERT INTO UuidV7Row (Id, Batch) VALUES (generateUUIDv7(), 0)");
 
-        await Task.Delay(100); // ensure the v7 timestamp tick advances.
+        await Task.Delay(100); // advance the v7 ms tick.
 
-        ctx.Rows.AddRange(Enumerable.Range(0, 50).Select(_ => new UuidV7Row()));
-        await ctx.SaveChangesAsync();
-        ctx.ChangeTracker.Clear();
+        for (int i = 0; i < 50; i++)
+            await ctx.Database.ExecuteSqlRawAsync(
+                "INSERT INTO UuidV7Row (Id, Batch) VALUES (generateUUIDv7(), 1)");
 
-        var all = await ctx.Rows.OrderBy(x => x.Id).Select(x => x.Id).ToListAsync();
-        Assert.Equal(100, all.Count);
+        var rows = await ctx.Rows.Select(x => new { x.Id, x.Batch }).ToListAsync();
+        Assert.Equal(100, rows.Count);
 
-        // Sorting by Guid in .NET uses byte order; v7 is time-ordered as
-        // bytes, so the 100 IDs sorted lexically should also be in
-        // insertion-time order.
-        for (int i = 1; i < all.Count; i++)
-            Assert.True(all[i].CompareTo(all[i - 1]) > 0,
-                $"expected UUIDv7 IDs to be time-ordered after sort; index {i}");
+        var sorted = rows.OrderBy(r => r.Id, UuidV7Comparer.Instance).ToList();
+        var batches = sorted.Select(r => r.Batch).ToList();
+
+        Assert.Equal(50, batches.Count(b => b == 0));
+        Assert.Equal(50, batches.Count(b => b == 1));
+        Assert.All(batches.Take(50), b => Assert.Equal(0, b));
+        Assert.All(batches.Skip(50), b => Assert.Equal(1, b));
     }
 
     [Fact]
@@ -145,7 +150,7 @@ public class IdentifierGeneratorUniquenessTests
 
     public sealed class SerialRow { public ulong Id { get; set; } }
     public sealed class UuidV4Row { public Guid Id { get; set; } }
-    public sealed class UuidV7Row { public Guid Id { get; set; } }
+    public sealed class UuidV7Row { public Guid Id { get; set; } public byte Batch { get; set; } }
     public sealed class SnowflakeRow { public long Id { get; set; } }
 
     public sealed class SerialCtx(DbContextOptions<SerialCtx> o) : DbContext(o)

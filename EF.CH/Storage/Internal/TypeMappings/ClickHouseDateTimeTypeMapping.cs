@@ -236,6 +236,37 @@ public class ClickHouseDateTimeOffsetTypeMapping : RelationalTypeMapping
         TimeZoneInfo = ResolveTimeZone(timeZone);
     }
 
+    /// <summary>
+    /// Converter: writes the UTC <see cref="DateTime"/> for parameter binding;
+    /// reads it back as a <see cref="DateTimeOffset"/> in the column's timezone.
+    /// </summary>
+    private static ValueConverter<DateTimeOffset, DateTime> CreateConverter(string? timeZone)
+    {
+        var tz = ResolveTimeZone(timeZone);
+        return new ValueConverter<DateTimeOffset, DateTime>(
+            dto => dto.UtcDateTime,
+            dt => ConvertToDateTimeOffset(dt, tz));
+    }
+
+    /// <summary>
+    /// Converts a UTC <see cref="DateTime"/> to a <see cref="DateTimeOffset"/>
+    /// in the specified timezone. Uses <c>tz.GetUtcOffset(utc)</c> on the UTC
+    /// instant directly — calling <c>GetUtcOffset</c> on the post-conversion
+    /// local time picks the standard-time offset on a fall-back ambiguous
+    /// hour and shifts the round-trip by an hour.
+    /// </summary>
+    private static DateTimeOffset ConvertToDateTimeOffset(DateTime utcDateTime, TimeZoneInfo tz)
+    {
+        var utc = DateTime.SpecifyKind(utcDateTime, DateTimeKind.Utc);
+        if (tz == TimeZoneInfo.Utc)
+        {
+            return new DateTimeOffset(utc, TimeSpan.Zero);
+        }
+        var offset = tz.GetUtcOffset(utc);
+        var local = TimeZoneInfo.ConvertTimeFromUtc(utc, tz);
+        return new DateTimeOffset(local, offset);
+    }
+
     protected ClickHouseDateTimeOffsetTypeMapping(
         RelationalTypeMappingParameters parameters,
         int precision,
@@ -249,39 +280,6 @@ public class ClickHouseDateTimeOffsetTypeMapping : RelationalTypeMapping
 
     private static string BuildStoreType(int precision, string timeZone)
         => $"DateTime64({precision}, '{timeZone}')";
-
-    /// <summary>
-    /// Creates a value converter that writes as UTC and reads using the specified timezone.
-    /// </summary>
-    private static ValueConverter<DateTimeOffset, DateTime> CreateConverter(string? timeZone)
-    {
-        var tz = ResolveTimeZone(timeZone);
-        return new ValueConverter<DateTimeOffset, DateTime>(
-            // Write: always convert to UTC for storage
-            dto => dto.UtcDateTime,
-            // Read: interpret as UTC, then convert to target timezone with correct offset
-            dt => ConvertToDateTimeOffset(dt, tz));
-    }
-
-    /// <summary>
-    /// Converts a UTC DateTime to a DateTimeOffset in the specified timezone.
-    /// </summary>
-    private static DateTimeOffset ConvertToDateTimeOffset(DateTime utcDateTime, TimeZoneInfo tz)
-    {
-        // Ensure the DateTime is treated as UTC
-        var utc = DateTime.SpecifyKind(utcDateTime, DateTimeKind.Utc);
-
-        if (tz == TimeZoneInfo.Utc)
-        {
-            // Fast path for UTC - no conversion needed
-            return new DateTimeOffset(utc, TimeSpan.Zero);
-        }
-
-        // Convert from UTC to the target timezone
-        var local = TimeZoneInfo.ConvertTimeFromUtc(utc, tz);
-        var offset = tz.GetUtcOffset(local);
-        return new DateTimeOffset(local, offset);
-    }
 
     /// <summary>
     /// Resolves an IANA timezone name to a TimeZoneInfo.

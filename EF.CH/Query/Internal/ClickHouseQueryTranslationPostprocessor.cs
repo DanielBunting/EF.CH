@@ -33,106 +33,116 @@ public class ClickHouseQueryTranslationPostprocessor : RelationalQueryTranslatio
 
     public override Expression Process(Expression query)
     {
-        // Clear any thread-local state left by a prior query. Most of the Set* calls
-        // below are conditional, so without this reset, fields a previous query
-        // populated but never consumed (e.g. translation threw before SQL generation
-        // reached the consumption site) would leak into this query's SQL.
-        ClickHouseQuerySqlGenerator.ResetThreadLocalState();
-
         // Set up default-for-null mappings for null comparison rewriting in SQL nullability processor
         ClickHouseSqlNullabilityProcessor.SetDefaultForNullMappings(_queryCompilationContext.Model);
 
-        // Pass EPHEMERAL column markers to the SQL generator so it can rewrite
-        // column references to NULL (ClickHouse rejects SELECTs of ephemeral columns).
-        ClickHouseQuerySqlGenerator.SetEphemeralColumns(
-            CollectEphemeralColumns(_queryCompilationContext.Model));
-
-        // Let base class do standard processing first
-        query = base.Process(query);
-
-        // Get ClickHouse options set during translation phase
-        var options = _queryCompilationContext.QueryCompilationContextOptions();
-
-        // Apply dictionary table function rewrites FIRST
-        query = new ClickHouseDictionaryTableFunctionVisitor(
-            _queryCompilationContext.Model).Visit(query);
-
-        // Apply external table function rewrites (before FINAL/SAMPLE, which don't apply to external tables)
-        query = new ClickHouseExternalTableFunctionVisitor(
-            _queryCompilationContext.Model,
-            _externalConfigResolver).Visit(query);
-
-        // Apply FINAL/SAMPLE modifiers to table expressions (only applies to native ClickHouse tables)
-        if (options.UseFinal || options.SampleFraction.HasValue)
+        // Build a per-query state container. Anything the SQL generator needs
+        // (SETTINGS, PREWHERE, CTEs, LIMIT BY, ARRAY JOIN, ASOF JOIN, ephemeral
+        // columns, ...) flows through this. Attached to the outer SelectExpression
+        // via QueryCompilationContext.Tags + ClickHouseQueryStateRegistry below.
+        var ctx = new ClickHouseQueryGenerationContext
         {
-            query = new ClickHouseTableModifierApplyingVisitor(options, _queryCompilationContext.Model).Visit(query);
-        }
+            EphemeralColumns = CollectEphemeralColumns(_queryCompilationContext.Model),
+        };
 
-        // Pass SETTINGS via thread-local to SQL generator
-        // (SETTINGS is query-level, not table-level, so thread-local is appropriate)
-        if (options.QuerySettings.Count > 0)
+        string? tag = null;
+        try
         {
-            ClickHouseQuerySqlGenerator.SetQuerySettings(options.QuerySettings);
-        }
+            // Let base class do standard processing first
+            query = base.Process(query);
 
-        // Pass WITH FILL / INTERPOLATE specs via thread-local to SQL generator
-        if (options.HasWithFill || options.HasInterpolate)
+            // Get ClickHouse options set during translation phase
+            var options = _queryCompilationContext.QueryCompilationContextOptions();
+
+            // Apply dictionary table function rewrites FIRST
+            query = new ClickHouseDictionaryTableFunctionVisitor(
+                _queryCompilationContext.Model).Visit(query);
+
+            // Apply external table function rewrites (before FINAL/SAMPLE, which don't apply to external tables)
+            query = new ClickHouseExternalTableFunctionVisitor(
+                _queryCompilationContext.Model,
+                _externalConfigResolver).Visit(query);
+
+            // Apply FINAL/SAMPLE modifiers to table expressions (only applies to native ClickHouse tables)
+            if (options.UseFinal || options.SampleFraction.HasValue)
+            {
+                query = new ClickHouseTableModifierApplyingVisitor(options, _queryCompilationContext.Model).Visit(query);
+            }
+
+            if (options.QuerySettings.Count > 0)
+            {
+                ctx.QuerySettings = new Dictionary<string, object>(options.QuerySettings);
+            }
+
+            if (options.HasWithFill || options.HasInterpolate)
+            {
+                ctx.WithFillOptions = options;
+            }
+
+            if (options.PreWhereExpression != null)
+            {
+                ctx.PreWhereExpression = options.PreWhereExpression;
+            }
+
+            if (options.HasLimitBy)
+            {
+                ctx.LimitByLimit = options.LimitByLimit!.Value;
+                ctx.LimitByOffset = options.LimitByOffset;
+                ctx.LimitByExpressions = options.LimitByExpressions!;
+            }
+
+            if (options.GroupByModifier != GroupByModifier.None)
+            {
+                ctx.GroupByModifier = options.GroupByModifier;
+            }
+
+            if (options.RawFilterSql != null)
+            {
+                ctx.RawFilter = options.RawFilterSql;
+            }
+
+            // Extract CTE if AsCte() was called — must happen before reading CteDefinitions.
+            if (options.PendingCteName != null)
+            {
+                query = new ClickHouseCteExtractionVisitor(options).Visit(query);
+            }
+
+            if (options.HasCtes)
+            {
+                ctx.CteDefinitions = new List<CteDefinition>(options.CteDefinitions);
+            }
+
+            if (options.HasArrayJoin)
+            {
+                ctx.ArrayJoinSpecs = new List<ArrayJoinSpec>(options.ArrayJoinSpecs);
+            }
+
+            if (options.AsofJoin != null)
+            {
+                ctx.AsofJoin = options.AsofJoin;
+            }
+
+            // Attach the state-pointer tag to QueryCompilationContext.Tags. EF Core's
+            // RelationalShapedQueryCompilingExpressionVisitor.ShaperProcessingExpressionVisitor
+            // copies queryCompilationContext.Tags onto the outer SelectExpression
+            // (via ApplyTags), so the tag rides through to the SQL generator. Adding
+            // directly to outerSelect.Tags would be clobbered by that ApplyTags overwrite.
+            tag = ClickHouseQueryStateRegistry.Register(ctx);
+            _queryCompilationContext.AddTag(tag);
+            tag = null; // ownership passed; clear so the catch below doesn't double-discard.
+
+            return query;
+        }
+        catch
         {
-            ClickHouseQuerySqlGenerator.SetWithFillOptions(options);
+            // Translation threw after we registered. Free the registry entry so it
+            // doesn't leak for the lifetime of the process.
+            if (tag is not null)
+            {
+                ClickHouseQueryStateRegistry.Discard(tag);
+            }
+            throw;
         }
-
-        // Pass PREWHERE expression via thread-local to SQL generator
-        if (options.PreWhereExpression != null)
-        {
-            ClickHouseQuerySqlGenerator.SetPreWhereExpression(options.PreWhereExpression);
-        }
-
-        // Pass LIMIT BY options via thread-local to SQL generator
-        if (options.HasLimitBy)
-        {
-            ClickHouseQuerySqlGenerator.SetLimitBy(
-                options.LimitByLimit!.Value,
-                options.LimitByOffset,
-                options.LimitByExpressions!);
-        }
-
-        // Pass GROUP BY modifier via thread-local to SQL generator
-        if (options.GroupByModifier != GroupByModifier.None)
-        {
-            ClickHouseQuerySqlGenerator.SetGroupByModifier(options.GroupByModifier);
-        }
-
-        // Pass raw filter SQL via thread-local to SQL generator
-        if (options.RawFilterSql != null)
-        {
-            ClickHouseQuerySqlGenerator.SetRawFilter(options.RawFilterSql);
-        }
-
-        // Extract CTE if AsCte() was called
-        if (options.PendingCteName != null)
-        {
-            query = new ClickHouseCteExtractionVisitor(options).Visit(query);
-        }
-
-        // Pass CTE definitions to SQL generator
-        if (options.HasCtes)
-        {
-            ClickHouseQuerySqlGenerator.SetCteDefinitions(options.CteDefinitions);
-        }
-
-        // Pass ARRAY JOIN specs via thread-local to SQL generator
-        if (options.HasArrayJoin)
-        {
-            ClickHouseQuerySqlGenerator.SetArrayJoinSpecs(options.ArrayJoinSpecs);
-        }
-
-        // Pass ASOF JOIN info via thread-local to SQL generator
-        if (options.AsofJoin != null)
-        {
-            ClickHouseQuerySqlGenerator.SetAsofJoin(options.AsofJoin);
-        }
-
-        return query;
     }
 
     /// <summary>

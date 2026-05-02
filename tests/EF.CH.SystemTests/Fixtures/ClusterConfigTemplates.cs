@@ -102,6 +102,24 @@ public static class ClusterConfigTemplates
         return Encoding.UTF8.GetBytes(xml);
     }
 
+    /// <summary>
+    /// Single-node Keeper config (server_id = 1, raft quorum of 1) plus the
+    /// matching client config so <c>system.zookeeper</c> queries and
+    /// <c>generateSerialID</c>/<c>zooKeeperPath</c>/<c>hasZooKeeperConfig</c>
+    /// resolve. The container must be started with <c>WithHostname(hostname)</c>
+    /// so the keeper's raft self-discovery resolves the hostname back to the
+    /// server.
+    /// </summary>
+    public static byte[] BuildSingleNodeKeeperConfig(string hostname)
+    {
+        var xml = $@"<clickhouse>
+{BuildKeeperXml(serverId: 1, hostnames: new[] { hostname })}
+{BuildZooKeeperClientXml(new[] { hostname })}
+    <keeper_map_path_prefix>/clickhouse/keeper_map</keeper_map_path_prefix>
+</clickhouse>";
+        return Encoding.UTF8.GetBytes(xml);
+    }
+
     private static string BuildKeeperXml(int serverId, IReadOnlyList<string> hostnames)
     {
         var raftServers = string.Concat(hostnames.Select((h, i) =>

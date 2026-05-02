@@ -81,6 +81,13 @@ internal class ClickHouseMethodRewritingVisitor : ExpressionVisitor
         // until execution.
         visited = ConstFoldIntervalUnitArgs(visited);
 
+        // Same problem for WindowSpec/WindowBuilder Preceding(int)/Following(int):
+        // EF Core promotes captured locals to query parameters before our
+        // translator runs, so n shows up as a parameter — and the SQL generator
+        // emits an empty offset (`BETWEEN  PRECEDING AND CURRENT ROW`). Fold
+        // the int arg back to a constant so GetConstantInt can read it.
+        visited = ConstFoldWindowFrameOffset(visited);
+
         if (!visited.Method.IsGenericMethod)
             return visited;
 
@@ -123,12 +130,13 @@ internal class ClickHouseMethodRewritingVisitor : ExpressionVisitor
         // (LIMIT n BY key  →  LIMIT [skip,] take).
         if (genericDef == QueryableSkipMethodInfo || genericDef == QueryableTakeMethodInfo)
         {
-            if (TryUnwrapLimitBy(visited.Arguments[0], out var inner, out var limitByCall))
+            if (TryUnwrapCustom(visited.Arguments[0], IsLimitByMethod, out var inner, out var customCall)
+                || TryUnwrapCustom(visited.Arguments[0], IsInterpolateMethod, out inner, out customCall))
             {
                 var pushed = visited.Update(visited.Object, new[] { inner!, visited.Arguments[1] });
-                return limitByCall!.Update(
-                    limitByCall.Object,
-                    new[] { (Expression)pushed }.Concat(limitByCall.Arguments.Skip(1)).ToArray());
+                return customCall!.Update(
+                    customCall.Object,
+                    new[] { (Expression)pushed }.Concat(customCall.Arguments.Skip(1)).ToArray());
             }
         }
 
@@ -155,28 +163,33 @@ internal class ClickHouseMethodRewritingVisitor : ExpressionVisitor
                 && m.GetParameters()[1].ParameterType == typeof(int));
 
     /// <summary>
-    /// If <paramref name="expr"/> is a <c>LimitBy(...)</c> or <c>LimitBy(..., offset)</c>
-    /// call, returns the inner source and the original call so the caller can
-    /// rebuild it around a transformed source. Returns <c>false</c> for any
-    /// other shape.
+    /// If <paramref name="expr"/> is a generic method call whose generic
+    /// definition matches <paramref name="match"/>, returns the call's first
+    /// argument (the source) and the call itself so the caller can rebuild
+    /// it around a transformed source.
     /// </summary>
-    private static bool TryUnwrapLimitBy(
+    private static bool TryUnwrapCustom(
         Expression expr,
+        Func<MethodInfo, bool> match,
         out Expression? inner,
-        out MethodCallExpression? limitByCall)
+        out MethodCallExpression? call)
     {
         inner = null;
-        limitByCall = null;
+        call = null;
         if (expr is not MethodCallExpression mc) return false;
         if (!mc.Method.IsGenericMethod) return false;
-        var def = mc.Method.GetGenericMethodDefinition();
-        if (def != ClickHouseQueryableExtensions.LimitByMethodInfo
-            && def != ClickHouseQueryableExtensions.LimitByWithOffsetMethodInfo)
-            return false;
+        if (!match(mc.Method.GetGenericMethodDefinition())) return false;
         inner = mc.Arguments[0];
-        limitByCall = mc;
+        call = mc;
         return true;
     }
+
+    private static bool IsLimitByMethod(MethodInfo def) =>
+        def == ClickHouseQueryableExtensions.LimitByMethodInfo
+        || def == ClickHouseQueryableExtensions.LimitByWithOffsetMethodInfo;
+
+    private static bool IsInterpolateMethod(MethodInfo def) =>
+        InterpolateExtensions.AllMethodInfos.Contains(def);
 
     private static bool TryEvaluateConstant(Expression expr, out object? value)
     {
@@ -206,6 +219,38 @@ internal class ClickHouseMethodRewritingVisitor : ExpressionVisitor
             return true;
         }
         catch { return false; }
+    }
+
+    private static MethodCallExpression ConstFoldWindowFrameOffset(MethodCallExpression node)
+    {
+        var declaringType = node.Method.DeclaringType;
+        if (declaringType is null) return node;
+
+        var isWindowSpec = declaringType == typeof(EF.CH.Extensions.WindowSpec);
+        var isWindowBuilder = declaringType.IsGenericType
+            && declaringType.GetGenericTypeDefinition() == typeof(EF.CH.Extensions.WindowBuilder<>);
+
+        if (!isWindowSpec && !isWindowBuilder) return node;
+        if (node.Method.Name is not (nameof(EF.CH.Extensions.WindowSpec.Preceding)
+                                     or nameof(EF.CH.Extensions.WindowSpec.Following)))
+            return node;
+        if (node.Arguments.Count != 1) return node;
+
+        var arg = node.Arguments[0];
+        if (arg is ConstantExpression) return node;
+
+        // Best-effort fold for closure-captured locals. Args that have been
+        // promoted to QueryParameterExpression by EF Core's parameter
+        // extractor (which runs before this preprocessor) won't fold here —
+        // those produce an empty offset in the emitted SQL today and are a
+        // known limitation; pass a literal int or wrap in EF.Constant() to
+        // work around.
+        if (TryEvaluateConstant(arg, out var value) && value is not null)
+        {
+            return node.Update(node.Object, new[] { Expression.Constant(value, typeof(int)) });
+        }
+
+        return node;
     }
 
     private static MethodCallExpression ConstFoldIntervalUnitArgs(MethodCallExpression node)

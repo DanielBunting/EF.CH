@@ -201,18 +201,20 @@ public class ConnectionRoutingTests
     }
 
     /// <summary>
-    /// <c>WITH … INSERT</c> isn't a syntax ClickHouse supports today, so the
-    /// classifier doesn't need to special-case it. Documents the gap as a
-    /// loud failure if a future server release adds the syntax (the read
-    /// classifier would mis-route the write to a read replica).
+    /// Documents the current classifier limitation: <c>WITH … INSERT</c>
+    /// (CTE-led INSERT) is treated as a READ because the prefix scan only
+    /// looks at the first SQL keyword. ClickHouse may support this syntax in
+    /// future releases — the test fails loudly today so we notice and
+    /// tighten the classifier when that happens.
     /// </summary>
-    [Fact(Skip = "ClickHouse does not currently parse `WITH … INSERT`; if support lands, " +
-                  "the read-prefix classifier must be tightened to look past the WITH " +
-                  "clause for the actual statement verb.")]
+    [Fact]
     public void Routing_ClassifiesWithLedInsert_AsWrite()
     {
         const string sql = "WITH x AS (SELECT 1) INSERT INTO target SELECT * FROM x";
-        Assert.False(InvokeIsReadOperation(sql));
+        Assert.False(InvokeIsReadOperation(sql),
+            "WITH-led INSERT must classify as a WRITE — current naive prefix-scan " +
+            "classifies it as a READ. If a future change tightens the parser to look " +
+            "past the WITH clause, this test passes.");
     }
 
     private static bool InvokeIsReadOperation(string sql)

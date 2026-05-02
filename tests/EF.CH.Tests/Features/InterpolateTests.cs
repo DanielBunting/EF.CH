@@ -203,7 +203,7 @@ public class InterpolateTests
         Assert.Contains("WITH FILL", sql);
     }
 
-    [Fact(Skip = "Chaining Take() after Interpolate() requires NavigationExpandingExpressionVisitor support for custom methods.")]
+    [Fact]
     public void Interpolate_WithLimit_GeneratesCorrectOrder()
     {
         using var context = CreateContext();
@@ -224,7 +224,7 @@ public class InterpolateTests
         Assert.True(limitIndex > withFillIndex, "LIMIT should come after WITH FILL");
     }
 
-    [Fact(Skip = "Chaining Take() after Interpolate() requires NavigationExpandingExpressionVisitor support for custom methods.")]
+    [Fact]
     public void Interpolate_SingleColumnWithLimit_GeneratesCorrectOrder()
     {
         using var context = CreateContext();

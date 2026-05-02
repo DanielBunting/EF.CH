@@ -1004,9 +1004,7 @@ public class DateTimeOffsetIntegrationTests : IAsyncLifetime
         Assert.Equal(30, result.EasternTime.Minute);
     }
 
-    [Fact(Skip = "Known limitation: During DST fall-back, UTC times that map to the same local time " +
-                   "may not round-trip correctly when using timezone-aware columns. " +
-                   "Use UTC timezone for precise instant preservation.")]
+    [Fact]
     public async Task DstFallBack_PreservesInstant()
     {
         // This test documents a known limitation with DST fall-back times.
@@ -1056,9 +1054,7 @@ public class DateTimeOffsetIntegrationTests : IAsyncLifetime
         Assert.Equal(TimeSpan.FromHours(1), result2.EasternTime.UtcDateTime - result1.EasternTime.UtcDateTime);
     }
 
-    [Fact(Skip = "Known limitation: During DST fall-back, ClickHouse timezone handling may not preserve " +
-                   "distinct UTC instants for ambiguous local times. The UTC time is written as a literal " +
-                   "which ClickHouse interprets as local time in the column's timezone.")]
+    [Fact]
     public async Task DstFallBack_AmbiguousTime_PreservesUtc()
     {
         // This test documents a known limitation with DST fall-back ambiguous times.

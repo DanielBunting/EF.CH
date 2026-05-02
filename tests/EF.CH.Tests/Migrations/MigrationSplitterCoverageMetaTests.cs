@@ -54,10 +54,46 @@ public class MigrationSplitterCoverageMetaTests
 
     private static string FindTestSrcRoot()
     {
-        var dir = AppContext.BaseDirectory; // …/bin/Debug/net10.0/
-        // Walk up to the project directory containing Migrations/.
-        while (dir != null && !Directory.Exists(Path.Combine(dir, "Migrations")))
-            dir = Path.GetDirectoryName(dir);
-        return dir ?? throw new InvalidOperationException("could not locate Migrations test directory");
+        // Try a few strategies in order:
+        // 1) AppContext.BaseDirectory walk-up (works in `dotnet test` from
+        //    the repo with the test project's source nearby).
+        // 2) MSBuild-injected `EF_CH_TEST_SOURCE_ROOT` environment variable
+        //    (set by CI / publish flows that strip source from output).
+        // 3) Walk up from the assembly Location.
+        // If none locate a folder containing the meta-test's own source,
+        // throw a clear error that names what was tried.
+        var attempts = new List<string>();
+
+        var fromEnv = Environment.GetEnvironmentVariable("EF_CH_TEST_SOURCE_ROOT");
+        if (!string.IsNullOrEmpty(fromEnv) && Directory.Exists(fromEnv))
+        {
+            attempts.Add($"env EF_CH_TEST_SOURCE_ROOT={fromEnv}");
+            return fromEnv;
+        }
+
+        var roots = new[] { AppContext.BaseDirectory, typeof(MigrationSplitterCoverageMetaTests).Assembly.Location };
+        foreach (var root in roots.Where(s => !string.IsNullOrEmpty(s)))
+        {
+            attempts.Add(root);
+            var dir = root.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)
+                ? Path.GetDirectoryName(root)
+                : root;
+            while (dir != null)
+            {
+                var migrationsDir = Path.Combine(dir, "Migrations");
+                // Only accept folders that ALSO contain this very meta-test
+                // source — proves we've found a real source tree, not a
+                // packaged output that happens to have a Migrations folder.
+                var selfSource = Path.Combine(migrationsDir, nameof(MigrationSplitterCoverageMetaTests) + ".cs");
+                if (File.Exists(selfSource))
+                    return dir;
+                dir = Path.GetDirectoryName(dir);
+            }
+        }
+
+        throw new InvalidOperationException(
+            $"Could not locate Migrations test source directory. Tried: {string.Join("; ", attempts)}. " +
+            "Set EF_CH_TEST_SOURCE_ROOT to the test project's source root if running from a " +
+            "stripped publish output.");
     }
 }

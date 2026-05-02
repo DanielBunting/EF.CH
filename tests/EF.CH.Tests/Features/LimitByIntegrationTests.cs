@@ -138,17 +138,20 @@ public class LimitByIntegrationTests : IAsyncLifetime
         Assert.Equal(2, bUs.Count);
     }
 
-    [Fact(Skip = "Per-group offset is no longer supported by the public API. " +
-                 "Compose .LimitBy(key, limit).Skip(offset) for global skip — " +
-                 "the per-group LIMIT offset, limit BY shape is reserved for a future redesign.")]
-    public async Task LimitBy_WithOffset_SkipsRowsPerGroup_legacy_disabled()
+    /// <summary>
+    /// Per-group offset via the <c>LimitBy(key, limit, offset)</c> overload —
+    /// emits ClickHouse's <c>LIMIT offset, limit BY key</c>. Each group skips
+    /// its own first <paramref name="offset"/> rows, then takes the next
+    /// <paramref name="limit"/>.
+    /// </summary>
+    [Fact]
+    public async Task LimitBy_WithOffset_SkipsRowsPerGroup()
     {
         await using var context = CreateContext();
 
         await context.Database.EnsureDeletedAsync();
         await context.Database.EnsureCreatedAsync();
 
-        // Insert test data
         var now = DateTime.UtcNow;
         context.Events.AddRange(
             // Category A: scores 100, 90, 80, 70, 60
@@ -164,33 +167,29 @@ public class LimitByIntegrationTests : IAsyncLifetime
         );
         await context.SaveChangesAsync();
 
-        // Skip 1, take 2 per category (get 2nd and 3rd highest)
-        // Note: Additional ordering after LimitBy is not supported due to EF Core's NavigationExpandingExpressionVisitor.
-        // Sort in-memory after fetching.
+        // Skip 1, take 2 per category (get 2nd and 3rd highest within each).
         var results = (await context.Events
             .OrderByDescending(e => e.Score)
-            .LimitBy(e => e.Category, 2).Skip(1)
+            .LimitBy(e => e.Category, limit: 2, offset: 1)
             .ToListAsync())
             .OrderBy(e => e.Category)
             .ThenByDescending(e => e.Score)
             .ToList();
 
-        // Expect: A(90,80), B(85,75) = 4 total (skipped 100 and 95)
+        // Expect: A(90,80), B(85,75) = 4 total (each group skipped its own top-1).
         Assert.Equal(4, results.Count);
 
-        // Verify Category A has 2nd and 3rd highest
         var categoryA = results.Where(e => e.Category == "A").ToList();
         Assert.Equal(2, categoryA.Count);
         Assert.Contains(categoryA, e => e.Score == 90);
         Assert.Contains(categoryA, e => e.Score == 80);
-        Assert.DoesNotContain(categoryA, e => e.Score == 100); // Skipped
+        Assert.DoesNotContain(categoryA, e => e.Score == 100);
 
-        // Verify Category B has 2nd and 3rd highest
         var categoryB = results.Where(e => e.Category == "B").ToList();
         Assert.Equal(2, categoryB.Count);
         Assert.Contains(categoryB, e => e.Score == 85);
         Assert.Contains(categoryB, e => e.Score == 75);
-        Assert.DoesNotContain(categoryB, e => e.Score == 95); // Skipped
+        Assert.DoesNotContain(categoryB, e => e.Score == 95);
     }
 
     /// <summary>

@@ -470,18 +470,27 @@ public class ClickHouseSqlTranslatingExpressionVisitor : RelationalSqlTranslatin
                 break;
 
             case nameof(WindowSpec.Preceding):
-                var precedingOffset = GetConstantInt(call.Arguments[0]);
+                var precedingOffset = GetConstantInt(call.Arguments[0])
+                    ?? throw NonConstantFrameOffset(nameof(WindowSpec.Preceding));
                 SetBound(ref frameStart, ref frameStartOffset, ref frameEnd, ref frameEndOffset,
                     ref boundIndex, WindowFrameBound.Preceding, precedingOffset);
                 break;
 
             case nameof(WindowSpec.Following):
-                var followingOffset = GetConstantInt(call.Arguments[0]);
+                var followingOffset = GetConstantInt(call.Arguments[0])
+                    ?? throw NonConstantFrameOffset(nameof(WindowSpec.Following));
                 SetBound(ref frameStart, ref frameStartOffset, ref frameEnd, ref frameEndOffset,
                     ref boundIndex, WindowFrameBound.Following, followingOffset);
                 break;
         }
     }
+
+    private static InvalidOperationException NonConstantFrameOffset(string method) =>
+        new($"WindowSpec.{method}(int) requires a literal offset that can be const-folded at " +
+            "translation time. EF Core promotes captured locals (including xUnit Theory params) to " +
+            "query parameters before our preprocessor runs, leaving the frame clause without a " +
+            "concrete offset and producing malformed SQL. Pass an `int` literal directly, " +
+            "or wrap it in `EF.Constant(n)` if you need a runtime value.");
 
     /// <summary>
     /// Visits new expressions, handling tuple creation for ClickHouse.
@@ -1084,13 +1093,15 @@ public class ClickHouseSqlTranslatingExpressionVisitor : RelationalSqlTranslatin
                 break;
 
             case nameof(WindowBuilder<int>.Preceding):
-                var precedingOffset = GetConstantInt(call.Arguments[0]);
+                var precedingOffset = GetConstantInt(call.Arguments[0])
+                    ?? throw NonConstantFrameOffset(nameof(WindowBuilder<int>.Preceding));
                 SetBound(ref frameStart, ref frameStartOffset, ref frameEnd, ref frameEndOffset,
                     ref boundIndex, WindowFrameBound.Preceding, precedingOffset);
                 break;
 
             case nameof(WindowBuilder<int>.Following):
-                var followingOffset = GetConstantInt(call.Arguments[0]);
+                var followingOffset = GetConstantInt(call.Arguments[0])
+                    ?? throw NonConstantFrameOffset(nameof(WindowBuilder<int>.Following));
                 SetBound(ref frameStart, ref frameStartOffset, ref frameEnd, ref frameEndOffset,
                     ref boundIndex, WindowFrameBound.Following, followingOffset);
                 break;

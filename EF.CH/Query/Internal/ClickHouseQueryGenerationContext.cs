@@ -3,10 +3,11 @@ using Microsoft.EntityFrameworkCore.Query.SqlExpressions;
 namespace EF.CH.Query.Internal;
 
 /// <summary>
-/// Thread-local state passed from the query postprocessor to the SQL generator.
-/// Holds ClickHouse-specific query options (SETTINGS, PREWHERE, CTEs, LIMIT BY, etc.).
-/// Fields are populated by <see cref="ClickHouseQueryTranslationPostprocessor"/> and
-/// consumed (read-and-cleared) by <see cref="ClickHouseQuerySqlGenerator"/> during generation.
+/// Per-query state passed from <see cref="ClickHouseQueryTranslationPostprocessor"/>
+/// to <see cref="ClickHouseQuerySqlGenerator"/> via <see cref="ClickHouseQueryStateRegistry"/>.
+/// Holds ClickHouse-specific query options (SETTINGS, PREWHERE, CTEs, LIMIT BY,
+/// etc.) plus the model's EPHEMERAL column set. Each query gets its own
+/// instance — no reuse, no Reset.
 /// </summary>
 internal sealed class ClickHouseQueryGenerationContext
 {
@@ -21,24 +22,5 @@ internal sealed class ClickHouseQueryGenerationContext
     public List<CteDefinition>? CteDefinitions;
     public List<ArrayJoinSpec>? ArrayJoinSpecs;
     public AsofJoinInfo? AsofJoin;
-
-    /// <summary>
-    /// Clears every field. Called at the start of each query's postprocessor pass so
-    /// state from a prior query that wasn't fully consumed (e.g. translation threw
-    /// before the SQL generator reached the consumption site) cannot leak forward.
-    /// </summary>
-    public void Reset()
-    {
-        QuerySettings = null;
-        WithFillOptions = null;
-        PreWhereExpression = null;
-        LimitByLimit = null;
-        LimitByOffset = null;
-        LimitByExpressions = null;
-        GroupByModifier = GroupByModifier.None;
-        RawFilter = null;
-        CteDefinitions = null;
-        ArrayJoinSpecs = null;
-        AsofJoin = null;
-    }
+    public HashSet<string>? EphemeralColumns;
 }
