@@ -242,6 +242,8 @@ public static class ClickHouseFunctions
     public static TSurrogate AggregateSentinelMultiParam<TInput, TSurrogate, TReal>(TInput input, string functionName, double[] parameters) => Throw<TSurrogate>();
     public static TSurrogate AggregateSentinelTwoArg<TArg, TVal, TSurrogate, TReal>(TArg arg, TVal val, string functionName) => Throw<TSurrogate>();
     public static TSurrogate AggregateSentinelTwoArgIntParam<TArg, TVal, TSurrogate, TReal>(TArg arg, TVal val, string functionName, int parameter) => Throw<TSurrogate>();
+    public static TSurrogate AggregateSentinelThreeArg<TArg, TVal, TPred, TSurrogate, TReal>(TArg arg, TVal val, TPred predicate, string functionName) => Throw<TSurrogate>();
+    public static TSurrogate AggregateSentinelThreeArgIntParam<TArg, TVal, TPred, TSurrogate, TReal>(TArg arg, TVal val, TPred predicate, string functionName, int parameter) => Throw<TSurrogate>();
 
     #endregion
 

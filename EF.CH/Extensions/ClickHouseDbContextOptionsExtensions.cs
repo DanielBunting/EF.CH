@@ -278,6 +278,24 @@ public class ClickHouseDbContextOptionsBuilder
         return this;
     }
 
+    /// <summary>
+    /// Opt into strict-transaction mode. ClickHouse does not support transactions;
+    /// by default <c>BeginTransaction</c> returns a no-op (with a warn-once log)
+    /// so EF Core's migration executor and code that opens a transaction-scoped
+    /// block keep working. In strict mode, <c>BeginTransaction</c> and
+    /// <c>BeginTransactionAsync</c> throw <see cref="ClickHouseUnsupportedOperationException"/>.
+    /// Use this when you want to be certain no caller is silently relying on
+    /// transactional semantics the provider can't deliver.
+    /// </summary>
+    /// <param name="strict">Whether to throw on transaction creation (default: true).</param>
+    /// <returns>The same builder instance for method chaining.</returns>
+    public virtual ClickHouseDbContextOptionsBuilder UseStrictTransactions(bool strict = true)
+    {
+        var extension = GetOrCreateExtension().WithStrictTransactions(strict);
+        ((IDbContextOptionsBuilderInfrastructure)_optionsBuilder).AddOrUpdateExtension(extension);
+        return this;
+    }
+
     #region Multi-Datacenter Configuration
 
     /// <summary>

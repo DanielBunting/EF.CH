@@ -19,6 +19,22 @@ public class ToListWithStatsTests
     private string Conn => _fx.ConnectionString;
 
     [Fact]
+    public async Task ToListWithStats_PreCancelledToken_Throws()
+    {
+        await using var ctx = TestContextFactory.Create<Ctx>(Conn);
+        await ctx.Database.EnsureDeletedAsync();
+        await ctx.Database.EnsureCreatedAsync();
+        for (uint i = 1; i <= 10; i++) ctx.Rows.Add(new Row { Id = i, V = (int)i });
+        await ctx.SaveChangesAsync();
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            ctx.Rows.ToListWithStatsAsync(ctx, cts.Token));
+    }
+
+    [Fact]
     public async Task ToListWithStats_ResultsMatchPlainToList_AndStatsAreReported()
     {
         await using var ctx = TestContextFactory.Create<Ctx>(Conn);

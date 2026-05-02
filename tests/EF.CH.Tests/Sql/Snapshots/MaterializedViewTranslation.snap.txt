@@ -1,0 +1,172 @@
+AllAggregatesContext::MvAllAggregatesSummary:
+SELECT toInt32("ProductId") AS "ProductId", sum("Quantity") AS "TotalQuantity", avg("Revenue") AS "AverageRevenue", min("Revenue") AS "MinRevenue", max("Revenue") AS "MaxRevenue", toInt32(count()) AS "OrderCount"
+FROM "Orders"
+GROUP BY "ProductId"
+---
+AnyInnerJoinContext::JoinedRevenue:
+SELECT t1."Region" AS "Region", toInt64(sum(t0."Amount")) AS "Total"
+FROM "AnyJoinOrders" AS t0
+ANY INNER JOIN "AnyJoinCustomers" AS t1 ON t0."CustomerId" = t1."Id"
+GROUP BY t1."Region"
+---
+AnyLeftJoinContext::JoinedRevenue:
+SELECT t1."Region" AS "Region", toInt64(sum(t0."Amount")) AS "Total"
+FROM "AnyLeftJoinOrders" AS t0
+ANY LEFT JOIN "AnyLeftJoinCustomers" AS t1 ON t0."CustomerId" = t1."Id"
+GROUP BY t1."Region"
+---
+AnyRightJoinContext::JoinedRevenue:
+SELECT t1."Region" AS "Region", toInt64(sum(t0."Amount")) AS "Total"
+FROM "AnyRightJoinOrders" AS t0
+ANY RIGHT JOIN "AnyRightJoinCustomers" AS t1 ON t0."CustomerId" = t1."Id"
+GROUP BY t1."Region"
+---
+AppendContext::AppendMv:
+SELECT 1 AS Id
+---
+ArrayJoinContext::ArrayJoinedRow:
+SELECT toInt64(t0."Id") AS "EventId", "tag" AS "Tag"
+FROM "MvArrayJoinEvents" AS t0
+ARRAY JOIN t0."Tags" AS "tag"
+---
+ClickHouseAggregatesContext::MvClickHouseAggregatesSummary:
+SELECT "EventName" AS "EventName", toUInt64(uniq("UserId")) AS "UniqueUsers", any("UserId") AS "AnyUserId"
+FROM "RawEvents"
+GROUP BY "EventName"
+---
+CountIfContext::MvCountIfSummary:
+SELECT toInt32("ProductId") AS "ProductId", toInt32(count()) AS "TotalOrders", toInt32(countIf(("Revenue" > 100))) AS "HighValueOrders"
+FROM "Orders"
+GROUP BY "ProductId"
+---
+CrossJoinContext::CrossJoinedRow:
+SELECT toInt64(t0."Id") AS "OrderId", t1."Name" AS "Tag"
+FROM "CrossJoinOrders" AS t0
+CROSS JOIN "CrossJoinTags" AS t1
+---
+DateTimeFunctionsContext::MvHourlyByStartOfHour:
+SELECT toStartOfHour("OrderDate") AS "Hour", toInt32(count()) AS "TotalOrders", sum("Revenue") AS "TotalRevenue"
+FROM "Orders"
+GROUP BY toStartOfHour("OrderDate")
+---
+DependsOnContext::DependsOnMv:
+SELECT 1 AS Id
+---
+EmptyContext::EmptyMv:
+SELECT 1 AS Id
+---
+EveryFiveMinutesContext::EveryFiveMinutesMv:
+SELECT Id FROM RawEvent
+---
+FullOuterJoinContext::JoinedRevenue:
+SELECT t1."Region" AS "Region", toInt64(sum(t0."Amount")) AS "Total"
+FROM "FullOuterOrders" AS t0
+FULL OUTER JOIN "FullOuterCustomers" AS t1 ON t0."CustomerId" = t1."Id"
+GROUP BY t1."Region"
+---
+LeftAntiJoinContext::SingleSideOrder:
+SELECT toInt64(t0."Id") AS "OrderId", toInt64(t0."Amount") AS "Amount"
+FROM "LeftAntiOrders" AS t0
+LEFT ANTI JOIN "LeftAntiCustomers" AS t1 ON t0."CustomerId" = t1."Id"
+---
+LeftArrayJoinContext::ArrayJoinedRow:
+SELECT toInt64(t0."Id") AS "EventId", "tag" AS "Tag"
+FROM "LeftMvArrayJoinEvents" AS t0
+LEFT ARRAY JOIN t0."Tags" AS "tag"
+---
+LeftSemiJoinContext::SingleSideOrder:
+SELECT toInt64(t0."Id") AS "OrderId", toInt64(t0."Amount") AS "Amount"
+FROM "LeftSemiOrders" AS t0
+LEFT SEMI JOIN "LeftSemiCustomers" AS t1 ON t0."CustomerId" = t1."Id"
+---
+LinqAsofInnerJoinContext::AsofTradeWithQuote:
+SELECT toUInt32(t0."Id") AS "Id", t0."T" AS "T", t1."Price" AS "Price"
+FROM "AsofTrades" AS t0
+ASOF INNER JOIN "AsofQuotes" AS t1 ON t0."Symbol" = t1."Symbol" AND t0."T" >= t1."T"
+---
+LinqAsofLeftJoinContext::AsofTradeWithQuote:
+SELECT toUInt32(t0."Id") AS "Id", t0."T" AS "T", t1."Price" AS "Price"
+FROM "AsofLeftTrades" AS t0
+ASOF LEFT JOIN "AsofLeftQuotes" AS t1 ON t0."Symbol" = t1."Symbol" AND t0."T" >= t1."T"
+---
+LinqGroupJoinContext::GroupJoinedOrderRegion:
+SELECT toInt64(t0."Id") AS "OrderId", coalesce(t1."Region", '') AS "Region", toInt64(t0."Amount") AS "Amount"
+FROM "GjOrderSrc" AS t0
+LEFT JOIN "GjCustomerSrc" AS t1 ON t0."CustomerId" = t1."Id"
+---
+LinqInnerJoinContext::JoinedRevenue:
+SELECT t1."Region" AS "Region", toInt64(sum(t0."Amount")) AS "Total"
+FROM "JoinOrderSrc" AS t0
+INNER JOIN "JoinCustomerSrc" AS t1 ON t0."CustomerId" = t1."Id"
+GROUP BY t1."Region"
+---
+LinqJoinDictionaryContext::JoinedRevenue:
+SELECT t1."Region" AS "Region", toInt64(sum(t0."Amount")) AS "Total"
+FROM "DictJoinOrderSrc" AS t0
+INNER JOIN dictionary('CustomerLookup') AS t1 ON t0."CustomerId" = t1."Id"
+GROUP BY t1."Region"
+---
+LinqMaterializedViewContext::MvHourlySummary:
+SELECT toDate("OrderDate") AS "Hour", toInt32("ProductId") AS "ProductId", toInt32(count()) AS "OrderCount", sum("Revenue") AS "TotalRevenue"
+FROM "Orders"
+GROUP BY toDate("OrderDate"), "ProductId"
+---
+MergeStateAggregatesContext::MvMergeStateRollup:
+SELECT "Bucket" AS "Bucket", countMergeState("C") AS "C", sumMergeState("S") AS "S", avgMergeState("Av") AS "Av", minMergeState("Mn") AS "Mn", maxMergeState("Mx") AS "Mx", uniqMergeState("U") AS "U", uniqExactMergeState("Ue") AS "Ue", anyMergeState("An") AS "An", anyLastMergeState("Al") AS "Al", quantileMergeState(0.5)("Q") AS "Q"
+FROM "MergeStateSource"
+GROUP BY "Bucket"
+---
+OffsetRandomizeContext::OffsetRandomizeMv:
+SELECT 1 AS Id
+---
+RawRefreshableContext::RawRefreshableMv:
+SELECT 1 AS Id
+---
+RawSqlMaterializedViewContext::MvDailySummary:
+SELECT
+                        toDate(OrderDate) AS Date,
+                        ProductId,
+                        sum(Quantity) AS TotalQuantity,
+                        sum(Revenue) AS TotalRevenue
+                    FROM Orders
+                    GROUP BY Date, ProductId
+---
+RightAntiJoinContext::SingleSideCustomer:
+SELECT toInt64(t1."Id") AS "CustomerId", t1."Region" AS "Region"
+FROM "RightAntiOrders" AS t0
+RIGHT ANTI JOIN "RightAntiCustomers" AS t1 ON t0."CustomerId" = t1."Id"
+---
+RightJoinContext::JoinedRevenue:
+SELECT t1."Region" AS "Region", toInt64(sum(t0."Amount")) AS "Total"
+FROM "RightJoinOrders" AS t0
+RIGHT JOIN "RightJoinCustomers" AS t1 ON t0."CustomerId" = t1."Id"
+GROUP BY t1."Region"
+---
+RightSemiJoinContext::SingleSideCustomer:
+SELECT toInt64(t1."Id") AS "CustomerId", t1."Region" AS "Region"
+FROM "RightSemiOrders" AS t0
+RIGHT SEMI JOIN "RightSemiCustomers" AS t1 ON t0."CustomerId" = t1."Id"
+---
+SettingsContext::SettingsMv:
+SELECT 1 AS Id
+---
+SimpleProjectionMaterializedViewContext::MvProcessedEvent:
+SELECT toUInt64(cityHash64("EventName")) AS "EventNameId", "EventTime" AS "EventTime", toInt64(toUnixTimestamp64Milli("EventTime")) AS "Version", "Value" AS "Value", toUInt8(toUInt8(1)) AS "IsActive"
+FROM "RawEvents"
+---
+SingleKeyGroupByContext::MvDailyStats:
+SELECT toDate("OrderDate") AS "Date", toInt32(count()) AS "TotalOrders", sum("Revenue") AS "TotalRevenue"
+FROM "Orders"
+GROUP BY toDate("OrderDate")
+---
+ToTargetContext::ToTargetMv:
+SELECT 1 AS Id
+---
+MvSourceAndTargetContext::DailySummary:
+SELECT toDate("EventTime") AS "Date", "Category" AS "Category", toInt64(count()) AS "EventCount", sum("Amount") AS "TotalAmount"
+FROM "source_events"
+GROUP BY toDate("EventTime"), "Category"
+---
+RefreshableScaffolderContext::ScaffolderRefreshableMv:
+SELECT 1 AS Id
+---

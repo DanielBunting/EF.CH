@@ -185,4 +185,44 @@ public class ConnectionRoutingTests
         Assert.Null(config.MigrationsHistoryCluster);
         Assert.True(config.ReplicateMigrationsHistory);
     }
+
+    /// <summary>
+    /// CTE-led queries — <c>WITH … SELECT …</c> — must classify as reads.
+    /// The interceptor's prefix list includes <c>WITH</c>; this test pins
+    /// that contract so a future tightening of the read-prefix list (e.g.
+    /// requiring a literal <c>SELECT</c>) doesn't silently start routing
+    /// CTEs to the write endpoint.
+    /// </summary>
+    [Fact]
+    public void Routing_ClassifiesWithLedSelect_AsRead()
+    {
+        const string sql = "WITH summary AS (SELECT count() AS c FROM events) SELECT c FROM summary";
+        Assert.True(InvokeIsReadOperation(sql));
+    }
+
+    /// <summary>
+    /// <c>WITH … INSERT</c> isn't a syntax ClickHouse supports today, so the
+    /// classifier doesn't need to special-case it. Documents the gap as a
+    /// loud failure if a future server release adds the syntax (the read
+    /// classifier would mis-route the write to a read replica).
+    /// </summary>
+    [Fact(Skip = "ClickHouse does not currently parse `WITH … INSERT`; if support lands, " +
+                  "the read-prefix classifier must be tightened to look past the WITH " +
+                  "clause for the actual statement verb.")]
+    public void Routing_ClassifiesWithLedInsert_AsWrite()
+    {
+        const string sql = "WITH x AS (SELECT 1) INSERT INTO target SELECT * FROM x";
+        Assert.False(InvokeIsReadOperation(sql));
+    }
+
+    private static bool InvokeIsReadOperation(string sql)
+    {
+        var asm = typeof(EF.CH.Infrastructure.ClickHouseRoutingConnection).Assembly;
+        var t = asm.GetType("EF.CH.Infrastructure.ClickHouseCommandInterceptor")
+            ?? throw new InvalidOperationException("ClickHouseCommandInterceptor not found");
+        var m = t.GetMethod("IsReadOperation",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+            ?? throw new InvalidOperationException("IsReadOperation not found");
+        return (bool)m.Invoke(null, new object[] { sql })!;
+    }
 }

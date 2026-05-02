@@ -1,6 +1,7 @@
 using System.Data;
 using System.Data.Common;
 using ClickHouse.Driver.ADO;
+using EF.CH.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -14,6 +15,7 @@ namespace EF.CH.Storage.Internal;
 public class ClickHouseRelationalConnection : RelationalConnection
 {
     private readonly IDiagnosticsLogger<DbLoggerCategory.Database.Transaction>? _transactionLogger;
+    private readonly bool _strictTransactions;
 
     // Track per-connection-instance whether the no-op-transaction warning has fired.
     // ClickHouse does not support transactions; we want one warning per connection
@@ -27,6 +29,8 @@ public class ClickHouseRelationalConnection : RelationalConnection
         : base(dependencies)
     {
         _transactionLogger = dependencies.TransactionLogger;
+        _strictTransactions = dependencies.ContextOptions
+            .FindExtension<ClickHouseOptionsExtension>()?.StrictTransactions ?? false;
     }
 
     /// <summary>
@@ -46,6 +50,7 @@ public class ClickHouseRelationalConnection : RelationalConnection
     /// </summary>
     public override IDbContextTransaction BeginTransaction()
     {
+        if (_strictTransactions) throw ClickHouseUnsupportedOperationException.Transaction();
         WarnTransactionsNotSupportedOnce();
         return new ClickHouseNoOpTransaction();
     }
@@ -56,6 +61,7 @@ public class ClickHouseRelationalConnection : RelationalConnection
     /// </summary>
     public override IDbContextTransaction BeginTransaction(IsolationLevel isolationLevel)
     {
+        if (_strictTransactions) throw ClickHouseUnsupportedOperationException.Transaction();
         WarnTransactionsNotSupportedOnce();
         return new ClickHouseNoOpTransaction();
     }
@@ -65,6 +71,7 @@ public class ClickHouseRelationalConnection : RelationalConnection
     /// </summary>
     public override Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default)
     {
+        if (_strictTransactions) throw ClickHouseUnsupportedOperationException.Transaction();
         WarnTransactionsNotSupportedOnce();
         return Task.FromResult<IDbContextTransaction>(new ClickHouseNoOpTransaction());
     }
@@ -74,6 +81,7 @@ public class ClickHouseRelationalConnection : RelationalConnection
     /// </summary>
     public override Task<IDbContextTransaction> BeginTransactionAsync(IsolationLevel isolationLevel, CancellationToken cancellationToken = default)
     {
+        if (_strictTransactions) throw ClickHouseUnsupportedOperationException.Transaction();
         WarnTransactionsNotSupportedOnce();
         return Task.FromResult<IDbContextTransaction>(new ClickHouseNoOpTransaction());
     }

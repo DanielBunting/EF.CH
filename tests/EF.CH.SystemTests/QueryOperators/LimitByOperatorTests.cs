@@ -47,23 +47,37 @@ public class LimitByOperatorTests
         Assert.Equal(6, rows.Count);
     }
 
-    [Fact(Skip = "Per-group LIMIT offset BY semantics no longer exposed via the public API. " +
-                 "The composed .LimitBy(key, limit).Skip(offset) translates to global OFFSET, " +
-                 "which is intentional but distinct from the legacy per-group offset.")]
-    public async Task LimitBy_WithOffset_SkipsLeadingRowsPerGroup()
+    /// <summary>
+    /// <c>.LimitBy(key, n).Skip(m)</c> emits a global <c>LIMIT m, …</c> after
+    /// the per-group <c>LIMIT n BY key</c>. ClickHouse evaluates LIMIT BY
+    /// before the global LIMIT/OFFSET, so the offset applies across the
+    /// already-grouped result set — a global skip, NOT a per-group offset.
+    /// </summary>
+    [Fact]
+    public async Task LimitBy_ComposedWithSkip_EmitsGlobalOffset_NotPerGroup()
     {
         await using var ctx = await SeededAsync();
+
+        var sql = ctx.Rows
+            .OrderByDescending(r => r.Score)
+            .LimitBy(r => r.Group, 2)
+            .Skip(1)
+            .ToQueryString();
+
+        Assert.Contains("LIMIT 2 BY", sql);
+        // Global skip emerges as `LIMIT <skip>, <max>` after the LIMIT BY.
+        var byIdx = sql.IndexOf("LIMIT 2 BY", StringComparison.Ordinal);
+        var globalIdx = sql.IndexOf("LIMIT ", byIdx + "LIMIT 2 BY".Length, StringComparison.Ordinal);
+        Assert.True(globalIdx > byIdx, $"expected global LIMIT after LIMIT BY; SQL: {sql}");
+        Assert.Contains("18446744073709551615", sql); // ClickHouse "no upper bound" sentinel.
+
+        // 3 groups × 2 per group = 6 rows; with .Skip(1) globally, expect 5.
         var rows = await ctx.Rows
             .OrderByDescending(r => r.Score)
-            .LimitBy(r => r.Group, 2).Skip(2)
+            .LimitBy(r => r.Group, 2)
+            .Skip(1)
             .ToListAsync();
-        var perGroup = rows.GroupBy(r => r.Group).ToDictionary(g => g.Key, g => g.OrderByDescending(x => x.Score).ToList());
-        Assert.All(perGroup.Values, list =>
-        {
-            Assert.True(list.Count <= 2, $"expected ≤ 2 per group, got {list.Count}");
-            // Skipped the top 2 (scores 5,4) — leading score should be ≤ 3 after offset.
-            if (list.Count > 0) Assert.True(list[0].Score <= 3, $"expected leading score ≤ 3 after offset, got {list[0].Score}");
-        });
+        Assert.Equal(5, rows.Count);
     }
 
     public sealed class Row

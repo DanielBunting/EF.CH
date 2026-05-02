@@ -1,5 +1,4 @@
 using System.Linq.Expressions;
-using System.Reflection;
 using EF.CH.Internal.Intervals;
 using EF.CH.Metadata;
 using EF.CH.Query.Internal;
@@ -557,39 +556,11 @@ internal static class MaterializedViewSpecApplier
     }
 
     /// <summary>
-    /// Reflectively dispatches to the right <c>Translate&lt;…&gt;</c> overload
-    /// on <see cref="MaterializedViewSqlTranslator"/> based on the lambda's arity.
+    /// Forwards the lambda to the translator. Previously this site dispatched
+    /// reflectively to one of five typed <c>Translate&lt;T1..Tn, TResult&gt;</c>
+    /// overloads by arity; the translator now accepts any-arity lambdas
+    /// directly.
     /// </summary>
     private static string TranslateLambda(MaterializedViewSqlTranslator translator, LambdaExpression lambda)
-    {
-        // Generic args: [T1..Tn, TResult]
-        var queryableArgs = lambda.Parameters
-            .Select(p => p.Type.GetGenericArguments()[0]) // IQueryable<T> → T
-            .ToList();
-        var resultType = lambda.ReturnType.GetGenericArguments()[0];
-        var typeArgs = queryableArgs.Concat(new[] { resultType }).ToArray();
-
-        // Pick the right Translate<…> overload by parameter count.
-        var translateMethods = typeof(MaterializedViewSqlTranslator)
-            .GetMethods()
-            .Where(m => m.Name == nameof(MaterializedViewSqlTranslator.Translate) && m.IsGenericMethod)
-            .ToArray();
-        var method = translateMethods.FirstOrDefault(m => m.GetGenericArguments().Length == typeArgs.Length)
-            ?? throw new InvalidOperationException(
-                $"No MaterializedViewSqlTranslator.Translate overload for arity {queryableArgs.Count}.");
-        var generic = method.MakeGenericMethod(typeArgs);
-        try
-        {
-            return (string)generic.Invoke(translator, new object[] { lambda })!;
-        }
-        catch (TargetInvocationException tie) when (tie.InnerException is not null)
-        {
-            // Reflection wraps user-meaningful exceptions (e.g. NotSupportedException
-            // for unsupported MV LINQ operators) in TargetInvocationException. Rethrow
-            // the inner exception preserving its stack trace so callers see the
-            // original type and message.
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
-            throw; // unreachable
-        }
-    }
+        => translator.Translate(lambda);
 }

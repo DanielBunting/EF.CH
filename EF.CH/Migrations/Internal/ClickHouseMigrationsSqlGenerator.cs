@@ -1,5 +1,4 @@
 using System.Linq.Expressions;
-using System.Reflection;
 using EF.CH.Configuration;
 using EF.CH.Dictionaries;
 using EF.CH.Infrastructure;
@@ -2243,54 +2242,23 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
 
     /// <summary>
     /// Translates a stored LINQ expression to ClickHouse SQL for materialized views.
+    /// The translator now accepts any-arity lambdas directly — no reflective
+    /// generic-method dispatch and no <c>TargetInvocationException</c> unwrapping.
     /// </summary>
     private static string? TranslateMaterializedViewExpression(IEntityType entityType, IModel model)
     {
         const string expressionAnnotation = "ClickHouse:MaterializedViewExpression";
 
-        var annotation = entityType.FindAnnotation(expressionAnnotation);
-        if (annotation?.Value is not LambdaExpression expression)
+        if (entityType.FindAnnotation(expressionAnnotation)?.Value is not LambdaExpression expression)
             return null;
 
         var sourceTableName = GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.MaterializedViewSource);
         if (string.IsNullOrEmpty(sourceTableName))
             return null;
 
-        // Get the source and result types from the expression
-        var funcType = expression.Type;
-        if (!funcType.IsGenericType || funcType.GetGenericTypeDefinition() != typeof(Func<,>))
-            return null;
-
-        var genericArgs = funcType.GetGenericArguments();
-        // genericArgs[0] = IQueryable<TSource>, genericArgs[1] = IQueryable<TResult>
-        var sourceQueryableType = genericArgs[0];
-        var resultQueryableType = genericArgs[1];
-
-        if (!sourceQueryableType.IsGenericType || !resultQueryableType.IsGenericType)
-            return null;
-
-        var sourceType = sourceQueryableType.GetGenericArguments()[0];
-
-        // Create the translator and translate the expression
-        var translator = new MaterializedViewSqlTranslator(model, sourceTableName);
-
-        // Use reflection to call the generic Translate method
-        var translateMethod = typeof(MaterializedViewSqlTranslator)
-            .GetMethod(nameof(MaterializedViewSqlTranslator.Translate))!
-            .MakeGenericMethod(sourceType, entityType.ClrType);
-
         try
         {
-            return (string?)translateMethod.Invoke(translator, [expression]);
-        }
-        catch (TargetInvocationException tie) when (tie.InnerException is not null)
-        {
-            // Reflection wraps user-meaningful exceptions (e.g. NotSupportedException
-            // for unsupported MV LINQ operators) in TargetInvocationException; expose
-            // the inner type and message rather than the meaningless outer wrapper.
-            throw new InvalidOperationException(
-                $"Failed to translate materialized view expression for entity '{entityType.Name}': {tie.InnerException.Message}",
-                tie.InnerException);
+            return new MaterializedViewSqlTranslator(model, sourceTableName).Translate(expression);
         }
         catch (Exception ex)
         {

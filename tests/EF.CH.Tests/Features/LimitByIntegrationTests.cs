@@ -193,8 +193,14 @@ public class LimitByIntegrationTests : IAsyncLifetime
         Assert.DoesNotContain(categoryB, e => e.Score == 95); // Skipped
     }
 
-    [Fact(Skip = "EF Core's NavigationExpandingExpressionVisitor doesn't recognize custom LimitBy method, " +
-                   "so Take() after LimitBy() fails. Use LINQ-to-objects Take after ToList().")]
+    /// <summary>
+    /// Execution-path counterpart of
+    /// <c>LimitByTests.LimitBy_WithGlobalTake_GeneratesBothLimitClauses</c>:
+    /// the per-group <c>LIMIT n BY key</c> caps each group, then the global
+    /// <c>LIMIT m</c> truncates the combined result. Verifies that against a
+    /// live ClickHouse instance.
+    /// </summary>
+    [Fact]
     public async Task LimitBy_WithGlobalTake_LimitsTotalResults()
     {
         await using var context = CreateContext();
@@ -202,7 +208,6 @@ public class LimitByIntegrationTests : IAsyncLifetime
         await context.Database.EnsureDeletedAsync();
         await context.Database.EnsureCreatedAsync();
 
-        // Insert many categories
         var now = DateTime.UtcNow;
         for (int cat = 0; cat < 10; cat++)
         {
@@ -214,21 +219,25 @@ public class LimitByIntegrationTests : IAsyncLifetime
                     Category = $"Cat{cat}",
                     Region = "US",
                     Score = score,
-                    CreatedAt = now
+                    CreatedAt = now,
                 });
             }
         }
         await context.SaveChangesAsync();
 
-        // Get top 2 per category, but limit total to 6
         var results = await context.Events
             .OrderByDescending(e => e.Score)
             .LimitBy(e => e.Category, 2)
             .Take(6)
             .ToListAsync();
 
-        // Should have at most 6 results (global limit)
-        Assert.True(results.Count <= 6, $"Expected at most 6 results, got {results.Count}");
+        Assert.True(results.Count <= 6,
+            $"expected ≤ 6 rows after global Take(6); got {results.Count}");
+        // Per-group cap of 2 still holds inside the global cap.
+        var perGroup = results.GroupBy(e => e.Category)
+            .ToDictionary(g => g.Key, g => g.Count());
+        Assert.All(perGroup.Values, c => Assert.True(c <= 2,
+            $"expected ≤ 2 per category after LimitBy(key, 2); got {c}"));
     }
 
     [Fact]

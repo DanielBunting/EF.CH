@@ -227,11 +227,14 @@ public static class ClickHouseQueryableExtensions
     /// This is useful for "top N per category" queries without needing window functions.
     /// </para>
     /// <para>
-    /// The key selector defines the grouping columns. Use OrderBy/OrderByDescending before
-    /// LimitBy to control which rows are kept within each group. To skip rows within
-    /// each group before applying the limit, use the <c>(keySelector, limit, offset)</c>
-    /// overload — <c>.Skip(...)</c> after LimitBy is not recognised by EF Core's
-    /// navigation expander.
+    /// The key selector defines the grouping columns. Use OrderBy/OrderByDescending
+    /// before LimitBy to control which rows are kept within each group. Chaining
+    /// <c>.Skip(m)</c> or <c>.Take(m)</c> after LimitBy is supported and emits a
+    /// global <c>LIMIT [m,] …</c> after the per-group <c>LIMIT n BY key</c>;
+    /// ClickHouse evaluates LIMIT BY before the global LIMIT, so the global
+    /// skip/take applies to the already-grouped result. To skip rows
+    /// <em>within</em> each group, use the
+    /// <c>(keySelector, limit, offset)</c> overload instead.
     /// </para>
     /// </remarks>
     /// <typeparam name="TEntity">The entity type.</typeparam>
@@ -279,10 +282,12 @@ public static class ClickHouseQueryableExtensions
     }
 
     /// <summary>
-    /// Applies LIMIT offset, limit BY clause to skip rows within each group before
-    /// taking the top N. Use this overload instead of <c>.Skip(...)</c> after
-    /// <see cref="LimitBy{TEntity, TKey}(IQueryable{TEntity}, Expression{Func{TEntity, TKey}}, int)"/>:
-    /// EF Core's navigation expander does not recognise Skip after a custom LIMIT BY method.
+    /// Applies LIMIT offset, limit BY clause to skip rows <em>within each group</em>
+    /// before taking the top N. Use this overload when you need a per-group
+    /// offset; <c>.Skip(...)</c> chained after the basic
+    /// <see cref="LimitBy{TEntity, TKey}(IQueryable{TEntity}, Expression{Func{TEntity, TKey}}, int)"/>
+    /// overload emits a global OFFSET after the LIMIT BY, which is a different
+    /// semantic.
     /// </summary>
     /// <typeparam name="TEntity">The entity type.</typeparam>
     /// <typeparam name="TKey">The key type (single column or anonymous type for compound keys).</typeparam>

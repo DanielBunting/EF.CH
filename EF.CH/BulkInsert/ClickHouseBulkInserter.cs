@@ -116,9 +116,18 @@ public sealed class ClickHouseBulkInserter : IClickHouseBulkInserter
         {
             options.OnBatchCompleted(totalRowsInserted);
         }
-        catch
+        catch (Exception ex)
         {
-            // Intentionally swallow — see method summary.
+            // Intentionally swallow the inner failure — see method summary.
+            // Forward to the user's exception sink if set; that lets them
+            // observe callback bugs without aborting the bulk operation.
+            // The sink's own throws are also swallowed (a misconfigured sink
+            // shouldn't kill in-flight batches either).
+            if (options.OnCallbackException is { } sink)
+            {
+                try { sink(ex); }
+                catch { /* swallow sink failure */ }
+            }
         }
     }
 

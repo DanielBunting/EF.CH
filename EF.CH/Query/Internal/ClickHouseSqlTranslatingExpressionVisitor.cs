@@ -337,9 +337,15 @@ public class ClickHouseSqlTranslatingExpressionVisitor : RelationalSqlTranslatin
             nullableResultType,
             _typeMappingSource.FindMapping(nonNullableResultType));
 
-        // ClickHouse's row_number() returns UInt64, but Window.RowNumber() declares
-        // long — wrap in toInt64 so the row reader sees Int64 as the projection type.
-        if (functionName == "row_number" && nonNullableResultType == typeof(long))
+        // ClickHouse's ranking and counting window functions (row_number / rank /
+        // dense_rank / count) return UInt64, but the Window helper declares long —
+        // wrap in toInt64 so the row reader sees Int64 as the projection type.
+        // Without this the reader trips InvalidCastException(UInt64 → Int64).
+        if (nonNullableResultType == typeof(long)
+            && (functionName == "row_number"
+                || functionName == "rank"
+                || functionName == "dense_rank"
+                || functionName == "count"))
         {
             return _sqlExpressionFactory.WrapWithClrCast(windowExpr, typeof(long));
         }
@@ -1011,9 +1017,14 @@ public class ClickHouseSqlTranslatingExpressionVisitor : RelationalSqlTranslatin
             nullableResultType,
             _typeMappingSource.FindMapping(resultType));
 
-        // ClickHouse's row_number() returns UInt64, but Window.RowNumber() declares
-        // long — wrap in toInt64 so the row reader sees Int64 as the projection type.
-        if (functionName == "row_number" && resultType == typeof(long))
+        // ClickHouse's ranking and counting window functions (row_number / rank /
+        // dense_rank / count) return UInt64, but the Window helper declares long —
+        // wrap in toInt64 so the row reader sees Int64 as the projection type.
+        if (resultType == typeof(long)
+            && (functionName == "row_number"
+                || functionName == "rank"
+                || functionName == "dense_rank"
+                || functionName == "count"))
         {
             return _sqlExpressionFactory.WrapWithClrCast(windowExpr, typeof(long));
         }

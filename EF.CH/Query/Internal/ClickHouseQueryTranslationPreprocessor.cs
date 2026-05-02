@@ -113,6 +113,25 @@ internal class ClickHouseMethodRewritingVisitor : ExpressionVisitor
         if (genericDef == ClickHouseQueryableExtensions.PreWhereMethodInfo)
             return RewritePreWhere(visited);
 
+        // .LimitBy(...).Skip(n) / .Take(n) — EF's NavigationExpandingExpressionVisitor
+        // doesn't recognise our custom LimitBy method, so chaining standard
+        // Skip/Take after it would otherwise fail with "could not be translated".
+        // Push the Skip/Take *under* the LimitBy in the call chain so the
+        // expander processes them on a plain IQueryable; ClickHouse evaluates
+        // LIMIT BY before global LIMIT/OFFSET, so the rewritten SQL preserves
+        // the intended global-skip / global-take semantics
+        // (LIMIT n BY key  →  LIMIT [skip,] take).
+        if (genericDef == QueryableSkipMethodInfo || genericDef == QueryableTakeMethodInfo)
+        {
+            if (TryUnwrapLimitBy(visited.Arguments[0], out var inner, out var limitByCall))
+            {
+                var pushed = visited.Update(visited.Object, new[] { inner!, visited.Arguments[1] });
+                return limitByCall!.Update(
+                    limitByCall.Object,
+                    new[] { (Expression)pushed }.Concat(limitByCall.Arguments.Skip(1)).ToArray());
+            }
+        }
+
         // ClickHouseAggregates.XxxMerge on a grouping — rewrite into Enumerable.Sum/Count/…
         // with a MergeSentinel selector so EF's navigation expander accepts it.
         if (visited.Method.DeclaringType == typeof(ClickHouseAggregates)
@@ -123,6 +142,40 @@ internal class ClickHouseMethodRewritingVisitor : ExpressionVisitor
         }
 
         return visited;
+    }
+
+    private static readonly MethodInfo QueryableSkipMethodInfo =
+        typeof(Queryable).GetMethods()
+            .First(m => m.Name == nameof(Queryable.Skip) && m.GetParameters().Length == 2);
+
+    private static readonly MethodInfo QueryableTakeMethodInfo =
+        typeof(Queryable).GetMethods()
+            .First(m => m.Name == nameof(Queryable.Take)
+                && m.GetParameters().Length == 2
+                && m.GetParameters()[1].ParameterType == typeof(int));
+
+    /// <summary>
+    /// If <paramref name="expr"/> is a <c>LimitBy(...)</c> or <c>LimitBy(..., offset)</c>
+    /// call, returns the inner source and the original call so the caller can
+    /// rebuild it around a transformed source. Returns <c>false</c> for any
+    /// other shape.
+    /// </summary>
+    private static bool TryUnwrapLimitBy(
+        Expression expr,
+        out Expression? inner,
+        out MethodCallExpression? limitByCall)
+    {
+        inner = null;
+        limitByCall = null;
+        if (expr is not MethodCallExpression mc) return false;
+        if (!mc.Method.IsGenericMethod) return false;
+        var def = mc.Method.GetGenericMethodDefinition();
+        if (def != ClickHouseQueryableExtensions.LimitByMethodInfo
+            && def != ClickHouseQueryableExtensions.LimitByWithOffsetMethodInfo)
+            return false;
+        inner = mc.Arguments[0];
+        limitByCall = mc;
+        return true;
     }
 
     private static bool TryEvaluateConstant(Expression expr, out object? value)
@@ -253,6 +306,18 @@ internal class ClickHouseMethodRewritingVisitor : ExpressionVisitor
         ["StddevSampIf"] = e => RewriteSelectorPredicateAggregate(e, "stddevSampIf"),
         ["VarPopIf"] = e => RewriteSelectorPredicateAggregate(e, "varPopIf"),
         ["VarSampIf"] = e => RewriteSelectorPredicateAggregate(e, "varSampIf"),
+        ["ArgMaxIf"] = e => RewriteTwoSelectorPredicateAggregate(e, "argMaxIf"),
+        ["ArgMinIf"] = e => RewriteTwoSelectorPredicateAggregate(e, "argMinIf"),
+        ["GroupArrayIf"] = e => RewriteGroupArrayIf(e, "groupArrayIf"),
+        ["GroupUniqArrayIf"] = e => RewriteGroupArrayIf(e, "groupUniqArrayIf"),
+        ["TopKIf"] = e => RewriteTopKIf(e, "topKIf"),
+        ["TopKWeightedIf"] = e => RewriteTopKWeightedIf(e, "topKWeightedIf"),
+        ["QuantileIf"] = e => RewriteParametricSelectorPredicateAggregate(e, "quantileIf"),
+        ["QuantileTDigestIf"] = e => RewriteParametricSelectorPredicateAggregate(e, "quantileTDigestIf"),
+        ["QuantileExactIf"] = e => RewriteParametricSelectorPredicateAggregate(e, "quantileExactIf"),
+        ["QuantileTimingIf"] = e => RewriteParametricSelectorPredicateAggregate(e, "quantileTimingIf"),
+        ["QuantilesIf"] = e => RewriteMultiQuantileSelectorPredicateAggregate(e, "quantilesIf"),
+        ["QuantilesTDigestIf"] = e => RewriteMultiQuantileSelectorPredicateAggregate(e, "quantilesTDigestIf"),
 
         // Typed-return aggregates — emit count() / sum() with the user's declared ulong return.
         ["CountUInt64"] = e => RewriteCountUInt64(e),
@@ -746,6 +811,248 @@ internal class ClickHouseMethodRewritingVisitor : ExpressionVisitor
             typeof(Func<,>).MakeGenericType(sourceType, returnType),
             newBody, argSelector.Parameters);
 
+        var maxMethod = FindMaxWithGenericReturn(sourceType, returnType);
+        return Expression.Call(null, maxMethod, groupingArg, newSelector);
+    }
+
+    /// <summary>
+    /// Rewrites <c>g.ArgMaxIf(argSel, valSel, predicate)</c> into
+    /// <c>g.Max(s =&gt; AggregateSentinelThreeArg(argSel(s), valSel(s), pred(s), "argMaxIf"))</c>.
+    /// The aggregate translator emits <c>argMaxIf(arg, val, predicate)</c> directly.
+    /// </summary>
+    private static Expression? RewriteTwoSelectorPredicateAggregate(MethodCallExpression call, string sqlFunctionName)
+    {
+        // Shape: ArgMaxIf(grouping, Func<T, TArg>, Func<T, TVal>, Func<T, bool>) → TArg
+        if (call.Arguments.Count != 4) return null;
+        var groupingArg = call.Arguments[0];
+        var argSelector = UnwrapLambda(call.Arguments[1]);
+        var valSelector = UnwrapLambda(call.Arguments[2]);
+        var predicate = UnwrapLambda(call.Arguments[3]);
+        var sourceType = call.Method.GetGenericArguments()[1];
+        var argType = argSelector.Body.Type;
+        var valType = valSelector.Body.Type;
+        var returnType = call.Method.ReturnType;
+
+        // Unify all three lambdas under a single parameter (argSelector's).
+        var param = argSelector.Parameters[0];
+        var valBody = new ParameterReplacer(valSelector.Parameters[0], param).Visit(valSelector.Body)!;
+        var predBody = new ParameterReplacer(predicate.Parameters[0], param).Visit(predicate.Body)!;
+
+        var sentinel = typeof(ClickHouseFunctions)
+            .GetMethod(nameof(ClickHouseFunctions.AggregateSentinelThreeArg))!
+            .MakeGenericMethod(argType, valType, typeof(bool), returnType, returnType);
+        var newBody = Expression.Call(sentinel, argSelector.Body, valBody, predBody, Expression.Constant(sqlFunctionName));
+        var newSelector = Expression.Lambda(
+            typeof(Func<,>).MakeGenericType(sourceType, returnType),
+            newBody, argSelector.Parameters);
+
+        var maxMethod = FindMaxWithGenericReturn(sourceType, returnType);
+        return Expression.Call(null, maxMethod, groupingArg, newSelector);
+    }
+
+    /// <summary>
+    /// Rewrites <c>g.GroupArrayIf(selector, predicate)</c> and the maxSize overload
+    /// into a Max-surrogate aggregate carrying the right -If sentinel. The maxSize
+    /// form uses ClickHouse's parametric syntax <c>groupArrayIf(N)(col, predicate)</c>,
+    /// rendered via <see cref="ClickHouseMergeSentinelExpression.MergeParameter"/>.
+    /// </summary>
+    private static Expression? RewriteGroupArrayIf(MethodCallExpression call, string sqlFunctionName)
+    {
+        var groupingArg = call.Arguments[0];
+        Expression? maxSizeArg = null;
+        LambdaExpression selector;
+        LambdaExpression predicate;
+        if (call.Arguments.Count == 3)
+        {
+            selector = UnwrapLambda(call.Arguments[1]);
+            predicate = UnwrapLambda(call.Arguments[2]);
+        }
+        else if (call.Arguments.Count == 4)
+        {
+            maxSizeArg = call.Arguments[1];
+            selector = UnwrapLambda(call.Arguments[2]);
+            predicate = UnwrapLambda(call.Arguments[3]);
+        }
+        else return null;
+
+        var sourceType = call.Method.GetGenericArguments()[1];
+        var inputType = selector.Body.Type;
+        var returnType = call.Method.ReturnType;
+
+        var predBody = new ParameterReplacer(predicate.Parameters[0], selector.Parameters[0])
+            .Visit(predicate.Body)!;
+
+        Expression newBody;
+        if (maxSizeArg is null)
+        {
+            var sentinel = typeof(ClickHouseFunctions)
+                .GetMethod(nameof(ClickHouseFunctions.AggregateSentinelTwoArg))!
+                .MakeGenericMethod(inputType, typeof(bool), returnType, returnType);
+            newBody = Expression.Call(sentinel, selector.Body, predBody, Expression.Constant(sqlFunctionName));
+        }
+        else
+        {
+            // groupArrayIf(N)(col, predicate) — N is parametric, (col, predicate) are positional.
+            var sentinel = typeof(ClickHouseFunctions)
+                .GetMethod(nameof(ClickHouseFunctions.AggregateSentinelTwoArgIntParam))!
+                .MakeGenericMethod(inputType, typeof(bool), returnType, returnType);
+            newBody = Expression.Call(sentinel, selector.Body, predBody, Expression.Constant(sqlFunctionName), maxSizeArg);
+        }
+
+        var newSelector = Expression.Lambda(
+            typeof(Func<,>).MakeGenericType(sourceType, returnType),
+            newBody, selector.Parameters);
+        var maxMethod = FindMaxWithGenericReturn(sourceType, returnType);
+        return Expression.Call(null, maxMethod, groupingArg, newSelector);
+    }
+
+    /// <summary>
+    /// Rewrites <c>g.TopKIf(k, selector, predicate)</c> into a Max surrogate carrying
+    /// a <c>topKIf(k)</c> sentinel. ClickHouse syntax: <c>topKIf(k)(col, predicate)</c>.
+    /// </summary>
+    private static Expression? RewriteTopKIf(MethodCallExpression call, string sqlFunctionName)
+    {
+        if (call.Arguments.Count != 4) return null;
+        var groupingArg = call.Arguments[0];
+        var kArg = call.Arguments[1];
+        var selector = UnwrapLambda(call.Arguments[2]);
+        var predicate = UnwrapLambda(call.Arguments[3]);
+        var sourceType = call.Method.GetGenericArguments()[1];
+        var inputType = selector.Body.Type;
+        var returnType = call.Method.ReturnType;
+
+        var predBody = new ParameterReplacer(predicate.Parameters[0], selector.Parameters[0])
+            .Visit(predicate.Body)!;
+
+        var sentinel = typeof(ClickHouseFunctions)
+            .GetMethod(nameof(ClickHouseFunctions.AggregateSentinelTwoArgIntParam))!
+            .MakeGenericMethod(inputType, typeof(bool), returnType, returnType);
+        var newBody = Expression.Call(sentinel, selector.Body, predBody, Expression.Constant(sqlFunctionName), kArg);
+        var newSelector = Expression.Lambda(
+            typeof(Func<,>).MakeGenericType(sourceType, returnType),
+            newBody, selector.Parameters);
+        var maxMethod = FindMaxWithGenericReturn(sourceType, returnType);
+        return Expression.Call(null, maxMethod, groupingArg, newSelector);
+    }
+
+    /// <summary>
+    /// Rewrites <c>g.TopKWeightedIf(k, valueSelector, weightSelector, predicate)</c> into a
+    /// Max surrogate carrying a <c>topKWeightedIf(k)</c> sentinel. ClickHouse syntax:
+    /// <c>topKWeightedIf(k)(col, weight, predicate)</c>.
+    /// </summary>
+    private static Expression? RewriteTopKWeightedIf(MethodCallExpression call, string sqlFunctionName)
+    {
+        if (call.Arguments.Count != 5) return null;
+        var groupingArg = call.Arguments[0];
+        var kArg = call.Arguments[1];
+        var valueSelector = UnwrapLambda(call.Arguments[2]);
+        var weightSelector = UnwrapLambda(call.Arguments[3]);
+        var predicate = UnwrapLambda(call.Arguments[4]);
+        var sourceType = call.Method.GetGenericArguments()[1];
+        var valueType = valueSelector.Body.Type;
+        var weightType = weightSelector.Body.Type;
+        var returnType = call.Method.ReturnType;
+
+        var param = valueSelector.Parameters[0];
+        var weightBody = new ParameterReplacer(weightSelector.Parameters[0], param).Visit(weightSelector.Body)!;
+        var predBody = new ParameterReplacer(predicate.Parameters[0], param).Visit(predicate.Body)!;
+
+        var sentinel = typeof(ClickHouseFunctions)
+            .GetMethod(nameof(ClickHouseFunctions.AggregateSentinelThreeArgIntParam))!
+            .MakeGenericMethod(valueType, weightType, typeof(bool), returnType, returnType);
+        var newBody = Expression.Call(sentinel, valueSelector.Body, weightBody, predBody, Expression.Constant(sqlFunctionName), kArg);
+        var newSelector = Expression.Lambda(
+            typeof(Func<,>).MakeGenericType(sourceType, returnType),
+            newBody, valueSelector.Parameters);
+        var maxMethod = FindMaxWithGenericReturn(sourceType, returnType);
+        return Expression.Call(null, maxMethod, groupingArg, newSelector);
+    }
+
+    /// <summary>
+    /// Rewrites <c>g.QuantileXxxIf(level, selector, predicate)</c> into a Sum surrogate
+    /// carrying a <c>quantileXxxIf(level)</c> sentinel. ClickHouse syntax:
+    /// <c>quantileXxxIf(level)(col, predicate)</c>.
+    /// </summary>
+    private static Expression? RewriteParametricSelectorPredicateAggregate(MethodCallExpression call, string sqlFunctionName)
+    {
+        // Shape: X(grouping, double level, Func<T, double> selector, Func<T, bool> predicate) → double
+        if (call.Arguments.Count != 4) return null;
+        var groupingArg = call.Arguments[0];
+        var levelArg = call.Arguments[1];
+        var selector = UnwrapLambda(call.Arguments[2]);
+        var predicate = UnwrapLambda(call.Arguments[3]);
+        var sourceType = call.Method.GetGenericArguments()[1];
+        var inputType = selector.Body.Type;
+        var returnType = call.Method.ReturnType;
+
+        var predBody = new ParameterReplacer(predicate.Parameters[0], selector.Parameters[0])
+            .Visit(predicate.Body)!;
+
+        // Use double-parametric two-arg sentinel: parameter renders as "(level)" prefix.
+        // Reuses AggregateSentinelTwoArg + a parameter via secondArg; but we need a parametric
+        // double, not int. ClickHouseMergeSentinelExpression.MergeParameter accepts double.
+        // Build by piggy-backing on AggregateSentinelTwoArgIntParam isn't suitable (int only),
+        // so we add a custom path: pack both lambdas + the level via sentinel and let
+        // TranslateMergeSentinel render quantileXxxIf(level)(col, predicate). We use the
+        // existing AggregateSentinelTwoArg shape and wedge the level through the function-name
+        // string itself (the renderer accepts pre-formatted "(N)" suffixes).
+        var levelText = levelArg switch
+        {
+            ConstantExpression { Value: double d } => d.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            _ => null,
+        };
+        if (levelText is null) return null; // levels must be constants for the ClickHouse parametric form.
+
+        var nameWithLevel = $"{sqlFunctionName}({levelText})";
+        var sentinel = typeof(ClickHouseFunctions)
+            .GetMethod(nameof(ClickHouseFunctions.AggregateSentinelTwoArg))!
+            .MakeGenericMethod(inputType, typeof(bool), returnType, returnType);
+        var newBody = Expression.Call(sentinel, selector.Body, predBody, Expression.Constant(nameWithLevel));
+        var newSelector = Expression.Lambda(
+            typeof(Func<,>).MakeGenericType(sourceType, returnType),
+            newBody, selector.Parameters);
+        var maxMethod = FindMaxWithGenericReturn(sourceType, returnType);
+        return Expression.Call(null, maxMethod, groupingArg, newSelector);
+    }
+
+    /// <summary>
+    /// Rewrites <c>g.QuantilesXxxIf(levels[], selector, predicate)</c> into a Max surrogate
+    /// carrying a <c>quantilesXxxIf(l1, l2, …)</c> sentinel.
+    /// </summary>
+    private static Expression? RewriteMultiQuantileSelectorPredicateAggregate(MethodCallExpression call, string sqlFunctionName)
+    {
+        // Shape: X(grouping, double[] levels, Func<T, double> selector, Func<T, bool> predicate) → double[]
+        if (call.Arguments.Count != 4) return null;
+        var groupingArg = call.Arguments[0];
+        var levelsArg = call.Arguments[1];
+        var selector = UnwrapLambda(call.Arguments[2]);
+        var predicate = UnwrapLambda(call.Arguments[3]);
+        var sourceType = call.Method.GetGenericArguments()[1];
+        var inputType = selector.Body.Type;
+        var returnType = call.Method.ReturnType;
+
+        var predBody = new ParameterReplacer(predicate.Parameters[0], selector.Parameters[0])
+            .Visit(predicate.Body)!;
+
+        double[]? levelArr = levelsArg switch
+        {
+            ConstantExpression { Value: double[] d } => d,
+            NewArrayExpression nae when nae.Expressions.All(x => x is ConstantExpression { Value: double })
+                => nae.Expressions.Select(x => (double)((ConstantExpression)x).Value!).ToArray(),
+            _ => null,
+        };
+        if (levelArr is null) return null;
+
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        var nameWithLevels = $"{sqlFunctionName}({string.Join(", ", levelArr.Select(l => l.ToString(inv)))})";
+
+        var sentinel = typeof(ClickHouseFunctions)
+            .GetMethod(nameof(ClickHouseFunctions.AggregateSentinelTwoArg))!
+            .MakeGenericMethod(inputType, typeof(bool), returnType, returnType);
+        var newBody = Expression.Call(sentinel, selector.Body, predBody, Expression.Constant(nameWithLevels));
+        var newSelector = Expression.Lambda(
+            typeof(Func<,>).MakeGenericType(sourceType, returnType),
+            newBody, selector.Parameters);
         var maxMethod = FindMaxWithGenericReturn(sourceType, returnType);
         return Expression.Call(null, maxMethod, groupingArg, newSelector);
     }

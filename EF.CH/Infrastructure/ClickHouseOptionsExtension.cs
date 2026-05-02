@@ -44,6 +44,7 @@ public class ClickHouseOptionsExtension : RelationalOptionsExtension
     private string? _clusterName;
     private bool _useConnectionRouting;
     private int? _httpPort;
+    private bool _strictTransactions;
 
     /// <summary>
     /// Creates a new instance of <see cref="ClickHouseOptionsExtension"/>.
@@ -65,6 +66,7 @@ public class ClickHouseOptionsExtension : RelationalOptionsExtension
         _clusterName = copyFrom._clusterName;
         _useConnectionRouting = copyFrom._useConnectionRouting;
         _httpPort = copyFrom._httpPort;
+        _strictTransactions = copyFrom._strictTransactions;
     }
 
     /// <summary>
@@ -90,6 +92,14 @@ public class ClickHouseOptionsExtension : RelationalOptionsExtension
     /// Defaults to <see cref="ClickHouseDeleteStrategy.Lightweight"/>.
     /// </summary>
     public virtual ClickHouseDeleteStrategy DeleteStrategy => _deleteStrategy;
+
+    /// <summary>
+    /// Gets whether <c>BeginTransaction</c> throws instead of returning a
+    /// no-op transaction. Default: <c>false</c> (warn-once + no-op). Opt-in
+    /// for callers who want to be sure they aren't relying on transactional
+    /// semantics that ClickHouse doesn't provide.
+    /// </summary>
+    public virtual bool StrictTransactions => _strictTransactions;
 
     /// <summary>
     /// Gets the multi-datacenter configuration for ClickHouse.
@@ -167,6 +177,16 @@ public class ClickHouseOptionsExtension : RelationalOptionsExtension
     {
         var clone = (ClickHouseOptionsExtension)Clone();
         clone._deleteStrategy = deleteStrategy;
+        return clone;
+    }
+
+    /// <summary>
+    /// Creates a copy with strict-transaction mode enabled or disabled.
+    /// </summary>
+    public virtual ClickHouseOptionsExtension WithStrictTransactions(bool strict)
+    {
+        var clone = (ClickHouseOptionsExtension)Clone();
+        clone._strictTransactions = strict;
         return clone;
     }
 
@@ -323,6 +343,7 @@ public class ClickHouseOptionsExtension : RelationalOptionsExtension
             hashCode.Add(Extension.ClusterName);
             hashCode.Add(Extension.UseConnectionRouting);
             hashCode.Add(Extension.HttpPort);
+            hashCode.Add(Extension.StrictTransactions);
             // Configuration is reference-compared intentionally - same object = same hash
             hashCode.Add(Extension.Configuration?.GetHashCode() ?? 0);
             return hashCode.ToHashCode();
@@ -337,6 +358,7 @@ public class ClickHouseOptionsExtension : RelationalOptionsExtension
                && Extension.ClusterName == otherInfo.Extension.ClusterName
                && Extension.UseConnectionRouting == otherInfo.Extension.UseConnectionRouting
                && Extension.HttpPort == otherInfo.Extension.HttpPort
+               && Extension.StrictTransactions == otherInfo.Extension.StrictTransactions
                && ReferenceEquals(Extension.Configuration, otherInfo.Extension.Configuration);
 
         public override void PopulateDebugInfo(IDictionary<string, string> debugInfo)

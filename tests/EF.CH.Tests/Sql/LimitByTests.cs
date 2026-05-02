@@ -73,29 +73,29 @@ public class LimitByTests
             context.Events.LimitBy(e => e.Category, limit: 5, offset: -1));
     }
 
-    [Fact(Skip = "EF Core's NavigationExpandingExpressionVisitor doesn't recognize custom LimitBy method, " +
-                   "so Take() after LimitBy() fails. Use .ToList() before further LINQ operations.")]
+    /// <summary>
+    /// <c>.LimitBy(key, n).Take(m)</c> emits the per-group <c>LIMIT n BY key</c>
+    /// alongside a top-level <c>LIMIT m</c>. ClickHouse evaluates LIMIT BY
+    /// before the global LIMIT, so the per-group cap is taken first and then
+    /// the result is truncated to <c>m</c> rows total.
+    /// </summary>
+    [Fact]
     public void LimitBy_WithGlobalTake_GeneratesBothLimitClauses()
     {
         using var context = CreateContext();
 
-        var query = context.Events
+        var sql = context.Events
             .OrderByDescending(e => e.Score)
             .LimitBy(e => e.Category, 5)
-            .Take(100);
+            .Take(100)
+            .ToQueryString();
 
-        var sql = query.ToQueryString();
-        Console.WriteLine("Generated SQL: " + sql);
-
-        // Should have LIMIT BY before global LIMIT
-        Assert.Contains("LIMIT", sql);
-        Assert.Contains("BY", sql);
+        Assert.Contains("LIMIT 5 BY", sql);
         Assert.Contains("\"Category\"", sql);
-
-        // Verify LIMIT BY comes before global LIMIT
-        var limitByIndex = sql.IndexOf("LIMIT");
-        var byIndex = sql.IndexOf(" BY ", limitByIndex);
-        Assert.True(byIndex > limitByIndex, "BY should follow LIMIT in LIMIT BY clause");
+        // The global LIMIT comes after LIMIT BY in the emitted SQL.
+        var byIdx = sql.IndexOf("LIMIT 5 BY", StringComparison.Ordinal);
+        var globalIdx = sql.IndexOf("LIMIT ", byIdx + "LIMIT 5 BY".Length, StringComparison.Ordinal);
+        Assert.True(globalIdx > byIdx, $"expected a global LIMIT after LIMIT BY; SQL: {sql}");
     }
 
     [Fact]

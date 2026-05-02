@@ -75,6 +75,32 @@ public sealed class TableFunctionUrlTests
             });
         }
     }
+
+    /// <summary>
+    /// URL-embedded credentials in <c>FromUrl</c> must not leak into exception
+    /// messages when the request fails. The audit calls this out as the
+    /// canonical credential-leakage hazard for table functions: a malformed
+    /// or unreachable URL with <c>user:secret@host</c> shouldn't surface the
+    /// secret in a thrown server exception, log line, or stack trace.
+    /// </summary>
+    [Fact]
+    public async Task FromUrl_WithCredentialsInUrl_ExceptionMessageDoesNotContainCredentials()
+    {
+        await using var ctx = TestContextFactory.Create<UrlCtx>(_fx.ClickHouseConnectionString);
+
+        // RFC 3986 userinfo-with-secret pattern, pointing at an unreachable
+        // host so the request is guaranteed to fail.
+        const string secret = "supersecretvalue";
+        var malformedUrl = $"http://user:{secret}@unreachable.invalid:65535/data";
+
+        var ex = await Assert.ThrowsAnyAsync<Exception>(async () =>
+        {
+            await ctx.FromUrl<RemoteRow>(malformedUrl, "JSONEachRow").ToListAsync();
+        });
+
+        Assert.DoesNotContain(secret, ex.ToString(),
+            StringComparison.Ordinal);
+    }
 }
 
 /// <summary>Cluster table-function tests against the existing sharded cluster fixture.</summary>

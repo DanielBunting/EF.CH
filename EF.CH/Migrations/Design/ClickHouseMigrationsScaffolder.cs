@@ -350,6 +350,13 @@ public class ClickHouseMigrationsScaffolder : MigrationsScaffolder
         {
             if (op is CreateTableOperation createOp)
             {
+                // Engine-knob annotations (Engine, OrderBy, VersionColumn, etc.)
+                // are scanned + copied by EngineAnnotationEnricher independently
+                // so the scaffolded migration is self-contained — the SQL
+                // generator shouldn't need to fall back to the runtime model
+                // to find them.
+                EngineAnnotationEnricher.Enrich(createOp, model);
+
                 // Find the entity type for this table
                 var entityType = model.GetEntityTypes()
                     .FirstOrDefault(e => string.Equals(e.GetTableName(), createOp.Name, StringComparison.OrdinalIgnoreCase)

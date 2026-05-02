@@ -59,6 +59,72 @@ public class BulkInsertCallbackResilienceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task BulkInsert_CallbackException_ForwardedToSink_WhenConfigured()
+    {
+        await using var ctx = Create();
+        await ctx.Database.EnsureCreatedAsync();
+
+        const int total = 300;
+        var events = Enumerable.Range(0, total)
+            .Select(i => new BulkEvent
+            {
+                Id = Guid.NewGuid(),
+                EventTime = DateTime.UtcNow,
+                EventType = "sink",
+                Data = $"r{i}",
+            })
+            .ToList();
+
+        var sinkExceptions = new List<Exception>();
+        var result = await ctx.BulkInsertAsync(events, opts =>
+        {
+            opts.BatchSize = 100;
+            opts.MaxDegreeOfParallelism = 1;
+            opts.OnBatchCompleted = _ => throw new InvalidOperationException("user callback bug");
+            opts.OnCallbackException = ex =>
+            {
+                lock (sinkExceptions) sinkExceptions.Add(ex);
+            };
+        });
+
+        Assert.Equal(total, result.RowsInserted);
+        Assert.Equal(total / 100, result.BatchesExecuted);
+
+        // Every callback throw should reach the sink.
+        Assert.Equal(total / 100, sinkExceptions.Count);
+        Assert.All(sinkExceptions, ex => Assert.Equal("user callback bug", ex.Message));
+    }
+
+    [Fact]
+    public async Task BulkInsert_SinkItselfThrowing_DoesNotAbortInsert()
+    {
+        await using var ctx = Create();
+        await ctx.Database.EnsureCreatedAsync();
+
+        const int total = 200;
+        var events = Enumerable.Range(0, total)
+            .Select(i => new BulkEvent
+            {
+                Id = Guid.NewGuid(),
+                EventTime = DateTime.UtcNow,
+                EventType = "bad-sink",
+                Data = $"r{i}",
+            })
+            .ToList();
+
+        var result = await ctx.BulkInsertAsync(events, opts =>
+        {
+            opts.BatchSize = 100;
+            opts.MaxDegreeOfParallelism = 1;
+            opts.OnBatchCompleted = _ => throw new InvalidOperationException("callback bug");
+            opts.OnCallbackException = _ => throw new ApplicationException("sink bug");
+        });
+
+        Assert.Equal(total, result.RowsInserted);
+        Assert.Equal(total / 100, result.BatchesExecuted);
+    }
+
+    [Fact]
     public async Task BulkInsert_Parallel_KeepsInsertingWhenCallbackThrows()
     {
         await using var ctx = Create();

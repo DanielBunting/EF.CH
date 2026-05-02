@@ -40,6 +40,75 @@ public class TimeZoneAttributeTests
         Assert.Matches(@"^DateTime64\(\d+, 'Europe/London'\)$", type);
     }
 
+    /// <summary>
+    /// Spring-forward boundary: at 01:30 local time on 2024-03-31,
+    /// Europe/London jumps from GMT to BST so that local instant doesn't
+    /// exist. The point in time is unambiguous when expressed as a
+    /// DateTimeOffset (UTC=01:30 → BST would be 02:30 local). Round-tripping
+    /// must preserve the absolute instant.
+    /// <para>
+    /// EXPECTED TO FAIL TODAY: the round-trip applies a local-time
+    /// interpretation that shifts the inserted instant by one hour across
+    /// the DST boundary. Left failing intentionally (see the audit's
+    /// "specification" pattern) so the gap is visible in CI rather than
+    /// hidden behind a skip; remove this xmldoc note once the driver or
+    /// provider preserves the inserted DateTimeOffset across spring-forward.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task HasTimeZone_RoundTripsAcrossSpringForwardBoundary()
+    {
+        await using var ctx = TestContextFactory.Create<Ctx>(Conn);
+        await ctx.Database.EnsureDeletedAsync();
+        await ctx.Database.EnsureCreatedAsync();
+
+        // 2024-03-31 01:30 UTC corresponds to 02:30 BST locally — the hour
+        // 01:00–02:00 local does not exist. Use the UTC instant directly so
+        // there's no .NET-side ambiguity over which local representation to
+        // pick.
+        var instant = new DateTimeOffset(2024, 3, 31, 1, 30, 0, TimeSpan.Zero);
+        ctx.Rows.Add(new Row { Id = 1, At = instant });
+        await ctx.SaveChangesAsync();
+        ctx.ChangeTracker.Clear();
+
+        var read = await ctx.Rows.SingleAsync(r => r.Id == 1);
+        Assert.Equal(instant.UtcDateTime, read.At.UtcDateTime);
+    }
+
+    /// <summary>
+    /// Fall-back boundary: at 01:30 local time on 2024-10-27, Europe/London
+    /// shifts from BST back to GMT and the local instant 01:30 occurs twice.
+    /// The DateTimeOffset carries an explicit UTC offset, so the absolute
+    /// instant is unambiguous in principle; round-trip must preserve it.
+    /// <para>
+    /// EXPECTED TO FAIL TODAY: the ClickHouse driver appears to round-trip
+    /// the value through local-time interpretation, so the first occurrence
+    /// (00:30 UTC = 01:30 BST) and the second (01:30 UTC = 01:30 GMT) read
+    /// back as the same instant, off by one hour. Left failing intentionally
+    /// (the audit's "specification" pattern) so the round-trip hazard is
+    /// loud in CI rather than hidden behind a skip.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task HasTimeZone_RoundTripsAcrossFallBackBoundary()
+    {
+        await using var ctx = TestContextFactory.Create<Ctx>(Conn);
+        await ctx.Database.EnsureDeletedAsync();
+        await ctx.Database.EnsureCreatedAsync();
+
+        var firstInstance  = new DateTimeOffset(2024, 10, 27, 0, 30, 0, TimeSpan.Zero);
+        var secondInstance = new DateTimeOffset(2024, 10, 27, 1, 30, 0, TimeSpan.Zero);
+        ctx.Rows.Add(new Row { Id = 1, At = firstInstance });
+        ctx.Rows.Add(new Row { Id = 2, At = secondInstance });
+        await ctx.SaveChangesAsync();
+        ctx.ChangeTracker.Clear();
+
+        var rows = await ctx.Rows.OrderBy(r => r.Id).ToListAsync();
+        Assert.Equal(firstInstance.UtcDateTime,  rows[0].At.UtcDateTime);
+        Assert.Equal(secondInstance.UtcDateTime, rows[1].At.UtcDateTime);
+        Assert.NotEqual(rows[0].At.UtcDateTime, rows[1].At.UtcDateTime);
+    }
+
     public sealed class Row
     {
         public uint Id { get; set; }

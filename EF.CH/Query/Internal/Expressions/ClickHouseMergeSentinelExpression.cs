@@ -28,6 +28,8 @@ public sealed class ClickHouseMergeSentinelExpression : SqlExpression
     public IReadOnlyList<double>? Parameters { get; }
     /// <summary>Second positional argument — used by <c>argMax(arg, val)</c>, <c>topKWeighted(col, weight)</c>, etc.</summary>
     public SqlExpression? SecondArg { get; }
+    /// <summary>Third positional argument — used by 3-arg If combinators like <c>argMaxIf(arg, val, predicate)</c>.</summary>
+    public SqlExpression? ThirdArg { get; }
 
     public ClickHouseMergeSentinelExpression(
         SqlExpression stateColumn,
@@ -36,7 +38,8 @@ public sealed class ClickHouseMergeSentinelExpression : SqlExpression
         RelationalTypeMapping? typeMapping,
         double? parameter = null,
         IReadOnlyList<double>? parameters = null,
-        SqlExpression? secondArg = null)
+        SqlExpression? secondArg = null,
+        SqlExpression? thirdArg = null)
         : base(type, typeMapping)
     {
         StateColumn = stateColumn ?? throw new ArgumentNullException(nameof(stateColumn));
@@ -44,6 +47,7 @@ public sealed class ClickHouseMergeSentinelExpression : SqlExpression
         MergeParameter = parameter;
         Parameters = parameters;
         SecondArg = secondArg;
+        ThirdArg = thirdArg;
     }
 
     public override Expression Quote()
@@ -54,9 +58,10 @@ public sealed class ClickHouseMergeSentinelExpression : SqlExpression
     {
         var visited = (SqlExpression)visitor.Visit(StateColumn);
         var visitedSecond = SecondArg is null ? null : (SqlExpression)visitor.Visit(SecondArg);
-        return visited == StateColumn && visitedSecond == SecondArg
+        var visitedThird = ThirdArg is null ? null : (SqlExpression)visitor.Visit(ThirdArg);
+        return visited == StateColumn && visitedSecond == SecondArg && visitedThird == ThirdArg
             ? this
-            : new ClickHouseMergeSentinelExpression(visited, FunctionName, Type, TypeMapping, MergeParameter, Parameters, visitedSecond);
+            : new ClickHouseMergeSentinelExpression(visited, FunctionName, Type, TypeMapping, MergeParameter, Parameters, visitedSecond, visitedThird);
     }
 
     protected override void Print(ExpressionPrinter printer)

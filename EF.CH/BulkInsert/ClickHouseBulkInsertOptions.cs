@@ -64,6 +64,17 @@ public class ClickHouseBulkInsertOptions
     public Action<long>? OnBatchCompleted { get; set; }
 
     /// <summary>
+    /// Optional sink for exceptions thrown by <see cref="OnBatchCompleted"/>.
+    /// Defaults to <c>null</c> — the bulk inserter swallows callback exceptions
+    /// to avoid aborting the operation (a buggy user callback shouldn't kill an
+    /// in-flight bulk insert), but with no <see cref="OnCallbackException"/>
+    /// sink the exception is silently lost. Provide a sink (e.g. a logger
+    /// adapter) to surface them. The sink is itself called inside a
+    /// try/catch — its own exceptions are also swallowed.
+    /// </summary>
+    public Action<Exception>? OnCallbackException { get; set; }
+
+    /// <summary>
     /// Sets the batch size.
     /// </summary>
     public ClickHouseBulkInsertOptions WithBatchSize(int batchSize)

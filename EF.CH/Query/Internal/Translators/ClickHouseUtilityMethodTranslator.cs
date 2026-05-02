@@ -79,6 +79,8 @@ public class ClickHouseUtilityMethodTranslator : IMethodCallTranslator
         [(typeof(ClickHouseFormatDbFunctionsExtensions), nameof(ClickHouseFormatDbFunctionsExtensions.FormatReadableQuantity))] = "formatReadableQuantity",
         [(typeof(ClickHouseFormatDbFunctionsExtensions), nameof(ClickHouseFormatDbFunctionsExtensions.FormatReadableTimeDelta))] = "formatReadableTimeDelta",
         [(typeof(ClickHouseFormatDbFunctionsExtensions), nameof(ClickHouseFormatDbFunctionsExtensions.ParseDateTime))] = "parseDateTime",
+        [(typeof(ClickHouseFormatDbFunctionsExtensions), nameof(ClickHouseFormatDbFunctionsExtensions.FormatRow))] = "formatRow",
+        [(typeof(ClickHouseFormatDbFunctionsExtensions), nameof(ClickHouseFormatDbFunctionsExtensions.FormatString))] = "format",
 
         // Date truncation functions
         [(typeof(ClickHouseDateTruncDbFunctionsExtensions), nameof(ClickHouseDateTruncDbFunctionsExtensions.ToStartOfYear))] = "toStartOfYear",
@@ -130,12 +132,19 @@ public class ClickHouseUtilityMethodTranslator : IMethodCallTranslator
         [(typeof(ClickHouseStringSplitDbFunctionsExtensions), nameof(ClickHouseStringSplitDbFunctionsExtensions.SplitByChar))] = "splitByChar",
         [(typeof(ClickHouseStringSplitDbFunctionsExtensions), nameof(ClickHouseStringSplitDbFunctionsExtensions.SplitByString))] = "splitByString",
         [(typeof(ClickHouseStringSplitDbFunctionsExtensions), nameof(ClickHouseStringSplitDbFunctionsExtensions.ArrayStringConcat))] = "arrayStringConcat",
+        [(typeof(ClickHouseStringSplitDbFunctionsExtensions), nameof(ClickHouseStringSplitDbFunctionsExtensions.SplitByRegexp))] = "splitByRegexp",
+        [(typeof(ClickHouseStringSplitDbFunctionsExtensions), nameof(ClickHouseStringSplitDbFunctionsExtensions.AlphaTokens))] = "alphaTokens",
 
         // UUID functions
         [(typeof(ClickHouseUuidDbFunctionsExtensions), nameof(ClickHouseUuidDbFunctionsExtensions.NewGuidV7))] = "generateUUIDv7",
+        [(typeof(ClickHouseUuidDbFunctionsExtensions), nameof(ClickHouseUuidDbFunctionsExtensions.NewGuidV4))] = "generateUUIDv4",
+        [(typeof(ClickHouseUuidDbFunctionsExtensions), nameof(ClickHouseUuidDbFunctionsExtensions.UUIDStringToNum))] = "UUIDStringToNum",
+        [(typeof(ClickHouseUuidDbFunctionsExtensions), nameof(ClickHouseUuidDbFunctionsExtensions.UUIDNumToString))] = "UUIDNumToString",
+        [(typeof(ClickHouseUuidDbFunctionsExtensions), nameof(ClickHouseUuidDbFunctionsExtensions.ToUUIDOrNull))] = "toUUIDOrNull",
 
         // Keeper-backed scalar functions
         [(typeof(ClickHouseKeeperDbFunctionsExtensions), nameof(ClickHouseKeeperDbFunctionsExtensions.GenerateSerialID))] = "generateSerialID",
+        [(typeof(ClickHouseKeeperDbFunctionsExtensions), nameof(ClickHouseKeeperDbFunctionsExtensions.ZooKeeperPath))] = "zooKeeperPath",
     };
 
     // Md5 and Sha256 need special nested handling: hex(MD5(x)), hex(SHA256(x))
@@ -164,6 +173,26 @@ public class ClickHouseUtilityMethodTranslator : IMethodCallTranslator
         // Skip the DbFunctions argument at index 0
         var functionArguments = arguments.Skip(1).ToArray();
         var nullability = Enumerable.Repeat(true, functionArguments.Length).ToArray();
+
+        // Special case: HasZooKeeperConfig() → no direct CH function. Use
+        // hasColumnInTable('system', 'zookeeper', 'path') as a probe — the
+        // system.zookeeper table only exposes a 'path' column when Keeper /
+        // ZooKeeper is configured for the server.
+        if (method.DeclaringType == typeof(ClickHouseKeeperDbFunctionsExtensions)
+            && method.Name == nameof(ClickHouseKeeperDbFunctionsExtensions.HasZooKeeperConfig))
+        {
+            return _sqlExpressionFactory.Function(
+                "hasColumnInTable",
+                new SqlExpression[]
+                {
+                    _sqlExpressionFactory.Constant("system"),
+                    _sqlExpressionFactory.Constant("zookeeper"),
+                    _sqlExpressionFactory.Constant("path"),
+                },
+                nullable: false,
+                argumentsPropagateNullability: new[] { false, false, false },
+                typeof(bool));
+        }
 
         // Special case: Md5/Sha256 → hex(MD5(x)) / hex(SHA256(x))
         if (method.DeclaringType == typeof(ClickHouseHashDbFunctionsExtensions)

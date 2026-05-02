@@ -1321,9 +1321,11 @@ public class ClickHouseAggregateMethodCallTranslator
             functionName = $"{functionName}({string.Join(", ", ps.Select(x => x.ToString(inv)))})";
         }
 
-        SqlExpression[] funcArgs = sentinel.SecondArg is null
-            ? [sentinel.StateColumn]
-            : [sentinel.StateColumn, sentinel.SecondArg];
+        SqlExpression[] funcArgs = sentinel.ThirdArg is not null
+            ? [sentinel.StateColumn, sentinel.SecondArg!, sentinel.ThirdArg]
+            : sentinel.SecondArg is null
+                ? [sentinel.StateColumn]
+                : [sentinel.StateColumn, sentinel.SecondArg];
         var merge = _sqlExpressionFactory.Function(
             functionName,
             funcArgs,

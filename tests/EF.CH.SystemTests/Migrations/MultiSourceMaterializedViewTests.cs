@@ -27,9 +27,12 @@ public class MultiSourceMaterializedViewTests
     [Fact]
     public async Task EnsureCreated_OrdersAndCustomersAndProducts_CreatesAllAndMv()
     {
-        await Reset(new[] { "MS_RegionalRevenue", "MS_Order", "MS_Customer", "MS_Product" });
-
         await using var ctx = TestContextFactory.Create<MultiSourceCtx>(Conn);
+        // EF Core's EnsureCreatedAsync no-ops when the database has any tables,
+        // even unrelated ones. Tests share SingleNodeClickHouseFixture, so a
+        // sibling test's leftover schema would prevent this context's tables
+        // from being created. EnsureDeletedAsync clears prior state first.
+        await ctx.Database.EnsureDeletedAsync();
         await ctx.Database.EnsureCreatedAsync(); // joined tables created BEFORE MV
 
         Assert.True(await RawClickHouse.TableExistsAsync(Conn, "MS_Order"));
@@ -63,9 +66,8 @@ public class MultiSourceMaterializedViewTests
     [Fact]
     public async Task InsertIntoJoinedSource_ProducesNoMvRows()
     {
-        await Reset(new[] { "MS2_RegionalRevenue", "MS2_Order", "MS2_Customer", "MS2_Product" });
-
         await using var ctx = TestContextFactory.Create<MultiSourceJoinedOnlyCtx>(Conn);
+        await ctx.Database.EnsureDeletedAsync();
         await ctx.Database.EnsureCreatedAsync();
 
         // Insert ONLY into the joined sources (NOT the trigger source).
@@ -80,12 +82,6 @@ public class MultiSourceMaterializedViewTests
         var rows = await RawClickHouse.ScalarAsync<ulong>(Conn,
             "SELECT count() FROM \"MS2_RegionalRevenue\"");
         Assert.Equal(0UL, rows);
-    }
-
-    private async Task Reset(string[] tables)
-    {
-        foreach (var t in tables)
-            await RawClickHouse.ExecuteAsync(Conn, $"DROP TABLE IF EXISTS \"{t}\"");
     }
 
     // -----------------------------------------------------------------------

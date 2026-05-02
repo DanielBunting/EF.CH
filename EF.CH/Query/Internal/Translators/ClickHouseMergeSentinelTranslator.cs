@@ -38,6 +38,10 @@ public class ClickHouseMergeSentinelTranslator : IMethodCallTranslator
         typeof(ClickHouseFunctions).GetMethod(nameof(ClickHouseFunctions.AggregateSentinelTwoArg))!;
     private static readonly MethodInfo AggSentinelTwoArgIntParamMethod =
         typeof(ClickHouseFunctions).GetMethod(nameof(ClickHouseFunctions.AggregateSentinelTwoArgIntParam))!;
+    private static readonly MethodInfo AggSentinelThreeArgMethod =
+        typeof(ClickHouseFunctions).GetMethod(nameof(ClickHouseFunctions.AggregateSentinelThreeArg))!;
+    private static readonly MethodInfo AggSentinelThreeArgIntParamMethod =
+        typeof(ClickHouseFunctions).GetMethod(nameof(ClickHouseFunctions.AggregateSentinelThreeArgIntParam))!;
 
     private readonly IRelationalTypeMappingSource _typeMappingSource;
 
@@ -148,6 +152,30 @@ public class ClickHouseMergeSentinelTranslator : IMethodCallTranslator
             var parameter = (double)RequireIntConstant(arguments[3]);
             return new ClickHouseMergeSentinelExpression(
                 arguments[0], functionName, aggReal, mapping, parameter: parameter, secondArg: arguments[1]);
+        }
+
+        // Three-arg sentinel: (TArg, TVal, TPred, TSurrogate, TReal) — TReal at index 4.
+        if (genericDef == AggSentinelThreeArgMethod)
+        {
+            var aggReal = genericArgs[4];
+            var mapping = _typeMappingSource.FindMapping(aggReal);
+            var functionName = RequireStringConstant(arguments[3]);
+            return new ClickHouseMergeSentinelExpression(
+                arguments[0], functionName, aggReal, mapping,
+                secondArg: arguments[1], thirdArg: arguments[2]);
+        }
+
+        // Three-arg + int-parametric: (TArg, TVal, TPred, TSurrogate, TReal) with `(N)` prefix.
+        // Used by topKWeightedIf(k)(col, weight, predicate).
+        if (genericDef == AggSentinelThreeArgIntParamMethod)
+        {
+            var aggReal = genericArgs[4];
+            var mapping = _typeMappingSource.FindMapping(aggReal);
+            var functionName = RequireStringConstant(arguments[3]);
+            var parameter = (double)RequireIntConstant(arguments[4]);
+            return new ClickHouseMergeSentinelExpression(
+                arguments[0], functionName, aggReal, mapping,
+                parameter: parameter, secondArg: arguments[1], thirdArg: arguments[2]);
         }
 
         return null;
