@@ -99,7 +99,6 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
         [ClickHouseQueryableExtensions.FinalMethodInfo] = (v, e) => v.TranslateFinal(e),
         [ClickHouseQueryableExtensions.SampleMethodInfo] = (v, e) => v.TranslateSample(e, hasOffset: false),
         [ClickHouseQueryableExtensions.SampleWithOffsetMethodInfo] = (v, e) => v.TranslateSample(e, hasOffset: true),
-        [ClickHouseQueryableExtensions.WithSettingsMethodInfo] = (v, e) => v.TranslateWithSettings(e),
         [ClickHouseQueryableExtensions.WithSettingMethodInfo] = (v, e) => v.TranslateWithSetting(e),
         // PreWhere is rewritten to Where(PreWhereMarker(...)) by the preprocessor;
         // the SqlTranslator lifts the marker into _options.PreWhereExpression.
@@ -108,7 +107,7 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
         [ClickHouseQueryableExtensions.WithRollupMethodInfo] = (v, e) => v.TranslateGroupByModifier(e, GroupByModifier.Rollup),
         [ClickHouseQueryableExtensions.WithCubeMethodInfo] = (v, e) => v.TranslateGroupByModifier(e, GroupByModifier.Cube),
         [ClickHouseQueryableExtensions.WithTotalsMethodInfo] = (v, e) => v.TranslateGroupByModifier(e, GroupByModifier.Totals),
-        [ClickHouseQueryableExtensions.AsCteMethodInfo] = (v, e) => v.TranslateAsCte(e),
+        [ClickHouseQueryableExtensions.AsSingleCteMethodInfo] = (v, e) => v.TranslateAsCte(e),
         [ClickHouseQueryableExtensions.WithRawFilterMethodInfo] = (v, e) => v.TranslateWithRawFilter(e),
     };
 
@@ -178,28 +177,6 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
                     $"Sample offset must be a constant value. Got expression type: {offsetArg.GetType().Name}");
             }
             _options.SampleOffset = offsetValue;
-        }
-
-        return source;
-    }
-
-    /// <summary>
-    /// Translates the WithSettings() extension method.
-    /// Stores settings in the query options to be applied during SQL generation.
-    /// </summary>
-    private Expression TranslateWithSettings(MethodCallExpression methodCallExpression)
-    {
-        var source = Visit(methodCallExpression.Arguments[0]);
-
-        var settingsArg = methodCallExpression.Arguments[1];
-        if (!TryGetConstantValue<IDictionary<string, object>>(settingsArg, out var settings))
-        {
-            throw new InvalidOperationException("WithSettings argument must be a constant dictionary.");
-        }
-
-        foreach (var kvp in settings)
-        {
-            _options.QuerySettings[kvp.Key] = kvp.Value;
         }
 
         return source;
@@ -378,7 +355,7 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
         var nameArg = methodCallExpression.Arguments[1];
         if (!TryGetConstantValue<string>(nameArg, out var name))
         {
-            throw new InvalidOperationException("AsCte name must be a constant string.");
+            throw new InvalidOperationException("AsSingleCte name must be a constant string.");
         }
 
         if (string.IsNullOrWhiteSpace(name))
@@ -389,7 +366,9 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
         if (_options.PendingCteName != null)
         {
             throw new InvalidOperationException(
-                $"Cannot define multiple CTEs in a single query. Already defined CTE '{_options.PendingCteName}'.");
+                $"AsSingleCte supports a single CTE per query (already defined CTE " +
+                $"'{_options.PendingCteName}'). Multi-CTE support is reserved for a " +
+                $"future release under the name AsCte.");
         }
 
         _options.PendingCteName = name;
@@ -443,7 +422,7 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
 
     /// <summary>
     /// Translates the LimitBy() extension method.
-    /// Extracts limit, optional offset, and key selector columns for LIMIT BY clause.
+    /// Argument order: (source, keySelector, limit) or (source, keySelector, limit, offset).
     /// </summary>
     private Expression TranslateLimitBy(MethodCallExpression methodCallExpression, bool hasOffset)
     {
@@ -455,29 +434,24 @@ public class ClickHouseQueryableMethodTranslatingExpressionVisitor
             throw new InvalidOperationException("LimitBy can only be applied to a query source.");
         }
 
-        int argIndex = 1;
+        // Extract key selector lambda (arg 1)
+        var keySelectorLambda = UnwrapLambda(methodCallExpression.Arguments[1]);
 
-        // Extract offset if present
-        if (hasOffset)
-        {
-            if (!TryGetConstantValue<int>(methodCallExpression.Arguments[argIndex], out var offset))
-            {
-                throw new InvalidOperationException("LimitBy offset must be a constant value.");
-            }
-            _options.LimitByOffset = offset;
-            argIndex++;
-        }
-
-        // Extract limit
-        if (!TryGetConstantValue<int>(methodCallExpression.Arguments[argIndex], out var limit))
+        // Extract limit (arg 2)
+        if (!TryGetConstantValue<int>(methodCallExpression.Arguments[2], out var limit))
         {
             throw new InvalidOperationException("LimitBy limit must be a constant value.");
         }
         _options.LimitByLimit = limit;
-        argIndex++;
 
-        // Extract key selector lambda
-        var keySelectorLambda = UnwrapLambda(methodCallExpression.Arguments[argIndex]);
+        if (hasOffset)
+        {
+            if (!TryGetConstantValue<int>(methodCallExpression.Arguments[3], out var offset))
+            {
+                throw new InvalidOperationException("LimitBy offset must be a constant value.");
+            }
+            _options.LimitByOffset = offset;
+        }
 
         // Translate the key selector to SQL expressions
         var keyExpressions = TranslateLimitByKeySelector(shapedQuery, keySelectorLambda);

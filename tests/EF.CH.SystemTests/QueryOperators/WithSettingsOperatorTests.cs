@@ -7,9 +7,9 @@ using Xunit;
 namespace EF.CH.SystemTests.QueryOperators;
 
 /// <summary>
-/// Coverage of <c>WithSettings(dict)</c> and <c>WithSetting(name, value)</c>. These
-/// thread-local SETTINGS pass through the postprocessor and SQL generator — exactly
-/// the kind of surface that breaks silently if the [ThreadStatic] cleanup regresses.
+/// Coverage of <c>WithSetting(name, value)</c>. These thread-local SETTINGS pass
+/// through the postprocessor and SQL generator — exactly the kind of surface that
+/// breaks silently if the [ThreadStatic] cleanup regresses.
 ///
 /// Each test uses a setting with an <i>observable side effect</i> (a hostile threshold
 /// that makes the query throw) so we know the SETTINGS clause was actually honoured —
@@ -49,15 +49,13 @@ public class WithSettingsOperatorTests
     }
 
     [Fact]
-    public async Task WithSettings_DictionaryWithHostileMaxResultRows_Throws()
+    public async Task WithSetting_ChainedHostileMaxResultRows_Throws()
     {
         await using var ctx = await SeededAsync();
-        var dict = new Dictionary<string, object>
-        {
-            ["max_result_rows"] = 5,
-            ["result_overflow_mode"] = "throw",
-        };
-        var ex = await Record.ExceptionAsync(() => ctx.Rows.WithSettings(dict).ToListAsync());
+        var ex = await Record.ExceptionAsync(() => ctx.Rows
+            .WithSetting("max_result_rows", 5)
+            .WithSetting("result_overflow_mode", "throw")
+            .ToListAsync());
         Assert.NotNull(ex);
     }
 
@@ -72,7 +70,7 @@ public class WithSettingsOperatorTests
     }
 
     [Fact]
-    public async Task WithSettings_NotLeakedToNextQuery()
+    public async Task WithSetting_NotLeakedToNextQuery()
     {
         // First query installs a hostile setting that, if leaked, would break the
         // second. Second query is unscoped — must succeed on the full 50-row count.

@@ -2,6 +2,7 @@ using System.Linq.Expressions;
 using System.Text;
 using EF.CH.External;
 using EF.CH.Metadata;
+using EF.CH.Metadata.Internal;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
@@ -35,97 +36,113 @@ public class ClickHouseQueryTranslationPostprocessor : RelationalQueryTranslatio
         // Set up default-for-null mappings for null comparison rewriting in SQL nullability processor
         ClickHouseSqlNullabilityProcessor.SetDefaultForNullMappings(_queryCompilationContext.Model);
 
-        // Pass EPHEMERAL column markers to the SQL generator so it can rewrite
-        // column references to NULL (ClickHouse rejects SELECTs of ephemeral columns).
-        ClickHouseQuerySqlGenerator.SetEphemeralColumns(
-            CollectEphemeralColumns(_queryCompilationContext.Model));
-
-        // Let base class do standard processing first
-        query = base.Process(query);
-
-        // Get ClickHouse options set during translation phase
-        var options = _queryCompilationContext.QueryCompilationContextOptions();
-
-        // Apply dictionary table function rewrites FIRST
-        query = new ClickHouseDictionaryTableFunctionVisitor(
-            _queryCompilationContext.Model).Visit(query);
-
-        // Apply external table function rewrites (before FINAL/SAMPLE, which don't apply to external tables)
-        query = new ClickHouseExternalTableFunctionVisitor(
-            _queryCompilationContext.Model,
-            _externalConfigResolver).Visit(query);
-
-        // Apply FINAL/SAMPLE modifiers to table expressions (only applies to native ClickHouse tables)
-        if (options.UseFinal || options.SampleFraction.HasValue)
+        // Build a per-query state container. Anything the SQL generator needs
+        // (SETTINGS, PREWHERE, CTEs, LIMIT BY, ARRAY JOIN, ASOF JOIN, ephemeral
+        // columns, ...) flows through this. Attached to the outer SelectExpression
+        // via QueryCompilationContext.Tags + ClickHouseQueryStateRegistry below.
+        var ctx = new ClickHouseQueryGenerationContext
         {
-            query = new ClickHouseTableModifierApplyingVisitor(options).Visit(query);
-        }
+            EphemeralColumns = CollectEphemeralColumns(_queryCompilationContext.Model),
+        };
 
-        // Pass SETTINGS via thread-local to SQL generator
-        // (SETTINGS is query-level, not table-level, so thread-local is appropriate)
-        if (options.QuerySettings.Count > 0)
+        string? tag = null;
+        try
         {
-            ClickHouseQuerySqlGenerator.SetQuerySettings(options.QuerySettings);
-        }
+            // Let base class do standard processing first
+            query = base.Process(query);
 
-        // Pass WITH FILL / INTERPOLATE specs via thread-local to SQL generator
-        if (options.HasWithFill || options.HasInterpolate)
+            // Get ClickHouse options set during translation phase
+            var options = _queryCompilationContext.QueryCompilationContextOptions();
+
+            // Apply dictionary table function rewrites FIRST
+            query = new ClickHouseDictionaryTableFunctionVisitor(
+                _queryCompilationContext.Model).Visit(query);
+
+            // Apply external table function rewrites (before FINAL/SAMPLE, which don't apply to external tables)
+            query = new ClickHouseExternalTableFunctionVisitor(
+                _queryCompilationContext.Model,
+                _externalConfigResolver).Visit(query);
+
+            // Apply FINAL/SAMPLE modifiers to table expressions (only applies to native ClickHouse tables)
+            if (options.UseFinal || options.SampleFraction.HasValue)
+            {
+                query = new ClickHouseTableModifierApplyingVisitor(options, _queryCompilationContext.Model).Visit(query);
+            }
+
+            if (options.QuerySettings.Count > 0)
+            {
+                ctx.QuerySettings = new Dictionary<string, object>(options.QuerySettings);
+            }
+
+            if (options.HasWithFill || options.HasInterpolate)
+            {
+                ctx.WithFillOptions = options;
+            }
+
+            if (options.PreWhereExpression != null)
+            {
+                ctx.PreWhereExpression = options.PreWhereExpression;
+            }
+
+            if (options.HasLimitBy)
+            {
+                ctx.LimitByLimit = options.LimitByLimit!.Value;
+                ctx.LimitByOffset = options.LimitByOffset;
+                ctx.LimitByExpressions = options.LimitByExpressions!;
+            }
+
+            if (options.GroupByModifier != GroupByModifier.None)
+            {
+                ctx.GroupByModifier = options.GroupByModifier;
+            }
+
+            if (options.RawFilterSql != null)
+            {
+                ctx.RawFilter = options.RawFilterSql;
+            }
+
+            // Extract CTE if AsCte() was called — must happen before reading CteDefinitions.
+            if (options.PendingCteName != null)
+            {
+                query = new ClickHouseCteExtractionVisitor(options).Visit(query);
+            }
+
+            if (options.HasCtes)
+            {
+                ctx.CteDefinitions = new List<CteDefinition>(options.CteDefinitions);
+            }
+
+            if (options.HasArrayJoin)
+            {
+                ctx.ArrayJoinSpecs = new List<ArrayJoinSpec>(options.ArrayJoinSpecs);
+            }
+
+            if (options.AsofJoin != null)
+            {
+                ctx.AsofJoin = options.AsofJoin;
+            }
+
+            // Attach the state-pointer tag to QueryCompilationContext.Tags. EF Core's
+            // RelationalShapedQueryCompilingExpressionVisitor.ShaperProcessingExpressionVisitor
+            // copies queryCompilationContext.Tags onto the outer SelectExpression
+            // (via ApplyTags), so the tag rides through to the SQL generator. Adding
+            // directly to outerSelect.Tags would be clobbered by that ApplyTags overwrite.
+            tag = ClickHouseQueryStateRegistry.Register(ctx);
+            _queryCompilationContext.AddTag(tag);
+            tag = null; // ownership passed; clear so the catch below doesn't double-discard.
+
+            return query;
+        }
+        catch
         {
-            ClickHouseQuerySqlGenerator.SetWithFillOptions(options);
+            // Translation threw after we registered. Free the registry entry so it
+            // doesn't leak for the lifetime of the process.
+            if (tag is not null)
+            {
+                ClickHouseQueryStateRegistry.Discard(tag);
+            }
+            throw;
         }
-
-        // Pass PREWHERE expression via thread-local to SQL generator
-        if (options.PreWhereExpression != null)
-        {
-            ClickHouseQuerySqlGenerator.SetPreWhereExpression(options.PreWhereExpression);
-        }
-
-        // Pass LIMIT BY options via thread-local to SQL generator
-        if (options.HasLimitBy)
-        {
-            ClickHouseQuerySqlGenerator.SetLimitBy(
-                options.LimitByLimit!.Value,
-                options.LimitByOffset,
-                options.LimitByExpressions!);
-        }
-
-        // Pass GROUP BY modifier via thread-local to SQL generator
-        if (options.GroupByModifier != GroupByModifier.None)
-        {
-            ClickHouseQuerySqlGenerator.SetGroupByModifier(options.GroupByModifier);
-        }
-
-        // Pass raw filter SQL via thread-local to SQL generator
-        if (options.RawFilterSql != null)
-        {
-            ClickHouseQuerySqlGenerator.SetRawFilter(options.RawFilterSql);
-        }
-
-        // Extract CTE if AsCte() was called
-        if (options.PendingCteName != null)
-        {
-            query = new ClickHouseCteExtractionVisitor(options).Visit(query);
-        }
-
-        // Pass CTE definitions to SQL generator
-        if (options.HasCtes)
-        {
-            ClickHouseQuerySqlGenerator.SetCteDefinitions(options.CteDefinitions);
-        }
-
-        // Pass ARRAY JOIN specs via thread-local to SQL generator
-        if (options.HasArrayJoin)
-        {
-            ClickHouseQuerySqlGenerator.SetArrayJoinSpecs(options.ArrayJoinSpecs);
-        }
-
-        // Pass ASOF JOIN info via thread-local to SQL generator
-        if (options.AsofJoin != null)
-        {
-            ClickHouseQuerySqlGenerator.SetAsofJoin(options.AsofJoin);
-        }
-
-        return query;
     }
 
     /// <summary>
@@ -160,10 +177,14 @@ public class ClickHouseQueryTranslationPostprocessor : RelationalQueryTranslatio
 internal class ClickHouseTableModifierApplyingVisitor : ExpressionVisitor
 {
     private readonly ClickHouseQueryCompilationContextOptions _options;
+    private readonly IModel _model;
 
-    public ClickHouseTableModifierApplyingVisitor(ClickHouseQueryCompilationContextOptions options)
+    public ClickHouseTableModifierApplyingVisitor(
+        ClickHouseQueryCompilationContextOptions options,
+        IModel model)
     {
         _options = options;
+        _model = model;
     }
 
     protected override Expression VisitExtension(Expression node)
@@ -171,6 +192,16 @@ internal class ClickHouseTableModifierApplyingVisitor : ExpressionVisitor
         // Wrap TableExpression with our modifier expression
         if (node is TableExpression tableExpression)
         {
+            if (_options.UseFinal)
+            {
+                ValidateFinalEngine(tableExpression);
+            }
+
+            if (_options.SampleFraction.HasValue)
+            {
+                ValidateSampleableTable(tableExpression);
+            }
+
             return new ClickHouseTableModifierExpression(
                 tableExpression,
                 _options.UseFinal,
@@ -203,6 +234,87 @@ internal class ClickHouseTableModifierApplyingVisitor : ExpressionVisitor
         // For other extension expressions, use the default visitor behavior
         // base.VisitExtension calls node.VisitChildren which works for most expression types
         return base.VisitExtension(node);
+    }
+
+    /// <summary>
+    /// Throws when <c>.Final()</c> is applied to a table whose engine does not
+    /// support FINAL. ClickHouse only honours FINAL on MergeTree-family engines;
+    /// applying it to Memory / Log / Distributed / etc. errors at execution with
+    /// a confusing server-side message. We catch it here so the failure surfaces
+    /// at the offending call site instead.
+    /// </summary>
+    private void ValidateFinalEngine(TableExpression tableExpression)
+    {
+        var entityType = FindEntityTypeByTableName(tableExpression.Name, tableExpression.Schema);
+        if (entityType is null)
+        {
+            return; // Unknown table (e.g. a CTE alias or table function) — let the server decide.
+        }
+
+        var engine = entityType.FindAnnotation(ClickHouseAnnotationNames.Engine)?.Value as string;
+        if (engine is null || ClickHouseEngineNames.IsMergeTreeFamily(engine))
+        {
+            return;
+        }
+
+        throw new InvalidOperationException(
+            $".Final() is only supported on MergeTree-family engines. Entity '{entityType.ClrType.Name}' " +
+            $"is mapped to table '{tableExpression.Name}' using the '{engine}' engine, which does not support FINAL.");
+    }
+
+    private IEntityType? FindEntityTypeByTableName(string tableName, string? schema)
+    {
+        foreach (var entityType in _model.GetEntityTypes())
+        {
+            var entityTableName = entityType.GetTableName();
+            var entitySchema = entityType.GetSchema() ?? _model.GetDefaultSchema();
+            if (entityTableName == tableName && entitySchema == schema)
+            {
+                return entityType;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Throws when <c>.Sample()</c> would wrap a table that has a ClickHouse engine
+    /// declared in the model but no <c>SAMPLE BY</c> expression. The table modifier
+    /// visitor wraps every <see cref="TableExpression"/> with the SAMPLE modifier,
+    /// so a query that joins a sampled table with a lookup would otherwise emit
+    /// SAMPLE on both — and the server returns "Storage X doesn't support sampling"
+    /// if the lookup has no <c>SAMPLE BY</c>. Catching it here surfaces the failure at
+    /// the offending call site (and forces the user to sample-then-join in two steps
+    /// when only one of the tables is sampleable).
+    ///
+    /// We only validate when the entity has an Engine annotation: tests and minimal
+    /// models that don't configure CH-specific metadata fall through to the server
+    /// (which is what they did before this validation was added).
+    /// </summary>
+    private void ValidateSampleableTable(TableExpression tableExpression)
+    {
+        var entityType = FindEntityTypeByTableName(tableExpression.Name, tableExpression.Schema);
+        if (entityType is null)
+        {
+            return; // unknown — let the server decide.
+        }
+
+        var engine = entityType.FindAnnotation(ClickHouseAnnotationNames.Engine)?.Value as string;
+        if (string.IsNullOrEmpty(engine))
+        {
+            return; // no CH-specific metadata at all — let the server decide.
+        }
+
+        var sampleBy = entityType.FindAnnotation(ClickHouseAnnotationNames.SampleBy)?.Value as string;
+        if (!string.IsNullOrWhiteSpace(sampleBy))
+        {
+            return;
+        }
+
+        throw new InvalidOperationException(
+            $".Sample() is only supported on tables that declare a SAMPLE BY clause. " +
+            $"Entity '{entityType.ClrType.Name}' is mapped to table '{tableExpression.Name}' " +
+            $"and has no HasSampleBy(...) configured. If you intended to sample one side of a " +
+            $"join, materialise the sampled query first and then join the result.");
     }
 }
 

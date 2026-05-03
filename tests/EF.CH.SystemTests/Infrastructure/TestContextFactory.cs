@@ -14,6 +14,17 @@ public static class TestContextFactory
         return (TContext)Activator.CreateInstance(typeof(TContext), options)!;
     }
 
+    public static TContext Create<TContext>(
+        string connectionString,
+        Action<ClickHouseDbContextOptionsBuilder> configure)
+        where TContext : DbContext
+    {
+        var options = new DbContextOptionsBuilder<TContext>()
+            .UseClickHouse(connectionString, configure)
+            .Options;
+        return (TContext)Activator.CreateInstance(typeof(TContext), options)!;
+    }
+
     public static TContext CreateWithCluster<TContext>(string connectionString, string clusterName)
         where TContext : DbContext
     {

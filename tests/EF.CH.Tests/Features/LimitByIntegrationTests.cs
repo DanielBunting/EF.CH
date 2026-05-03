@@ -59,7 +59,7 @@ public class LimitByIntegrationTests : IAsyncLifetime
         // The results come back already ordered by the original OrderByDescending(Score)
         var results = await context.Events
             .OrderByDescending(e => e.Score)
-            .LimitBy(2, e => e.Category)
+            .LimitBy(e => e.Category, 2)
             .ToListAsync();
 
         // Expect: A(100,90), B(95,85), C(50,40) = 6 total
@@ -111,7 +111,7 @@ public class LimitByIntegrationTests : IAsyncLifetime
         // Sort in-memory after fetching.
         var results = (await context.Events
             .OrderByDescending(e => e.Score)
-            .LimitBy(2, e => new { e.Category, e.Region })
+            .LimitBy(e => new { e.Category, e.Region }, 2)
             .ToListAsync())
             .OrderBy(e => e.Category)
             .ThenBy(e => e.Region)
@@ -138,6 +138,12 @@ public class LimitByIntegrationTests : IAsyncLifetime
         Assert.Equal(2, bUs.Count);
     }
 
+    /// <summary>
+    /// Per-group offset via the <c>LimitBy(key, limit, offset)</c> overload —
+    /// emits ClickHouse's <c>LIMIT offset, limit BY key</c>. Each group skips
+    /// its own first <paramref name="offset"/> rows, then takes the next
+    /// <paramref name="limit"/>.
+    /// </summary>
     [Fact]
     public async Task LimitBy_WithOffset_SkipsRowsPerGroup()
     {
@@ -146,7 +152,6 @@ public class LimitByIntegrationTests : IAsyncLifetime
         await context.Database.EnsureDeletedAsync();
         await context.Database.EnsureCreatedAsync();
 
-        // Insert test data
         var now = DateTime.UtcNow;
         context.Events.AddRange(
             // Category A: scores 100, 90, 80, 70, 60
@@ -162,37 +167,39 @@ public class LimitByIntegrationTests : IAsyncLifetime
         );
         await context.SaveChangesAsync();
 
-        // Skip 1, take 2 per category (get 2nd and 3rd highest)
-        // Note: Additional ordering after LimitBy is not supported due to EF Core's NavigationExpandingExpressionVisitor.
-        // Sort in-memory after fetching.
+        // Skip 1, take 2 per category (get 2nd and 3rd highest within each).
         var results = (await context.Events
             .OrderByDescending(e => e.Score)
-            .LimitBy(1, 2, e => e.Category)
+            .LimitBy(e => e.Category, limit: 2, offset: 1)
             .ToListAsync())
             .OrderBy(e => e.Category)
             .ThenByDescending(e => e.Score)
             .ToList();
 
-        // Expect: A(90,80), B(85,75) = 4 total (skipped 100 and 95)
+        // Expect: A(90,80), B(85,75) = 4 total (each group skipped its own top-1).
         Assert.Equal(4, results.Count);
 
-        // Verify Category A has 2nd and 3rd highest
         var categoryA = results.Where(e => e.Category == "A").ToList();
         Assert.Equal(2, categoryA.Count);
         Assert.Contains(categoryA, e => e.Score == 90);
         Assert.Contains(categoryA, e => e.Score == 80);
-        Assert.DoesNotContain(categoryA, e => e.Score == 100); // Skipped
+        Assert.DoesNotContain(categoryA, e => e.Score == 100);
 
-        // Verify Category B has 2nd and 3rd highest
         var categoryB = results.Where(e => e.Category == "B").ToList();
         Assert.Equal(2, categoryB.Count);
         Assert.Contains(categoryB, e => e.Score == 85);
         Assert.Contains(categoryB, e => e.Score == 75);
-        Assert.DoesNotContain(categoryB, e => e.Score == 95); // Skipped
+        Assert.DoesNotContain(categoryB, e => e.Score == 95);
     }
 
-    [Fact(Skip = "EF Core's NavigationExpandingExpressionVisitor doesn't recognize custom LimitBy method, " +
-                   "so Take() after LimitBy() fails. Use LINQ-to-objects Take after ToList().")]
+    /// <summary>
+    /// Execution-path counterpart of
+    /// <c>LimitByTests.LimitBy_WithGlobalTake_GeneratesBothLimitClauses</c>:
+    /// the per-group <c>LIMIT n BY key</c> caps each group, then the global
+    /// <c>LIMIT m</c> truncates the combined result. Verifies that against a
+    /// live ClickHouse instance.
+    /// </summary>
+    [Fact]
     public async Task LimitBy_WithGlobalTake_LimitsTotalResults()
     {
         await using var context = CreateContext();
@@ -200,7 +207,6 @@ public class LimitByIntegrationTests : IAsyncLifetime
         await context.Database.EnsureDeletedAsync();
         await context.Database.EnsureCreatedAsync();
 
-        // Insert many categories
         var now = DateTime.UtcNow;
         for (int cat = 0; cat < 10; cat++)
         {
@@ -212,21 +218,25 @@ public class LimitByIntegrationTests : IAsyncLifetime
                     Category = $"Cat{cat}",
                     Region = "US",
                     Score = score,
-                    CreatedAt = now
+                    CreatedAt = now,
                 });
             }
         }
         await context.SaveChangesAsync();
 
-        // Get top 2 per category, but limit total to 6
         var results = await context.Events
             .OrderByDescending(e => e.Score)
-            .LimitBy(2, e => e.Category)
+            .LimitBy(e => e.Category, 2)
             .Take(6)
             .ToListAsync();
 
-        // Should have at most 6 results (global limit)
-        Assert.True(results.Count <= 6, $"Expected at most 6 results, got {results.Count}");
+        Assert.True(results.Count <= 6,
+            $"expected ≤ 6 rows after global Take(6); got {results.Count}");
+        // Per-group cap of 2 still holds inside the global cap.
+        var perGroup = results.GroupBy(e => e.Category)
+            .ToDictionary(g => g.Key, g => g.Count());
+        Assert.All(perGroup.Values, c => Assert.True(c <= 2,
+            $"expected ≤ 2 per category after LimitBy(key, 2); got {c}"));
     }
 
     [Fact]
@@ -253,7 +263,7 @@ public class LimitByIntegrationTests : IAsyncLifetime
         var results = await context.Events
             .Where(e => e.Score > 50)
             .OrderByDescending(e => e.Score)
-            .LimitBy(2, e => e.Category)
+            .LimitBy(e => e.Category, 2)
             .ToListAsync();
 
         // All results should have Score > 50

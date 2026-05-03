@@ -7,7 +7,7 @@ using Xunit;
 namespace EF.CH.SystemTests.Materialization.MergeState;
 
 /// <summary>
-/// Working baseline using <c>AsMaterializedViewRaw</c> with hand-written
+/// Working baseline using <c>MaterializedView&lt;T&gt;().FromTable(...).DefinedAsRaw(...)</c> with hand-written
 /// <c>countMergeState</c> / <c>sumMergeState</c> / <c>uniqMergeState</c>.
 /// Like the LINQ MergeState tests, Hourly is a plain AMT target (no MV)
 /// populated via direct INSERT-SELECT — that direct write fires Daily's
@@ -77,9 +77,9 @@ public class MvMergeStateRawSqlBaselineTests
                 e.Property(x => x.C).HasAggregateFunction("count", typeof(ulong));
                 e.Property(x => x.S).HasAggregateFunction("sum", typeof(long));
                 e.Property(x => x.U).HasAggregateFunction("uniq", typeof(long));
-                e.AsMaterializedViewRaw(
-                    sourceTable: "MsRawHourly",
-                    selectSql: """
+
+            });
+            mb.MaterializedView<DailyRow>().FromTable("MsRawHourly").DefinedAsRaw("""
                     SELECT Bucket AS "Bucket",
                            countMergeState(C) AS "C",
                            sumMergeState(S)   AS "S",
@@ -87,7 +87,6 @@ public class MvMergeStateRawSqlBaselineTests
                     FROM "MsRawHourly"
                     GROUP BY Bucket
                     """);
-            });
         }
     }
 

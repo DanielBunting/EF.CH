@@ -35,4 +35,19 @@ public static class ClickHouseStringSplitDbFunctionsExtensions
     /// </summary>
     public static string ArrayStringConcat(this DbFunctions _, string[] arr, string separator)
         => throw new InvalidOperationException("This method is for LINQ translation only.");
+
+    /// <summary>
+    /// Translates to ClickHouse <c>splitByRegexp(pattern, s)</c>.
+    /// Splits a string by a regular-expression separator.
+    /// </summary>
+    public static string[] SplitByRegexp(this DbFunctions _, string pattern, string s)
+        => throw new InvalidOperationException("This method is for LINQ translation only.");
+
+    /// <summary>
+    /// Translates to ClickHouse <c>alphaTokens(s)</c>.
+    /// Returns the maximal substrings of consecutive alphabetic characters in
+    /// <paramref name="s"/>.
+    /// </summary>
+    public static string[] AlphaTokens(this DbFunctions _, string s)
+        => throw new InvalidOperationException("This method is for LINQ translation only.");
 }

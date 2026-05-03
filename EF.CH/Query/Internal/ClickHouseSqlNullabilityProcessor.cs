@@ -182,12 +182,17 @@ public class ClickHouseSqlNullabilityProcessor : SqlNullabilityProcessor
             var visitedSecond = sentinel.SecondArg is null
                 ? null
                 : Visit(sentinel.SecondArg, allowOptimizedExpansion: false, out _);
+            var visitedThird = sentinel.ThirdArg is null
+                ? null
+                : Visit(sentinel.ThirdArg, allowOptimizedExpansion: false, out _);
             nullable = innerNullable;
-            return visitedState == sentinel.StateColumn && visitedSecond == sentinel.SecondArg
+            return visitedState == sentinel.StateColumn
+                    && visitedSecond == sentinel.SecondArg
+                    && visitedThird == sentinel.ThirdArg
                 ? sentinel
                 : new ClickHouseMergeSentinelExpression(
                     visitedState, sentinel.FunctionName, sentinel.Type, sentinel.TypeMapping,
-                    sentinel.MergeParameter, sentinel.Parameters, visitedSecond);
+                    sentinel.MergeParameter, sentinel.Parameters, visitedSecond, visitedThird);
         }
 
         return base.VisitCustomSqlExpression(sqlExpression, allowOptimizedExpansion, out nullable);

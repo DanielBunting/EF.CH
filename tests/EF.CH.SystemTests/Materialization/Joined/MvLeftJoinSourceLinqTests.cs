@@ -87,12 +87,13 @@ public class MvLeftJoinSourceLinqTests
             {
                 e.ToTable("LinqLeftJoinQueryTarget"); e.HasNoKey();
                 e.UseMergeTree(x => x.OrderId);
-                e.AsMaterializedView<OrderRegion, Order>(orders =>
+
+            });
+            mb.MaterializedView<OrderRegion>().From<Order>().DefinedAs(orders =>
                     from o in orders
                     join c in _customers on o.CustomerId equals c.Id into cs
                     from c in cs.DefaultIfEmpty()
                     select new OrderRegion { OrderId = o.Id, Region = c == null ? "" : c.Region, Amount = o.Amount });
-            });
         }
     }
 
@@ -109,7 +110,9 @@ public class MvLeftJoinSourceLinqTests
             {
                 e.ToTable("LinqLeftJoinFluentTarget"); e.HasNoKey();
                 e.UseMergeTree(x => x.OrderId);
-                e.AsMaterializedView<OrderRegion, Order>(orders => orders
+
+            });
+            mb.MaterializedView<OrderRegion>().From<Order>().DefinedAs(orders => orders
                     .GroupJoin(_customers,
                         o => o.CustomerId,
                         c => c.Id,
@@ -122,7 +125,6 @@ public class MvLeftJoinSourceLinqTests
                             Region = c == null ? "" : c.Region,
                             Amount = t.o.Amount,
                         }));
-            });
         }
     }
 }

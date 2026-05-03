@@ -55,7 +55,7 @@ protected override void OnModelCreating(ModelBuilder modelBuilder)
 {
     modelBuilder.Entity<Order>(entity =>
     {
-        entity.UseReplicatedMergeTree(x => new { x.OrderDate, x.Id })
+        entity.UseMergeTree(x => new { x.OrderDate, x.Id })
               .WithCluster("my_cluster")
               .WithReplication("/clickhouse/tables/{database}/{table}");
     });
@@ -238,19 +238,21 @@ ch.AddTableGroup("Local", group => group
 // Assign entities to groups
 modelBuilder.Entity<Order>(entity =>
 {
-    entity.UseReplicatedMergeTree(x => x.Id)
+    entity.UseMergeTree(x => x.Id)
+          .WithReplication("/clickhouse/{database}/{table}")
           .WithTableGroup("Core");  // Inherits geo_cluster settings
 });
 
 modelBuilder.Entity<ClickEvent>(entity =>
 {
-    entity.UseReplicatedMergeTree(x => x.Timestamp)
+    entity.UseMergeTree(x => x.Timestamp)
+          .WithReplication("/clickhouse/{database}/{table}")
           .WithTableGroup("Analytics");  // Inherits analytics_cluster settings
 });
 
 modelBuilder.Entity<TempImport>(entity =>
 {
-    entity.UseMergeTree(x => x.Id)  // Non-replicated engine
+    entity.UseMergeTree(x => x.Id)  // No WithReplication — non-replicated engine
           .WithTableGroup("Local");  // Local-only, no cluster DDL
 });
 ```
@@ -273,20 +275,21 @@ Assign an entity to a specific cluster for DDL operations:
 
 ```csharp
 // Explicit cluster assignment (overrides table group)
-entity.UseReplicatedMergeTree(x => x.Id)
+entity.UseMergeTree(x => x.Id)
+      .WithReplication("/clickhouse/{database}/{table}")
       .WithCluster("special_cluster");
 
 // Or using the standalone method
-entity.UseReplicatedMergeTree(x => x.Id);
+entity.UseMergeTree(x => x.Id);
 entity.UseCluster("special_cluster");
 ```
 
-### HasReplication
+### WithReplication
 
-Configure the ZooKeeper/Keeper path for a replicated table:
+Mark the engine as replicated and configure the ZooKeeper/Keeper path. Available on every MergeTree-family builder.
 
 ```csharp
-entity.UseReplicatedMergeTree(x => x.Id)
+entity.UseMergeTree(x => x.Id)
       .WithReplication(
           zooKeeperPath: "/clickhouse/tables/{database}/{table}",
           replicaName: "{replica}");
@@ -330,7 +333,7 @@ ORDER BY ("Date", "Id")
 ### Cluster with Replicated Engine
 
 ```csharp
-entity.UseReplicatedMergeTree(x => new { x.Date, x.Id })
+entity.UseMergeTree(x => new { x.Date, x.Id })
       .WithCluster("my_cluster")
       .WithReplication("/clickhouse/tables/{database}/{table}");
 ```
@@ -347,7 +350,8 @@ ORDER BY ("Date", "Id")
 ### ReplicatedReplacingMergeTree with Version
 
 ```csharp
-entity.UseReplicatedReplacingMergeTree(x => x.Version, x => new { x.Date, x.Id })
+entity.UseReplacingMergeTree(x => new { x.Date, x.Id })
+      .WithVersion(x => x.Version)
       .WithCluster("my_cluster")
       .WithReplication("/clickhouse/tables/{database}/{table}");
 ```

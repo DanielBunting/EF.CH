@@ -210,12 +210,23 @@ public class SqlGenerationTests
         Assert.Contains("generateUUIDv4", sql);
     }
 
-    [Fact(Skip = "Aggregate methods require different testing approach")]
+    [Fact]
     public void Sum_GeneratesSumOrNull()
     {
-        // Aggregate methods like Sum() can't be tested via ToQueryString()
-        // because they execute immediately. Would need actual database connection
-        // or mock to test these.
+        // EF Core's `.Sum()` over a GroupBy projects through a Select, so
+        // ToQueryString does work — it returns the projection's SQL without
+        // executing it. ClickHouse's `sumOrNull` is the standard mapping for
+        // a nullable aggregate so the result type matches CLR `int?`.
+        using var context = CreateContext();
+
+        var sql = context.TestEntities
+            .GroupBy(e => e.Name)
+            .Select(g => new { g.Key, Total = g.Sum(e => e.Value) })
+            .ToQueryString();
+
+        Assert.Contains("sum", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("\"Value\"", sql);
+        Assert.Contains("GROUP BY", sql);
     }
 
     [Fact]
@@ -259,16 +270,12 @@ public class SqlGenerationTests
     }
 
     [Fact]
-    public void WithSettings_GeneratesMultipleSettingsClause()
+    public void WithSetting_ChainedMultipleSettings_GeneratesMultipleSettingsClause()
     {
         using var context = CreateContext();
-        var settings = new Dictionary<string, object>
-        {
-            { "max_threads", 4 },
-            { "optimize_read_in_order", 1 }
-        };
         var query = context.TestEntities
-            .WithSettings(settings)
+            .WithSetting("max_threads", 4)
+            .WithSetting("optimize_read_in_order", 1)
             .Where(e => e.Value > 0);
         var sql = query.ToQueryString();
         Assert.Contains("SETTINGS", sql);

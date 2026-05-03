@@ -24,7 +24,7 @@ public class CteTests : IAsyncLifetime
     private string GetConnectionString() => _container.GetConnectionString();
 
     [Fact]
-    public async Task AsCte_BasicFilter()
+    public async Task AsSingleCte_BasicFilter()
     {
         await using var context = CreateContext();
         await SetupTable(context);
@@ -33,7 +33,7 @@ public class CteTests : IAsyncLifetime
         // Filter + AsCte should wrap the source query as a CTE
         var result = await context.CteEvents
             .Where(e => e.Category == "electronics")
-            .AsCte("filtered")
+            .AsSingleCte("filtered")
             .ToListAsync();
 
         Assert.Equal(3, result.Count);
@@ -41,7 +41,7 @@ public class CteTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task AsCte_WithOrderBy()
+    public async Task AsSingleCte_WithOrderBy()
     {
         await using var context = CreateContext();
         await SetupTable(context);
@@ -49,7 +49,7 @@ public class CteTests : IAsyncLifetime
 
         var result = await context.CteEvents
             .Where(e => e.Amount > 50)
-            .AsCte("expensive")
+            .AsSingleCte("expensive")
             .OrderBy(e => e.Name)
             .ToListAsync();
 
@@ -62,7 +62,7 @@ public class CteTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task AsCte_IntegrationTest()
+    public async Task AsSingleCte_IntegrationTest()
     {
         await using var context = CreateContext();
         await SetupTable(context);
@@ -71,7 +71,7 @@ public class CteTests : IAsyncLifetime
         // Use CTE with aggregation-like operations (Take/Count)
         var result = await context.CteEvents
             .Where(e => e.EventDate > DateTime.UtcNow.AddDays(-30))
-            .AsCte("recent")
+            .AsSingleCte("recent")
             .OrderByDescending(e => e.Amount)
             .Take(5)
             .ToListAsync();
@@ -81,21 +81,38 @@ public class CteTests : IAsyncLifetime
     }
 
     [Fact]
-    public void AsCte_EmptyName_Throws()
+    public void AsSingleCte_EmptyName_Throws()
     {
         using var context = CreateContext();
 
         Assert.Throws<ArgumentException>(() =>
-            context.CteEvents.AsCte(""));
+            context.CteEvents.AsSingleCte(""));
     }
 
     [Fact]
-    public void AsCte_NullName_Throws()
+    public void AsSingleCte_NullName_Throws()
     {
         using var context = CreateContext();
 
         Assert.ThrowsAny<ArgumentException>(() =>
-            context.CteEvents.AsCte(null!));
+            context.CteEvents.AsSingleCte(null!));
+    }
+
+    [Fact]
+    public async Task AsSingleCte_MultipleCallsThrows()
+    {
+        await using var context = CreateContext();
+        await SetupTable(context);
+
+        // Chaining AsSingleCte twice must fail fast — multi-CTE is reserved for
+        // a future release under the AsCte name.
+        var query = context.CteEvents
+            .AsSingleCte("first")
+            .AsSingleCte("second");
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await query.ToListAsync());
+        Assert.Contains("AsSingleCte", ex.Message);
     }
 
     private async Task SetupTable(CteTestContext context)

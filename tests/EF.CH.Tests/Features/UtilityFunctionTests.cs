@@ -931,6 +931,19 @@ public class UtilityFunctionTests
         Assert.Contains("generateSerialID(", sql);
     }
 
+    [Fact]
+    public void GetMacro_GeneratesCorrectSql()
+    {
+        using var context = CreateContext();
+
+        var query = context.Entities
+            .Select(e => new { e.Id, Shard = EfClass.Functions.GetMacro("shard") });
+
+        var sql = query.ToQueryString();
+
+        Assert.Contains("getMacro(", sql);
+    }
+
     #endregion
 
     #region Test Infrastructure

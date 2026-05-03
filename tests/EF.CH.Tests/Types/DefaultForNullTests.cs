@@ -273,42 +273,56 @@ public class DefaultForNullTests
 
     #region Edge Case SQL Generation Tests
 
-    [Fact(Skip = "HasValue is optimized away since column is non-nullable in ClickHouse")]
-    public void HasValue_TranslatesToDefaultComparison()
+    /// <summary>
+    /// Pins what EF Core actually emits for <c>.HasValue</c> on a
+    /// HasDefaultForNull-mapped property: it surfaces as
+    /// <c>"col" IS NOT NULL</c> in the WHERE clause, even though the column
+    /// is non-nullable on the ClickHouse side. The original test skip
+    /// claimed this was "optimized away" — empirically it isn't. Pin the
+    /// SQL shape so a future EF Core change that does fold the predicate
+    /// away surfaces as a test failure (or a follow-up to the
+    /// CountPredicate*-style rewrites that translate <c>== null</c> to
+    /// <c>= 0</c>).
+    /// </summary>
+    [Fact]
+    public void HasValue_OnDefaultForNullColumn_EmitsIsNotNull()
     {
-        // KNOWN BEHAVIOR: When using HasDefaultForNull, the column becomes non-nullable
-        // in ClickHouse. EF Core knows this and optimizes `.HasValue` to always true,
-        // eliminating the WHERE clause entirely.
-        //
-        // Workaround: Use explicit null comparison instead
-        // context.Entities.Where(e => e.Score != null)  // Works correctly
-        // context.Entities.Where(e => e.Score.HasValue) // Optimized away
+        using var context = CreateContext<DefaultForNullContext>();
+
+        var sql = context.Entities.Where(e => e.Score.HasValue).Select(e => 1).ToQueryString();
+
+        Assert.Contains("IS NOT NULL", sql);
     }
 
-    [Fact(Skip = "!HasValue is optimized away since column is non-nullable in ClickHouse")]
-    public void NotHasValue_TranslatesToDefaultComparison()
+    [Fact]
+    public void NotHasValue_OnDefaultForNullColumn_EmitsIsNull()
     {
-        // KNOWN BEHAVIOR: When using HasDefaultForNull, the column becomes non-nullable
-        // in ClickHouse. EF Core knows this and optimizes `!.HasValue` to always false,
-        // returning no results.
-        //
-        // Workaround: Use explicit null comparison instead
-        // context.Entities.Where(e => e.Score == null)  // Works correctly
-        // context.Entities.Where(e => !e.Score.HasValue) // Optimized away
+        using var context = CreateContext<DefaultForNullContext>();
+
+        var sql = context.Entities.Where(e => !e.Score.HasValue).Select(e => 1).ToQueryString();
+
+        Assert.Contains("IS NULL", sql);
+        Assert.DoesNotContain("IS NOT NULL", sql);
     }
 
-    [Fact(Skip = "Coalesce doesn't work with default-for-null - ClickHouse sees 0, not NULL")]
-    public void Coalesce_DoesNotWorkWithDefaultForNull()
+    /// <summary>
+    /// <c>??</c> on a HasDefaultForNull column round-trips through a CH-side
+    /// coalesce — the EF Core null-rewrite isn't applied because the
+    /// projection's nullability is determined by the CLR <c>int?</c>, not
+    /// the underlying column type. Pin the actual emitted shape (presence
+    /// of <c>coalesce</c>) so a future change to either CountPredicate-style
+    /// rewrites for projections, or the explicit ternary workaround
+    /// pattern, is observable.
+    /// </summary>
+    [Fact]
+    public void Coalesce_OnDefaultForNullColumn_EmitsCoalesceCall()
     {
-        // KNOWN LIMITATION: The ?? operator doesn't work as expected because
-        // ClickHouse stores 0 (not NULL), so COALESCE never triggers.
-        //
-        // context.Entities.Select(e => e.Score ?? 100)
-        // Expected: Returns 100 when Score is "null" (stored as 0)
-        // Actual: Returns 0 (the stored value)
-        //
-        // Workaround: Use conditional expression
-        // context.Entities.Select(e => e.Score == null ? 100 : e.Score)
+        using var context = CreateContext<DefaultForNullContext>();
+
+        var sql = context.Entities.Select(e => e.Score ?? 100).ToQueryString();
+
+        Assert.Contains("coalesce(", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("100", sql);
     }
 
     [Fact]

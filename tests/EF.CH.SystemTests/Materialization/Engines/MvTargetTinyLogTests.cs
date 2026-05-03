@@ -51,9 +51,10 @@ public class MvTargetTinyLogTests
                 {
                     e.ToTable("MtToTinyLogTarget"); e.HasNoKey();
                     e.UseTinyLogEngine();
-                    e.AsMaterializedView<Target, Row>(rows => rows
-                        .Select(r => new Target { Level = r.Level, Message = r.Message }));
+
                 });
+                mb.MaterializedView<Target>().From<Row>().DefinedAs(rows => rows
+                        .Select(r => new Target { Level = r.Level, Message = r.Message }));
             }
         }
         public class Row { public long Id { get; set; } public string Level { get; set; } = ""; public string Message { get; set; } = ""; }

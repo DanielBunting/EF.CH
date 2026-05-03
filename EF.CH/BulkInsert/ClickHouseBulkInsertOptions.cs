@@ -1,3 +1,5 @@
+using EF.CH.Infrastructure;
+
 namespace EF.CH.BulkInsert;
 
 /// <summary>
@@ -5,6 +7,9 @@ namespace EF.CH.BulkInsert;
 /// </summary>
 public class ClickHouseBulkInsertOptions
 {
+    private bool _useAsyncInsert;
+    private bool _waitForAsyncInsert;
+
     /// <summary>
     /// Gets or sets the number of entities to insert in each batch.
     /// Default is 10,000.
@@ -18,18 +23,16 @@ public class ClickHouseBulkInsertOptions
     public ClickHouseBulkInsertFormat Format { get; set; } = ClickHouseBulkInsertFormat.Values;
 
     /// <summary>
-    /// Gets or sets whether to use ClickHouse async_insert mode.
-    /// When enabled, inserts are buffered and inserted asynchronously for better throughput.
-    /// Default is false.
+    /// Gets whether ClickHouse async_insert mode is enabled. Toggle via
+    /// <see cref="WithAsyncInsert"/> / <see cref="WaitForCompletion"/>.
     /// </summary>
-    public bool UseAsyncInsert { get; set; }
+    internal bool UseAsyncInsert => _useAsyncInsert;
 
     /// <summary>
-    /// Gets or sets whether to wait for async insert to complete.
-    /// Only applicable when <see cref="UseAsyncInsert"/> is true.
-    /// Default is false.
+    /// Gets whether the client waits for the async insert to flush. Toggle via
+    /// <see cref="WaitForCompletion"/>. Always implies async insert.
     /// </summary>
-    public bool WaitForAsyncInsert { get; set; }
+    internal bool WaitForAsyncInsert => _waitForAsyncInsert;
 
     /// <summary>
     /// Gets or sets the maximum degree of parallelism for batch insertion.
@@ -61,6 +64,17 @@ public class ClickHouseBulkInsertOptions
     public Action<long>? OnBatchCompleted { get; set; }
 
     /// <summary>
+    /// Optional sink for exceptions thrown by <see cref="OnBatchCompleted"/>.
+    /// Defaults to <c>null</c> — the bulk inserter swallows callback exceptions
+    /// to avoid aborting the operation (a buggy user callback shouldn't kill an
+    /// in-flight bulk insert), but with no <see cref="OnCallbackException"/>
+    /// sink the exception is silently lost. Provide a sink (e.g. a logger
+    /// adapter) to surface them. The sink is itself called inside a
+    /// try/catch — its own exceptions are also swallowed.
+    /// </summary>
+    public Action<Exception>? OnCallbackException { get; set; }
+
+    /// <summary>
     /// Sets the batch size.
     /// </summary>
     public ClickHouseBulkInsertOptions WithBatchSize(int batchSize)
@@ -79,13 +93,26 @@ public class ClickHouseBulkInsertOptions
     }
 
     /// <summary>
-    /// Enables async insert mode.
+    /// Enables ClickHouse async insert mode (<c>async_insert = 1</c>). The server
+    /// buffers and flushes inserts asynchronously for higher throughput. Pair with
+    /// <see cref="WaitForCompletion"/> if you need the call to block until the
+    /// buffer is flushed (<c>wait_for_async_insert = 1</c>).
     /// </summary>
-    /// <param name="wait">Whether to wait for async insert to complete.</param>
-    public ClickHouseBulkInsertOptions WithAsyncInsert(bool wait = false)
+    public ClickHouseBulkInsertOptions WithAsyncInsert()
     {
-        UseAsyncInsert = true;
-        WaitForAsyncInsert = wait;
+        _useAsyncInsert = true;
+        return this;
+    }
+
+    /// <summary>
+    /// Waits for the async insert buffer to flush before returning
+    /// (<c>wait_for_async_insert = 1</c>). Implies <see cref="WithAsyncInsert"/> —
+    /// calling this alone is sufficient to enable both flags.
+    /// </summary>
+    public ClickHouseBulkInsertOptions WaitForCompletion()
+    {
+        _useAsyncInsert = true;
+        _waitForAsyncInsert = true;
         return this;
     }
 
@@ -113,6 +140,21 @@ public class ClickHouseBulkInsertOptions
     public ClickHouseBulkInsertOptions WithSetting(string name, object value)
     {
         Settings[name] = value;
+        return this;
+    }
+
+    /// <summary>
+    /// Adds a strongly-typed ClickHouse setting to the INSERT statement.
+    /// </summary>
+    /// <remarks>
+    /// Forwards into the same dictionary used by
+    /// <see cref="WithSetting(string, object)"/>, so the rendered SETTINGS
+    /// clause is identical to the raw form.
+    /// </remarks>
+    public ClickHouseBulkInsertOptions WithSetting<TValue>(Setting<TValue> setting, TValue value)
+    {
+        ArgumentNullException.ThrowIfNull(setting);
+        Settings[setting.Name] = value!;
         return this;
     }
 
@@ -153,10 +195,10 @@ public class ClickHouseBulkInsertOptions
     {
         var result = new Dictionary<string, object>(Settings);
 
-        if (UseAsyncInsert)
+        if (_useAsyncInsert)
         {
             result["async_insert"] = 1;
-            if (WaitForAsyncInsert)
+            if (_waitForAsyncInsert)
             {
                 result["wait_for_async_insert"] = 1;
             }

@@ -1,6 +1,8 @@
 using System.Linq.Expressions;
+using System.Runtime.CompilerServices;
 using EF.CH.Metadata;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata;
 
 namespace EF.CH.Dictionaries;
 
@@ -17,7 +19,12 @@ namespace EF.CH.Dictionaries;
 public sealed class ClickHouseDictionary<TDictionary, TKey>
     where TDictionary : class
 {
-    private static DictionaryMetadata<TDictionary, TKey>? _cachedMetadata;
+    // Per-model metadata cache. Was previously a single static — that collided
+    // across DbContexts that shared TDictionary but mapped it to different
+    // dictionary names (multi-tenant / versioned-dictionary scenarios), with
+    // the second context silently reusing the first context's metadata.
+    // ConditionalWeakTable lets the entry be collected when the model is.
+    private static readonly ConditionalWeakTable<IModel, DictionaryMetadata<TDictionary, TKey>> _metadataByModel = new();
 
     private readonly DbContext _context;
     private readonly DictionaryMetadata<TDictionary, TKey> _metadata;
@@ -291,13 +298,15 @@ public sealed class ClickHouseDictionary<TDictionary, TKey>
 
     private static DictionaryMetadata<TDictionary, TKey> ResolveMetadataFromModel(DbContext context)
     {
-        // Fast path: return cached metadata if available (volatile read)
-        var cached = Volatile.Read(ref _cachedMetadata);
-        if (cached != null)
-            return cached;
+        var model = context.Model;
 
-        // Slow path: resolve from model (may run concurrently on first access)
-        var entityType = context.Model.FindEntityType(typeof(TDictionary))
+        // Cache per-model — see _metadataByModel comment above.
+        return _metadataByModel.GetValue(model, ResolveFromModelCore);
+    }
+
+    private static DictionaryMetadata<TDictionary, TKey> ResolveFromModelCore(IModel model)
+    {
+        var entityType = model.FindEntityType(typeof(TDictionary))
             ?? throw new InvalidOperationException(
                 $"Entity type '{typeof(TDictionary).Name}' is not configured in OnModelCreating.");
 
@@ -313,15 +322,11 @@ public sealed class ClickHouseDictionary<TDictionary, TKey>
                 $"Dictionary '{typeof(TDictionary).Name}' key not configured. " +
                 "Use HasKey() or HasCompositeKey() in AsDictionary<>() configuration.");
 
-        var newMetadata = new DictionaryMetadata<TDictionary, TKey>(
+        return new DictionaryMetadata<TDictionary, TKey>(
             name: name,
             keyType: typeof(TKey),
             entityType: typeof(TDictionary),
             keyPropertyName: keyColumns[0]);
-
-        // Thread-safe assignment: first writer wins, but all threads get valid metadata
-        Interlocked.CompareExchange(ref _cachedMetadata, newMetadata, null);
-        return _cachedMetadata!;
     }
 
     private static string ConvertToSnakeCase(string name)

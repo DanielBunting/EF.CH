@@ -53,7 +53,7 @@ public class ReplicatedMergeTreeReplicationTests
             mb.Entity<Message>(e =>
             {
                 e.ToTable("Messages"); e.HasKey(x => x.Id);
-                e.UseReplicatedMergeTree(x => x.Id)
+                e.UseMergeTree(x => x.Id)
                     .WithReplication("/clickhouse/tables/{uuid}");
             });
     }

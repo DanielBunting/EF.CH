@@ -10,106 +10,6 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 namespace EF.CH.Extensions;
 
 /// <summary>
-/// A builder that provides fluent chaining for configuring replicated engine options.
-/// </summary>
-/// <remarks>
-/// <para>
-/// This builder is returned from replicated engine methods (e.g., <c>UseReplicatedMergeTree</c>)
-/// and allows chaining cluster and replication configuration in a fluent manner.
-/// </para>
-/// <para>
-/// The builder supports implicit conversion back to <see cref="EntityTypeBuilder{TEntity}"/>,
-/// ensuring backward compatibility with existing code that chains other entity configuration methods.
-/// </para>
-/// </remarks>
-/// <typeparam name="TEntity">The entity type being configured.</typeparam>
-/// <example>
-/// <code>
-/// // Fluent chain pattern
-/// entity.UseReplicatedMergeTree(x => x.Id)
-///       .WithCluster("geo_cluster")
-///       .WithReplication("/clickhouse/geo/{database}/{table}");
-///
-/// // Implicit conversion allows continued chaining
-/// entity.UseReplicatedMergeTree(x => x.Id)
-///       .WithCluster("geo_cluster")
-///       .HasPartitionByMonth(x => x.OrderDate);  // Continues with EntityTypeBuilder
-/// </code>
-/// </example>
-public class ReplicatedEngineBuilder<TEntity> where TEntity : class
-{
-    private readonly EntityTypeBuilder<TEntity> _builder;
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="ReplicatedEngineBuilder{TEntity}"/> class.
-    /// </summary>
-    /// <param name="builder">The underlying entity type builder.</param>
-    internal ReplicatedEngineBuilder(EntityTypeBuilder<TEntity> builder)
-    {
-        _builder = builder;
-    }
-
-    /// <summary>
-    /// Configures the cluster name for this entity's DDL operations (ON CLUSTER clause).
-    /// </summary>
-    /// <param name="clusterName">The cluster name as defined in ClickHouse server configuration.</param>
-    /// <returns>This builder for continued chaining.</returns>
-    public ReplicatedEngineBuilder<TEntity> WithCluster(string clusterName)
-    {
-        _builder.UseCluster(clusterName);
-        return this;
-    }
-
-    /// <summary>
-    /// Configures this entity to emit <c>ON CLUSTER '{cluster}'</c>, deferring
-    /// cluster resolution to the server's <c>&lt;macros&gt;&lt;cluster&gt;</c>
-    /// config entry. Use when the DDL should run against whichever cluster the
-    /// target node belongs to, without hardcoding a cluster name.
-    /// </summary>
-    public ReplicatedEngineBuilder<TEntity> WithCluster()
-        => WithCluster(ClickHouseClusterMacros.Cluster);
-
-    /// <summary>
-    /// Configures replication settings for this entity.
-    /// </summary>
-    /// <param name="zooKeeperPath">The ZooKeeper/Keeper path for replication metadata. Supports placeholders: {database}, {table}, {uuid}</param>
-    /// <param name="replicaName">The replica name, usually "{replica}" for macro expansion.</param>
-    /// <returns>This builder for continued chaining.</returns>
-    public ReplicatedEngineBuilder<TEntity> WithReplication(
-        string zooKeeperPath,
-        string replicaName = "{replica}")
-    {
-        _builder.HasReplication(zooKeeperPath, replicaName);
-        return this;
-    }
-
-    /// <summary>
-    /// Assigns this entity to a table group.
-    /// </summary>
-    /// <param name="tableGroupName">The table group name from configuration.</param>
-    /// <returns>This builder for continued chaining.</returns>
-    public ReplicatedEngineBuilder<TEntity> WithTableGroup(string tableGroupName)
-    {
-        _builder.UseTableGroup(tableGroupName);
-        return this;
-    }
-
-    /// <summary>
-    /// Returns the underlying entity type builder for continued configuration.
-    /// </summary>
-    /// <returns>The underlying <see cref="EntityTypeBuilder{TEntity}"/>.</returns>
-    public EntityTypeBuilder<TEntity> And() => _builder;
-
-    /// <summary>
-    /// Implicitly converts the builder back to <see cref="EntityTypeBuilder{TEntity}"/>
-    /// for seamless integration with existing configuration patterns.
-    /// </summary>
-    /// <param name="builder">The replicated engine builder to convert.</param>
-    public static implicit operator EntityTypeBuilder<TEntity>(
-        ReplicatedEngineBuilder<TEntity> builder) => builder._builder;
-}
-
-/// <summary>
 /// A builder that provides fluent chaining for configuring Distributed engine options.
 /// </summary>
 /// <remarks>
@@ -129,9 +29,9 @@ public class ReplicatedEngineBuilder<TEntity> where TEntity : class
 /// entity.UseDistributed("my_cluster", "events_local")
 ///       .WithShardingKey(x => x.UserId);
 ///
-/// // With expression-based sharding
+/// // With expression-based sharding (raw SQL)
 /// entity.UseDistributed("my_cluster", "events_local")
-///       .WithShardingKey("cityHash64(UserId)")
+///       .WithShardingKeyExpression("cityHash64(UserId)")
 ///       .WithPolicy("ssd_policy");
 /// </code>
 /// </example>
@@ -149,28 +49,73 @@ public class DistributedEngineBuilder<TEntity> where TEntity : class
     }
 
     /// <summary>
-    /// Configures the sharding key using a property selector expression.
+    /// Configures the sharding key using a direct property-access expression.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Only direct member access is accepted (e.g. <c>x =&gt; x.UserId</c>). Anything
+    /// else — function calls, casts, binary expressions — throws an
+    /// <see cref="ArgumentException"/> at configuration time. For computed sharding
+    /// keys such as <c>cityHash64(UserId)</c>, use
+    /// <see cref="WithShardingKeyExpression(string)"/> instead.
+    /// </para>
+    /// </remarks>
     /// <typeparam name="TProperty">The property type.</typeparam>
     /// <param name="shardingKeySelector">Expression selecting the property to use as sharding key.</param>
     /// <returns>This builder for continued chaining.</returns>
+    /// <exception cref="ArgumentException">
+    /// Thrown when <paramref name="shardingKeySelector"/> is anything other than a
+    /// direct property-access expression.
+    /// </exception>
     public DistributedEngineBuilder<TEntity> WithShardingKey<TProperty>(
         Expression<Func<TEntity, TProperty>> shardingKeySelector)
     {
         ArgumentNullException.ThrowIfNull(shardingKeySelector);
-        var propertyName = ExpressionExtensions.GetPropertyName(shardingKeySelector);
-        _builder.HasAnnotation(ClickHouseAnnotationNames.DistributedShardingKey, propertyName);
+
+        // Unwrap a single Convert/ConvertChecked node — Expression<Func<T, object>>
+        // overloads always wrap value-typed members in a Convert.
+        var body = shardingKeySelector.Body;
+        if (body is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } convert)
+        {
+            body = convert.Operand;
+        }
+
+        if (body is not MemberExpression member)
+        {
+            throw new ArgumentException(
+                "WithShardingKey<TProperty> accepts only direct property access " +
+                "(e.g. x => x.UserId). For computed sharding keys " +
+                "(e.g. cityHash64(x.UserId)), use WithShardingKeyExpression(string).",
+                nameof(shardingKeySelector));
+        }
+
+        // Member must be on the lambda parameter, not a constant capture or nested member.
+        if (member.Expression is not ParameterExpression)
+        {
+            throw new ArgumentException(
+                "WithShardingKey<TProperty> accepts only direct property access " +
+                "on the lambda parameter (e.g. x => x.UserId). For computed sharding keys, " +
+                "use WithShardingKeyExpression(string).",
+                nameof(shardingKeySelector));
+        }
+
+        _builder.HasAnnotation(ClickHouseAnnotationNames.DistributedShardingKey, member.Member.Name);
         return this;
     }
 
     /// <summary>
     /// Configures the sharding key using a raw SQL expression.
     /// </summary>
+    /// <remarks>
+    /// Use this overload for hash-based or otherwise computed sharding keys, e.g.
+    /// <c>"cityHash64(UserId)"</c>. The expression is emitted verbatim into the
+    /// distributed engine's <c>ENGINE = Distributed(..., sharding_key)</c> clause.
+    /// </remarks>
     /// <param name="shardingKeyExpression">The sharding key expression (e.g., "cityHash64(UserId)").</param>
     /// <returns>This builder for continued chaining.</returns>
-    public DistributedEngineBuilder<TEntity> WithShardingKey(string shardingKeyExpression)
+    public DistributedEngineBuilder<TEntity> WithShardingKeyExpression(string shardingKeyExpression)
     {
-        ArgumentNullException.ThrowIfNull(shardingKeyExpression);
+        ArgumentException.ThrowIfNullOrWhiteSpace(shardingKeyExpression);
         _builder.HasAnnotation(ClickHouseAnnotationNames.DistributedShardingKey, shardingKeyExpression);
         return this;
     }
@@ -258,16 +203,19 @@ public static class ClickHouseEntityTypeBuilderExtensions
     /// entity.UseMergeTree(x => new { x.OrderDate, x.Id });
     /// // or
     /// entity.UseMergeTree(x => x.Id);
+    /// // Replication is a property of the engine — chain WithReplication on any MergeTree builder:
+    /// entity.UseMergeTree(x => x.Id).WithReplication("/clickhouse/tables/{uuid}");
     /// </code>
     /// </example>
-    public static EntityTypeBuilder<TEntity> UseMergeTree<TEntity>(
+    public static Engines.MergeTreeBuilder<TEntity> UseMergeTree<TEntity>(
         this EntityTypeBuilder<TEntity> builder,
         Expression<Func<TEntity, object>> orderByExpression)
         where TEntity : class
     {
         ArgumentNullException.ThrowIfNull(orderByExpression);
         var columns = ExpressionExtensions.GetPropertyNames(orderByExpression);
-        return builder.UseMergeTree(columns);
+        builder.UseMergeTree(columns);
+        return new Engines.MergeTreeBuilder<TEntity>(builder);
     }
 
     /// <summary>
@@ -356,89 +304,15 @@ public static class ClickHouseEntityTypeBuilderExtensions
     /// entity.UseReplacingMergeTree(x => new { x.UserId, x.Timestamp });
     /// </code>
     /// </example>
-    public static EntityTypeBuilder<TEntity> UseReplacingMergeTree<TEntity>(
+    public static Engines.ReplacingMergeTreeBuilder<TEntity> UseReplacingMergeTree<TEntity>(
         this EntityTypeBuilder<TEntity> builder,
         Expression<Func<TEntity, object>> orderByExpression)
         where TEntity : class
     {
         ArgumentNullException.ThrowIfNull(orderByExpression);
         var columns = ExpressionExtensions.GetPropertyNames(orderByExpression);
-        return builder.UseReplacingMergeTree(columns);
-    }
-
-    /// <summary>
-    /// Configures the entity to use a ReplacingMergeTree engine with a version column.
-    /// </summary>
-    /// <typeparam name="TEntity">The entity type.</typeparam>
-    /// <param name="builder">The entity type builder.</param>
-    /// <param name="versionColumnExpression">Expression selecting the version column for deduplication.</param>
-    /// <param name="orderByExpression">Expression selecting the ORDER BY columns.</param>
-    /// <returns>The entity type builder for chaining.</returns>
-    /// <example>
-    /// <code>
-    /// entity.UseReplacingMergeTree(x => x.UpdatedAt, x => new { x.Id });
-    /// </code>
-    /// </example>
-    public static EntityTypeBuilder<TEntity> UseReplacingMergeTree<TEntity, TVersion>(
-        this EntityTypeBuilder<TEntity> builder,
-        Expression<Func<TEntity, TVersion>> versionColumnExpression,
-        Expression<Func<TEntity, object>> orderByExpression)
-        where TEntity : class
-    {
-        ArgumentNullException.ThrowIfNull(versionColumnExpression);
-        ArgumentNullException.ThrowIfNull(orderByExpression);
-        var versionColumn = ExpressionExtensions.GetPropertyName(versionColumnExpression);
-        var columns = ExpressionExtensions.GetPropertyNames(orderByExpression);
-        return builder.UseReplacingMergeTree(versionColumn, columns);
-    }
-
-    /// <summary>
-    /// Configures the entity to use a ReplacingMergeTree engine with version and is_deleted columns.
-    /// </summary>
-    /// <typeparam name="TEntity">The entity type.</typeparam>
-    /// <typeparam name="TVersion">The version column type.</typeparam>
-    /// <typeparam name="TIsDeleted">The is_deleted column type (should be byte/UInt8).</typeparam>
-    /// <param name="builder">The entity type builder.</param>
-    /// <param name="versionColumnExpression">Expression selecting the version column.</param>
-    /// <param name="isDeletedColumnExpression">Expression selecting the is_deleted column (UInt8).</param>
-    /// <param name="orderByExpression">Expression selecting the ORDER BY columns.</param>
-    /// <returns>The entity type builder for chaining.</returns>
-    /// <remarks>
-    /// <para>
-    /// Requires ClickHouse 23.2+. When is_deleted is specified, rows where the winning version
-    /// has is_deleted=1 are physically removed during background merges.
-    /// </para>
-    /// <para>
-    /// With FINAL, deleted rows are automatically excluded from query results.
-    /// </para>
-    /// </remarks>
-    /// <example>
-    /// <code>
-    /// entity.UseReplacingMergeTree(
-    ///     x => x.Version,      // Version column
-    ///     x => x.IsDeleted,    // IsDeleted column (UInt8)
-    ///     x => new { x.Id });  // ORDER BY
-    /// </code>
-    /// </example>
-    public static EntityTypeBuilder<TEntity> UseReplacingMergeTree<TEntity, TVersion, TIsDeleted>(
-        this EntityTypeBuilder<TEntity> builder,
-        Expression<Func<TEntity, TVersion>> versionColumnExpression,
-        Expression<Func<TEntity, TIsDeleted>> isDeletedColumnExpression,
-        Expression<Func<TEntity, object>> orderByExpression)
-        where TEntity : class
-    {
-        ArgumentNullException.ThrowIfNull(versionColumnExpression);
-        ArgumentNullException.ThrowIfNull(isDeletedColumnExpression);
-        ArgumentNullException.ThrowIfNull(orderByExpression);
-
-        var versionColumn = ExpressionExtensions.GetPropertyName(versionColumnExpression);
-        var isDeletedColumn = ExpressionExtensions.GetPropertyName(isDeletedColumnExpression);
-        var columns = ExpressionExtensions.GetPropertyNames(orderByExpression);
-
-        builder.UseReplacingMergeTree(versionColumn, columns);
-        builder.HasAnnotation(ClickHouseAnnotationNames.IsDeletedColumn, isDeletedColumn);
-
-        return builder;
+        builder.UseReplacingMergeTree(columns);
+        return new Engines.ReplacingMergeTreeBuilder<TEntity>(builder);
     }
 
     /// <summary>
@@ -526,14 +400,15 @@ public static class ClickHouseEntityTypeBuilderExtensions
     /// <param name="builder">The entity type builder.</param>
     /// <param name="orderByExpression">Expression selecting the ORDER BY columns.</param>
     /// <returns>The entity type builder for chaining.</returns>
-    public static EntityTypeBuilder<TEntity> UseSummingMergeTree<TEntity>(
+    public static Engines.SummingMergeTreeBuilder<TEntity> UseSummingMergeTree<TEntity>(
         this EntityTypeBuilder<TEntity> builder,
         Expression<Func<TEntity, object>> orderByExpression)
         where TEntity : class
     {
         ArgumentNullException.ThrowIfNull(orderByExpression);
         var columns = ExpressionExtensions.GetPropertyNames(orderByExpression);
-        return builder.UseSummingMergeTree(columns);
+        builder.UseSummingMergeTree(columns);
+        return new Engines.SummingMergeTreeBuilder<TEntity>(builder);
     }
 
     /// <summary>
@@ -543,14 +418,15 @@ public static class ClickHouseEntityTypeBuilderExtensions
     /// <param name="builder">The entity type builder.</param>
     /// <param name="orderByExpression">Expression selecting the ORDER BY columns.</param>
     /// <returns>The entity type builder for chaining.</returns>
-    public static EntityTypeBuilder<TEntity> UseAggregatingMergeTree<TEntity>(
+    public static Engines.AggregatingMergeTreeBuilder<TEntity> UseAggregatingMergeTree<TEntity>(
         this EntityTypeBuilder<TEntity> builder,
         Expression<Func<TEntity, object>> orderByExpression)
         where TEntity : class
     {
         ArgumentNullException.ThrowIfNull(orderByExpression);
         var columns = ExpressionExtensions.GetPropertyNames(orderByExpression);
-        return builder.UseAggregatingMergeTree(columns);
+        builder.UseAggregatingMergeTree(columns);
+        return new Engines.AggregatingMergeTreeBuilder<TEntity>(builder);
     }
 
     #region CollapsingMergeTree
@@ -572,22 +448,18 @@ public static class ClickHouseEntityTypeBuilderExtensions
     /// <returns>The entity type builder for chaining.</returns>
     /// <example>
     /// <code>
-    /// entity.UseCollapsingMergeTree(
-    ///     signColumn: x => x.Sign,
-    ///     orderBy: x => new { x.UserId, x.EventTime });
+    /// entity.UseCollapsingMergeTree(x => new { x.UserId, x.EventTime })
+    ///       .WithSign(x => x.Sign);
     /// </code>
     /// </example>
-    public static EntityTypeBuilder<TEntity> UseCollapsingMergeTree<TEntity>(
+    public static Engines.CollapsingMergeTreeBuilder<TEntity> UseCollapsingMergeTree<TEntity>(
         this EntityTypeBuilder<TEntity> builder,
-        Expression<Func<TEntity, sbyte>> signColumnExpression,
         Expression<Func<TEntity, object>> orderByExpression)
         where TEntity : class
     {
         ArgumentNullException.ThrowIfNull(builder);
-        ArgumentNullException.ThrowIfNull(signColumnExpression);
         ArgumentNullException.ThrowIfNull(orderByExpression);
 
-        var signColumn = ExpressionExtensions.GetPropertyName(signColumnExpression);
         var orderByColumns = ExpressionExtensions.GetPropertyNames(orderByExpression);
 
         if (orderByColumns.Length == 0)
@@ -596,10 +468,9 @@ public static class ClickHouseEntityTypeBuilderExtensions
         }
 
         builder.HasAnnotation(ClickHouseAnnotationNames.Engine, ClickHouseEngineNames.CollapsingMergeTree);
-        builder.HasAnnotation(ClickHouseAnnotationNames.SignColumn, signColumn);
         builder.HasAnnotation(ClickHouseAnnotationNames.OrderBy, orderByColumns);
 
-        return builder;
+        return new Engines.CollapsingMergeTreeBuilder<TEntity>(builder);
     }
 
     /// <summary>
@@ -649,26 +520,19 @@ public static class ClickHouseEntityTypeBuilderExtensions
     /// <returns>The entity type builder for chaining.</returns>
     /// <example>
     /// <code>
-    /// entity.UseVersionedCollapsingMergeTree(
-    ///     signColumn: x => x.Sign,
-    ///     versionColumn: x => x.Version,
-    ///     orderBy: x => new { x.UserId, x.EventTime });
+    /// entity.UseVersionedCollapsingMergeTree(x => new { x.UserId, x.EventTime })
+    ///       .WithSign(x => x.Sign)
+    ///       .WithVersion(x => x.Version);
     /// </code>
     /// </example>
-    public static EntityTypeBuilder<TEntity> UseVersionedCollapsingMergeTree<TEntity, TVersion>(
+    public static Engines.VersionedCollapsingMergeTreeBuilder<TEntity> UseVersionedCollapsingMergeTree<TEntity>(
         this EntityTypeBuilder<TEntity> builder,
-        Expression<Func<TEntity, sbyte>> signColumnExpression,
-        Expression<Func<TEntity, TVersion>> versionColumnExpression,
         Expression<Func<TEntity, object>> orderByExpression)
         where TEntity : class
     {
         ArgumentNullException.ThrowIfNull(builder);
-        ArgumentNullException.ThrowIfNull(signColumnExpression);
-        ArgumentNullException.ThrowIfNull(versionColumnExpression);
         ArgumentNullException.ThrowIfNull(orderByExpression);
 
-        var signColumn = ExpressionExtensions.GetPropertyName(signColumnExpression);
-        var versionColumn = ExpressionExtensions.GetPropertyName(versionColumnExpression);
         var orderByColumns = ExpressionExtensions.GetPropertyNames(orderByExpression);
 
         if (orderByColumns.Length == 0)
@@ -677,11 +541,9 @@ public static class ClickHouseEntityTypeBuilderExtensions
         }
 
         builder.HasAnnotation(ClickHouseAnnotationNames.Engine, ClickHouseEngineNames.VersionedCollapsingMergeTree);
-        builder.HasAnnotation(ClickHouseAnnotationNames.SignColumn, signColumn);
-        builder.HasAnnotation(ClickHouseAnnotationNames.VersionColumn, versionColumn);
         builder.HasAnnotation(ClickHouseAnnotationNames.OrderBy, orderByColumns);
 
-        return builder;
+        return new Engines.VersionedCollapsingMergeTreeBuilder<TEntity>(builder);
     }
 
     /// <summary>
@@ -714,324 +576,6 @@ public static class ClickHouseEntityTypeBuilderExtensions
         builder.HasAnnotation(ClickHouseAnnotationNames.OrderBy, orderByColumns);
 
         return builder;
-    }
-
-    #endregion
-
-    #region Replicated Engines
-
-    /// <summary>
-    /// Configures the entity to use a ReplicatedMergeTree engine.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// ReplicatedMergeTree requires ZooKeeper/Keeper coordination for replication.
-    /// The ZooKeeper path and replica name can be configured via <see cref="HasReplication"/>,
-    /// or will use defaults from the table group or cluster configuration.
-    /// </para>
-    /// <para>
-    /// Tables using replicated engines should also have a cluster configured via <see cref="UseCluster"/>
-    /// or inherit one from their table group.
-    /// </para>
-    /// </remarks>
-    /// <param name="builder">The entity type builder.</param>
-    /// <param name="orderByColumns">The columns for ORDER BY clause.</param>
-    /// <returns>The entity type builder for chaining.</returns>
-    public static EntityTypeBuilder UseReplicatedMergeTree(
-        this EntityTypeBuilder builder,
-        params string[] orderByColumns)
-    {
-        ArgumentNullException.ThrowIfNull(builder);
-        ArgumentNullException.ThrowIfNull(orderByColumns);
-
-        if (orderByColumns.Length == 0)
-        {
-            throw new ArgumentException("At least one ORDER BY column is required for ReplicatedMergeTree.", nameof(orderByColumns));
-        }
-
-        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, ClickHouseEngineNames.ReplicatedMergeTree);
-        builder.HasAnnotation(ClickHouseAnnotationNames.OrderBy, orderByColumns);
-        builder.HasAnnotation(ClickHouseAnnotationNames.IsReplicated, true);
-
-        return builder;
-    }
-
-    /// <summary>
-    /// Configures the entity to use a ReplicatedMergeTree engine.
-    /// </summary>
-    /// <typeparam name="TEntity">The entity type.</typeparam>
-    /// <param name="builder">The entity type builder.</param>
-    /// <param name="orderByExpression">Expression selecting the ORDER BY columns.</param>
-    /// <returns>A builder for configuring replicated engine options with fluent chaining.</returns>
-    /// <example>
-    /// <code>
-    /// entity.UseReplicatedMergeTree(x => x.Id)
-    ///       .WithCluster("geo_cluster")
-    ///       .WithReplication("/clickhouse/geo/{database}/{table}");
-    /// </code>
-    /// </example>
-    public static ReplicatedEngineBuilder<TEntity> UseReplicatedMergeTree<TEntity>(
-        this EntityTypeBuilder<TEntity> builder,
-        Expression<Func<TEntity, object>> orderByExpression)
-        where TEntity : class
-    {
-        ArgumentNullException.ThrowIfNull(orderByExpression);
-        var columns = ExpressionExtensions.GetPropertyNames(orderByExpression);
-        ((EntityTypeBuilder)builder).UseReplicatedMergeTree(columns);
-        return new ReplicatedEngineBuilder<TEntity>(builder);
-    }
-
-    /// <summary>
-    /// Configures the entity to use a ReplicatedMergeTree engine.
-    /// </summary>
-    /// <typeparam name="TEntity">The entity type.</typeparam>
-    /// <param name="builder">The entity type builder.</param>
-    /// <param name="orderByColumns">The columns for ORDER BY clause.</param>
-    /// <returns>A builder for configuring replicated engine options with fluent chaining.</returns>
-    public static ReplicatedEngineBuilder<TEntity> UseReplicatedMergeTree<TEntity>(
-        this EntityTypeBuilder<TEntity> builder,
-        params string[] orderByColumns)
-        where TEntity : class
-    {
-        ((EntityTypeBuilder)builder).UseReplicatedMergeTree(orderByColumns);
-        return new ReplicatedEngineBuilder<TEntity>(builder);
-    }
-
-    /// <summary>
-    /// Configures the entity to use a ReplicatedReplacingMergeTree engine.
-    /// </summary>
-    /// <param name="builder">The entity type builder.</param>
-    /// <param name="orderByColumns">The columns for ORDER BY clause.</param>
-    /// <returns>The entity type builder for chaining.</returns>
-    public static EntityTypeBuilder UseReplicatedReplacingMergeTree(
-        this EntityTypeBuilder builder,
-        params string[] orderByColumns)
-    {
-        ArgumentNullException.ThrowIfNull(builder);
-        ArgumentNullException.ThrowIfNull(orderByColumns);
-
-        if (orderByColumns.Length == 0)
-        {
-            throw new ArgumentException("At least one ORDER BY column is required for ReplicatedReplacingMergeTree.", nameof(orderByColumns));
-        }
-
-        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, ClickHouseEngineNames.ReplicatedReplacingMergeTree);
-        builder.HasAnnotation(ClickHouseAnnotationNames.OrderBy, orderByColumns);
-        builder.HasAnnotation(ClickHouseAnnotationNames.IsReplicated, true);
-
-        return builder;
-    }
-
-    /// <summary>
-    /// Configures the entity to use a ReplicatedReplacingMergeTree engine with a version column.
-    /// </summary>
-    /// <typeparam name="TEntity">The entity type.</typeparam>
-    /// <typeparam name="TVersion">The version column type.</typeparam>
-    /// <param name="builder">The entity type builder.</param>
-    /// <param name="versionColumnExpression">Expression selecting the version column for deduplication.</param>
-    /// <param name="orderByExpression">Expression selecting the ORDER BY columns.</param>
-    /// <returns>A builder for configuring replicated engine options with fluent chaining.</returns>
-    /// <example>
-    /// <code>
-    /// entity.UseReplicatedReplacingMergeTree(x => x.Version, x => x.Id)
-    ///       .WithCluster("geo_cluster")
-    ///       .WithReplication("/clickhouse/geo/{database}/{table}");
-    /// </code>
-    /// </example>
-    public static ReplicatedEngineBuilder<TEntity> UseReplicatedReplacingMergeTree<TEntity, TVersion>(
-        this EntityTypeBuilder<TEntity> builder,
-        Expression<Func<TEntity, TVersion>> versionColumnExpression,
-        Expression<Func<TEntity, object>> orderByExpression)
-        where TEntity : class
-    {
-        ArgumentNullException.ThrowIfNull(versionColumnExpression);
-        ArgumentNullException.ThrowIfNull(orderByExpression);
-
-        var versionColumn = ExpressionExtensions.GetPropertyName(versionColumnExpression);
-        var columns = ExpressionExtensions.GetPropertyNames(orderByExpression);
-
-        ((EntityTypeBuilder)builder).UseReplicatedReplacingMergeTree(columns);
-        builder.HasAnnotation(ClickHouseAnnotationNames.VersionColumn, versionColumn);
-
-        return new ReplicatedEngineBuilder<TEntity>(builder);
-    }
-
-    /// <summary>
-    /// Configures the entity to use a ReplicatedReplacingMergeTree engine.
-    /// </summary>
-    /// <typeparam name="TEntity">The entity type.</typeparam>
-    /// <param name="builder">The entity type builder.</param>
-    /// <param name="orderByExpression">Expression selecting the ORDER BY columns.</param>
-    /// <returns>A builder for configuring replicated engine options with fluent chaining.</returns>
-    public static ReplicatedEngineBuilder<TEntity> UseReplicatedReplacingMergeTree<TEntity>(
-        this EntityTypeBuilder<TEntity> builder,
-        Expression<Func<TEntity, object>> orderByExpression)
-        where TEntity : class
-    {
-        ArgumentNullException.ThrowIfNull(orderByExpression);
-        var columns = ExpressionExtensions.GetPropertyNames(orderByExpression);
-        ((EntityTypeBuilder)builder).UseReplicatedReplacingMergeTree(columns);
-        return new ReplicatedEngineBuilder<TEntity>(builder);
-    }
-
-    /// <summary>
-    /// Configures the entity to use a ReplicatedSummingMergeTree engine.
-    /// </summary>
-    /// <param name="builder">The entity type builder.</param>
-    /// <param name="orderByColumns">The columns for ORDER BY clause.</param>
-    /// <returns>The entity type builder for chaining.</returns>
-    public static EntityTypeBuilder UseReplicatedSummingMergeTree(
-        this EntityTypeBuilder builder,
-        params string[] orderByColumns)
-    {
-        ArgumentNullException.ThrowIfNull(builder);
-        ArgumentNullException.ThrowIfNull(orderByColumns);
-
-        if (orderByColumns.Length == 0)
-        {
-            throw new ArgumentException("At least one ORDER BY column is required for ReplicatedSummingMergeTree.", nameof(orderByColumns));
-        }
-
-        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, ClickHouseEngineNames.ReplicatedSummingMergeTree);
-        builder.HasAnnotation(ClickHouseAnnotationNames.OrderBy, orderByColumns);
-        builder.HasAnnotation(ClickHouseAnnotationNames.IsReplicated, true);
-
-        return builder;
-    }
-
-    /// <summary>
-    /// Configures the entity to use a ReplicatedSummingMergeTree engine.
-    /// </summary>
-    /// <typeparam name="TEntity">The entity type.</typeparam>
-    /// <param name="builder">The entity type builder.</param>
-    /// <param name="orderByExpression">Expression selecting the ORDER BY columns.</param>
-    /// <returns>A builder for configuring replicated engine options with fluent chaining.</returns>
-    public static ReplicatedEngineBuilder<TEntity> UseReplicatedSummingMergeTree<TEntity>(
-        this EntityTypeBuilder<TEntity> builder,
-        Expression<Func<TEntity, object>> orderByExpression)
-        where TEntity : class
-    {
-        ArgumentNullException.ThrowIfNull(orderByExpression);
-        var columns = ExpressionExtensions.GetPropertyNames(orderByExpression);
-        ((EntityTypeBuilder)builder).UseReplicatedSummingMergeTree(columns);
-        return new ReplicatedEngineBuilder<TEntity>(builder);
-    }
-
-    /// <summary>
-    /// Configures the entity to use a ReplicatedAggregatingMergeTree engine.
-    /// </summary>
-    /// <param name="builder">The entity type builder.</param>
-    /// <param name="orderByColumns">The columns for ORDER BY clause.</param>
-    /// <returns>The entity type builder for chaining.</returns>
-    public static EntityTypeBuilder UseReplicatedAggregatingMergeTree(
-        this EntityTypeBuilder builder,
-        params string[] orderByColumns)
-    {
-        ArgumentNullException.ThrowIfNull(builder);
-        ArgumentNullException.ThrowIfNull(orderByColumns);
-
-        if (orderByColumns.Length == 0)
-        {
-            throw new ArgumentException("At least one ORDER BY column is required for ReplicatedAggregatingMergeTree.", nameof(orderByColumns));
-        }
-
-        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, ClickHouseEngineNames.ReplicatedAggregatingMergeTree);
-        builder.HasAnnotation(ClickHouseAnnotationNames.OrderBy, orderByColumns);
-        builder.HasAnnotation(ClickHouseAnnotationNames.IsReplicated, true);
-
-        return builder;
-    }
-
-    /// <summary>
-    /// Configures the entity to use a ReplicatedAggregatingMergeTree engine.
-    /// </summary>
-    /// <typeparam name="TEntity">The entity type.</typeparam>
-    /// <param name="builder">The entity type builder.</param>
-    /// <param name="orderByExpression">Expression selecting the ORDER BY columns.</param>
-    /// <returns>A builder for configuring replicated engine options with fluent chaining.</returns>
-    public static ReplicatedEngineBuilder<TEntity> UseReplicatedAggregatingMergeTree<TEntity>(
-        this EntityTypeBuilder<TEntity> builder,
-        Expression<Func<TEntity, object>> orderByExpression)
-        where TEntity : class
-    {
-        ArgumentNullException.ThrowIfNull(orderByExpression);
-        var columns = ExpressionExtensions.GetPropertyNames(orderByExpression);
-        ((EntityTypeBuilder)builder).UseReplicatedAggregatingMergeTree(columns);
-        return new ReplicatedEngineBuilder<TEntity>(builder);
-    }
-
-    /// <summary>
-    /// Configures the entity to use a ReplicatedCollapsingMergeTree engine.
-    /// </summary>
-    /// <typeparam name="TEntity">The entity type.</typeparam>
-    /// <param name="builder">The entity type builder.</param>
-    /// <param name="signColumnExpression">Expression selecting the sign column (Int8/sbyte with +1 or -1).</param>
-    /// <param name="orderByExpression">Expression selecting the ORDER BY columns.</param>
-    /// <returns>A builder for configuring replicated engine options with fluent chaining.</returns>
-    public static ReplicatedEngineBuilder<TEntity> UseReplicatedCollapsingMergeTree<TEntity>(
-        this EntityTypeBuilder<TEntity> builder,
-        Expression<Func<TEntity, sbyte>> signColumnExpression,
-        Expression<Func<TEntity, object>> orderByExpression)
-        where TEntity : class
-    {
-        ArgumentNullException.ThrowIfNull(builder);
-        ArgumentNullException.ThrowIfNull(signColumnExpression);
-        ArgumentNullException.ThrowIfNull(orderByExpression);
-
-        var signColumn = ExpressionExtensions.GetPropertyName(signColumnExpression);
-        var orderByColumns = ExpressionExtensions.GetPropertyNames(orderByExpression);
-
-        if (orderByColumns.Length == 0)
-        {
-            throw new ArgumentException("At least one ORDER BY column is required for ReplicatedCollapsingMergeTree.", nameof(orderByExpression));
-        }
-
-        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, ClickHouseEngineNames.ReplicatedCollapsingMergeTree);
-        builder.HasAnnotation(ClickHouseAnnotationNames.SignColumn, signColumn);
-        builder.HasAnnotation(ClickHouseAnnotationNames.OrderBy, orderByColumns);
-        builder.HasAnnotation(ClickHouseAnnotationNames.IsReplicated, true);
-
-        return new ReplicatedEngineBuilder<TEntity>(builder);
-    }
-
-    /// <summary>
-    /// Configures the entity to use a ReplicatedVersionedCollapsingMergeTree engine.
-    /// </summary>
-    /// <typeparam name="TEntity">The entity type.</typeparam>
-    /// <typeparam name="TVersion">The version column type.</typeparam>
-    /// <param name="builder">The entity type builder.</param>
-    /// <param name="signColumnExpression">Expression selecting the sign column (Int8/sbyte with +1 or -1).</param>
-    /// <param name="versionColumnExpression">Expression selecting the version column.</param>
-    /// <param name="orderByExpression">Expression selecting the ORDER BY columns.</param>
-    /// <returns>A builder for configuring replicated engine options with fluent chaining.</returns>
-    public static ReplicatedEngineBuilder<TEntity> UseReplicatedVersionedCollapsingMergeTree<TEntity, TVersion>(
-        this EntityTypeBuilder<TEntity> builder,
-        Expression<Func<TEntity, sbyte>> signColumnExpression,
-        Expression<Func<TEntity, TVersion>> versionColumnExpression,
-        Expression<Func<TEntity, object>> orderByExpression)
-        where TEntity : class
-    {
-        ArgumentNullException.ThrowIfNull(builder);
-        ArgumentNullException.ThrowIfNull(signColumnExpression);
-        ArgumentNullException.ThrowIfNull(versionColumnExpression);
-        ArgumentNullException.ThrowIfNull(orderByExpression);
-
-        var signColumn = ExpressionExtensions.GetPropertyName(signColumnExpression);
-        var versionColumn = ExpressionExtensions.GetPropertyName(versionColumnExpression);
-        var orderByColumns = ExpressionExtensions.GetPropertyNames(orderByExpression);
-
-        if (orderByColumns.Length == 0)
-        {
-            throw new ArgumentException("At least one ORDER BY column is required for ReplicatedVersionedCollapsingMergeTree.", nameof(orderByExpression));
-        }
-
-        builder.HasAnnotation(ClickHouseAnnotationNames.Engine, ClickHouseEngineNames.ReplicatedVersionedCollapsingMergeTree);
-        builder.HasAnnotation(ClickHouseAnnotationNames.SignColumn, signColumn);
-        builder.HasAnnotation(ClickHouseAnnotationNames.VersionColumn, versionColumn);
-        builder.HasAnnotation(ClickHouseAnnotationNames.OrderBy, orderByColumns);
-        builder.HasAnnotation(ClickHouseAnnotationNames.IsReplicated, true);
-
-        return new ReplicatedEngineBuilder<TEntity>(builder);
     }
 
     #endregion
@@ -1124,7 +668,9 @@ public static class ClickHouseEntityTypeBuilderExtensions
     ///
     /// modelBuilder.Entity&lt;Order&gt;(e =>
     /// {
-    ///     e.UseReplicatedReplacingMergeTree(x => x.Version, x => x.Id);
+    ///     e.UseReplacingMergeTree(x => x.Id)
+    ///         .WithVersion(x => x.Version)
+    ///         .WithReplication("/clickhouse/tables/{uuid}");
     ///     e.UseTableGroup("Core");  // geo_cluster, replicated
     /// });
     /// </code>
@@ -1276,7 +822,7 @@ public static class ClickHouseEntityTypeBuilderExtensions
     /// modelBuilder.Entity&lt;HourlySummary&gt;(entity =>
     /// {
     ///     entity.UseSummingMergeTree(x => new { x.Hour, x.Category });
-    ///     entity.AsMaterializedView&lt;HourlySummary, RawEvent&gt;(...);
+    ///     modelBuilder.MaterializedView&lt;HourlySummary&gt;().From&lt;RawEvent&gt;().DefinedAs(...);
     /// });
     /// </code>
     /// </example>
@@ -1627,6 +1173,7 @@ public static class ClickHouseEntityTypeBuilderExtensions
         builder.HasNoKey();
         builder.ToView(viewName);
         builder.HasAnnotation(EF.CH.Metadata.ClickHouseAnnotationNames.ParameterizedView, true);
+        builder.HasAnnotation(EF.CH.Metadata.ClickHouseAnnotationNames.ParameterizedViewName, viewName);
         return builder;
     }
 
@@ -1734,7 +1281,15 @@ public static class ClickHouseEntityTypeBuilderExtensions
         return builder;
     }
 
-    private static string SqlLiteral(string value) => "'" + value.Replace("'", "''") + "'";
+    /// <summary>
+    /// Wraps a value as a single-quoted ClickHouse string literal. Backslash is
+    /// escaped first (ClickHouse interprets <c>\</c> as a C-style escape inside
+    /// <c>'…'</c>, so a value ending in <c>\</c> would otherwise escape the
+    /// closing quote and break out of the literal), then apostrophe is doubled
+    /// per SQL standard.
+    /// </summary>
+    private static string SqlLiteral(string value) =>
+        "'" + value.Replace("\\", "\\\\").Replace("'", "''") + "'";
 
     #endregion
 
@@ -1819,7 +1374,7 @@ public static class ClickHouseEntityTypeBuilderExtensions
     /// <example>
     /// <code>
     /// entity.UseDistributed("my_cluster", "events_local")
-    ///       .WithShardingKey("cityHash64(UserId)")
+    ///       .WithShardingKeyExpression("cityHash64(UserId)")
     ///       .WithPolicy("ssd_policy");
     /// </code>
     /// </example>
@@ -1871,100 +1426,47 @@ public static class ClickHouseEntityTypeBuilderExtensions
     }
 
     /// <summary>
-    /// Configures PARTITION BY using a monthly granularity on the specified column.
-    /// Generates: PARTITION BY toYYYYMM(column)
-    /// </summary>
-    /// <typeparam name="TEntity">The entity type.</typeparam>
-    /// <param name="builder">The entity type builder.</param>
-    /// <param name="columnExpression">Expression selecting the date/datetime column to partition by.</param>
-    /// <returns>The entity type builder for chaining.</returns>
-    /// <example>
-    /// <code>
-    /// entity.HasPartitionByMonth(x => x.CreatedAt);
-    /// // Generates: PARTITION BY toYYYYMM("CreatedAt")
-    /// </code>
-    /// </example>
-    public static EntityTypeBuilder<TEntity> HasPartitionByMonth<TEntity, TProperty>(
-        this EntityTypeBuilder<TEntity> builder,
-        Expression<Func<TEntity, TProperty>> columnExpression)
-        where TEntity : class
-    {
-        ArgumentNullException.ThrowIfNull(columnExpression);
-        var columnName = ExpressionExtensions.GetPropertyName(columnExpression);
-        return builder.HasPartitionBy($"toYYYYMM(\"{columnName}\")");
-    }
-
-    /// <summary>
-    /// Configures PARTITION BY using a daily granularity on the specified column.
-    /// Generates: PARTITION BY toYYYYMMDD(column)
-    /// </summary>
-    /// <typeparam name="TEntity">The entity type.</typeparam>
-    /// <param name="builder">The entity type builder.</param>
-    /// <param name="columnExpression">Expression selecting the date/datetime column to partition by.</param>
-    /// <returns>The entity type builder for chaining.</returns>
-    /// <example>
-    /// <code>
-    /// entity.HasPartitionByDay(x => x.EventDate);
-    /// // Generates: PARTITION BY toYYYYMMDD("EventDate")
-    /// </code>
-    /// </example>
-    public static EntityTypeBuilder<TEntity> HasPartitionByDay<TEntity, TProperty>(
-        this EntityTypeBuilder<TEntity> builder,
-        Expression<Func<TEntity, TProperty>> columnExpression)
-        where TEntity : class
-    {
-        ArgumentNullException.ThrowIfNull(columnExpression);
-        var columnName = ExpressionExtensions.GetPropertyName(columnExpression);
-        return builder.HasPartitionBy($"toYYYYMMDD(\"{columnName}\")");
-    }
-
-    /// <summary>
-    /// Configures PARTITION BY using a yearly granularity on the specified column.
-    /// Generates: PARTITION BY toYear(column)
-    /// </summary>
-    /// <typeparam name="TEntity">The entity type.</typeparam>
-    /// <param name="builder">The entity type builder.</param>
-    /// <param name="columnExpression">Expression selecting the date/datetime column to partition by.</param>
-    /// <returns>The entity type builder for chaining.</returns>
-    /// <example>
-    /// <code>
-    /// entity.HasPartitionByYear(x => x.OrderDate);
-    /// // Generates: PARTITION BY toYear("OrderDate")
-    /// </code>
-    /// </example>
-    public static EntityTypeBuilder<TEntity> HasPartitionByYear<TEntity, TProperty>(
-        this EntityTypeBuilder<TEntity> builder,
-        Expression<Func<TEntity, TProperty>> columnExpression)
-        where TEntity : class
-    {
-        ArgumentNullException.ThrowIfNull(columnExpression);
-        var columnName = ExpressionExtensions.GetPropertyName(columnExpression);
-        return builder.HasPartitionBy($"toYear(\"{columnName}\")");
-    }
-
-    /// <summary>
     /// Configures PARTITION BY using an expression-based column selector.
     /// </summary>
     /// <typeparam name="TEntity">The entity type.</typeparam>
     /// <typeparam name="TProperty">The property type.</typeparam>
     /// <param name="builder">The entity type builder.</param>
     /// <param name="partitionExpression">Expression selecting the column to partition by.</param>
+    /// <param name="granularity">Optional date-bucket wrapper applied to the column.
+    /// <see cref="PartitionGranularity.None"/> emits the raw column;
+    /// other values wrap it in the matching ClickHouse function.</param>
     /// <returns>The entity type builder for chaining.</returns>
     /// <example>
     /// <code>
     /// entity.HasPartitionBy(x => x.Region);
     /// // Generates: PARTITION BY "Region"
+    ///
+    /// entity.HasPartitionBy(x => x.CreatedAt, PartitionGranularity.Month);
+    /// // Generates: PARTITION BY toYYYYMM("CreatedAt")
     /// </code>
     /// </example>
     public static EntityTypeBuilder<TEntity> HasPartitionBy<TEntity, TProperty>(
         this EntityTypeBuilder<TEntity> builder,
-        Expression<Func<TEntity, TProperty>> partitionExpression)
+        Expression<Func<TEntity, TProperty>> partitionExpression,
+        PartitionGranularity granularity = PartitionGranularity.None)
         where TEntity : class
     {
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(partitionExpression);
         var columnName = ExpressionExtensions.GetPropertyName(partitionExpression);
-        return builder.HasPartitionBy($"\"{columnName}\"");
+        var quoted = $"\"{columnName}\"";
+        var expr = granularity switch
+        {
+            PartitionGranularity.None    => quoted,
+            PartitionGranularity.Hour    => $"toStartOfHour({quoted})",
+            PartitionGranularity.Day     => $"toYYYYMMDD({quoted})",
+            PartitionGranularity.Week    => $"toStartOfWeek({quoted})",
+            PartitionGranularity.Month   => $"toYYYYMM({quoted})",
+            PartitionGranularity.Quarter => $"toStartOfQuarter({quoted})",
+            PartitionGranularity.Year    => $"toYear({quoted})",
+            _ => throw new ArgumentOutOfRangeException(nameof(granularity)),
+        };
+        return builder.HasPartitionBy(expr);
     }
 
     #endregion
@@ -2174,6 +1676,20 @@ public static class ClickHouseEntityTypeBuilderExtensions
         IDictionary<string, string> settings)
         where TEntity : class
     {
+        ((EntityTypeBuilder)builder).HasEngineSettings(settings);
+        return builder;
+    }
+
+    /// <summary>
+    /// Non-generic <see cref="HasEngineSettings{TEntity}(EntityTypeBuilder{TEntity}, IDictionary{string, string})"/>
+    /// used by the annotation code generator when round-tripping a scaffolded model
+    /// — <see cref="MethodCallCodeFragment"/> resolves overloads on the non-generic
+    /// builder type.
+    /// </summary>
+    public static EntityTypeBuilder HasEngineSettings(
+        this EntityTypeBuilder builder,
+        IDictionary<string, string> settings)
+    {
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(settings);
 
@@ -2182,299 +1698,48 @@ public static class ClickHouseEntityTypeBuilderExtensions
         return builder;
     }
 
-    #region Materialized Views
-
     /// <summary>
-    /// Configures the entity as a materialized view with a raw SQL SELECT query.
-    /// This is the escape hatch for complex ClickHouse-specific queries that cannot be expressed in LINQ.
+    /// Sets an explicit <c>PRIMARY KEY</c> for a MergeTree-family table when the primary key
+    /// should be a strict prefix of <c>ORDER BY</c>. ClickHouse loads the PRIMARY KEY columns
+    /// into RAM as the sparse index; keeping it shorter than ORDER BY saves memory while ORDER BY
+    /// still controls row ordering and uniqueness/dedup granularity.
     /// </summary>
-    /// <typeparam name="TEntity">The entity type representing the view's output schema.</typeparam>
-    /// <param name="builder">The entity type builder.</param>
-    /// <param name="sourceTable">The name of the source table the view reads from.</param>
-    /// <param name="selectSql">The raw SQL SELECT query for the view (without CREATE MATERIALIZED VIEW prefix).</param>
-    /// <param name="populate">Whether to backfill existing data when creating the view.</param>
-    /// <returns>The entity type builder for chaining.</returns>
     /// <remarks>
-    /// <para>
-    /// ClickHouse materialized views are INSERT triggers, not cached query results.
-    /// When data is inserted into the source table, the view's SELECT query transforms it
-    /// and inserts the result into the view's storage.
-    /// </para>
-    /// <para>
-    /// The entity should be configured as keyless using <c>HasNoKey()</c> since materialized views
-    /// are typically append-only. Engine configuration (UseMergeTree, etc.) still applies.
-    /// </para>
+    /// Used by the scaffolding code generator when reverse-engineering tables whose PRIMARY KEY
+    /// differs from ORDER BY. For typed model configuration, prefer
+    /// <see cref="EF.CH.Extensions.Engines.MergeTreeFamilyBuilder{TBuilder, TEntity}.WithPrimaryKey{TProperty}(System.Linq.Expressions.Expression{System.Func{TEntity, TProperty}})"/>
+    /// chained off <c>UseMergeTree</c> / <c>UseReplacingMergeTree</c> / etc., which validates the
+    /// prefix rule at config time.
     /// </remarks>
-    /// <example>
-    /// <code>
-    /// modelBuilder.Entity&lt;DailySummary&gt;(entity =>
-    /// {
-    ///     entity.ToTable("DailySummary_MV");
-    ///     entity.HasNoKey();
-    ///     entity.UseSummingMergeTree(x => new { x.Date, x.ProductId });
-    ///     entity.AsMaterializedViewRaw(
-    ///         sourceTable: "Orders",
-    ///         selectSql: @"
-    ///             SELECT
-    ///                 toDate(OrderDate) AS Date,
-    ///                 ProductId,
-    ///                 sum(Quantity) AS TotalQuantity,
-    ///                 sum(Revenue) AS TotalRevenue
-    ///             FROM Orders
-    ///             GROUP BY Date, ProductId
-    ///         ",
-    ///         populate: false
-    ///     );
-    /// });
-    /// </code>
-    /// </example>
-    public static EntityTypeBuilder<TEntity> AsMaterializedViewRaw<TEntity>(
-        this EntityTypeBuilder<TEntity> builder,
-        string sourceTable,
-        string selectSql,
-        bool populate = false)
-        where TEntity : class
-    {
-        ArgumentNullException.ThrowIfNull(builder);
-        ArgumentException.ThrowIfNullOrEmpty(sourceTable);
-        ArgumentException.ThrowIfNullOrEmpty(selectSql);
-
-        // Mark as keyless - materialized views are typically append-only
-        builder.HasNoKey();
-
-        // Store view configuration as annotations
-        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedView, true);
-        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewSource, sourceTable);
-        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewQuery, selectSql.Trim());
-        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewPopulate, populate);
-
-        return builder;
-    }
-
-    /// <summary>
-    /// Configures the entity as a materialized view with a raw SQL SELECT query.
-    /// Non-generic overload.
-    /// </summary>
-    public static EntityTypeBuilder AsMaterializedViewRaw(
-        this EntityTypeBuilder builder,
-        string sourceTable,
-        string selectSql,
-        bool populate = false)
-    {
-        ArgumentNullException.ThrowIfNull(builder);
-        ArgumentException.ThrowIfNullOrEmpty(sourceTable);
-        ArgumentException.ThrowIfNullOrEmpty(selectSql);
-
-        builder.HasNoKey();
-        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedView, true);
-        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewSource, sourceTable);
-        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewQuery, selectSql.Trim());
-        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewPopulate, populate);
-
-        return builder;
-    }
-
-    /// <summary>
-    /// Configures the entity as a materialized view using a type-safe LINQ query expression.
-    /// The LINQ expression is translated to ClickHouse SQL at configuration time.
-    /// </summary>
-    /// <typeparam name="TEntity">The entity type representing the view's output schema.</typeparam>
-    /// <typeparam name="TSource">The entity type representing the source table.</typeparam>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
     /// <param name="builder">The entity type builder.</param>
-    /// <param name="query">
-    /// A LINQ expression that defines the view's transformation.
-    /// Supports GroupBy, Select, and aggregate functions (Sum, Count, Min, Max, Average).
-    /// </param>
-    /// <param name="populate">Whether to backfill existing data when creating the view.</param>
+    /// <param name="columns">The PRIMARY KEY columns, in order.</param>
     /// <returns>The entity type builder for chaining.</returns>
-    /// <remarks>
-    /// <para>
-    /// ClickHouse materialized views are INSERT triggers. When data is inserted into the source table,
-    /// the view's query transforms it and inserts the result into the view's storage.
-    /// </para>
-    /// <para>
-    /// The query expression is translated to ClickHouse SQL at configuration time, not at runtime.
-    /// This provides compile-time type checking while generating optimized ClickHouse SQL.
-    /// </para>
-    /// <para>
-    /// Engine configuration (UseMergeTree, UseSummingMergeTree, etc.) should be applied before
-    /// calling this method.
-    /// </para>
-    /// </remarks>
-    /// <example>
-    /// <code>
-    /// modelBuilder.Entity&lt;OrderDailySummary&gt;(entity =&gt;
-    /// {
-    ///     entity.ToTable("OrderDailySummary_MV");
-    ///     entity.UseSummingMergeTree(x =&gt; new { x.Date, x.ProductId });
-    ///     entity.AsMaterializedView&lt;OrderDailySummary, Order&gt;(
-    ///         query: orders =&gt; orders
-    ///             .GroupBy(o =&gt; new { Date = o.OrderDate.Date, o.ProductId })
-    ///             .Select(g =&gt; new OrderDailySummary
-    ///             {
-    ///                 Date = g.Key.Date,
-    ///                 ProductId = g.Key.ProductId,
-    ///                 TotalQuantity = g.Sum(o =&gt; o.Quantity),
-    ///                 TotalRevenue = g.Sum(o =&gt; o.Revenue)
-    ///             }),
-    ///         populate: false);
-    /// });
-    /// </code>
-    /// </example>
-    public static EntityTypeBuilder<TEntity> AsMaterializedView<TEntity, TSource>(
-        this EntityTypeBuilder<TEntity> builder,
-        Expression<Func<IQueryable<TSource>, IQueryable<TEntity>>> query,
-        bool populate = false)
-        where TEntity : class
-        where TSource : class
-    {
-        ArgumentNullException.ThrowIfNull(builder);
-        ArgumentNullException.ThrowIfNull(query);
-
-        // Get source table name from model or entity type name
-        var sourceEntityType = builder.Metadata.Model.FindEntityType(typeof(TSource));
-        var sourceTableName = sourceEntityType?.GetTableName() ?? typeof(TSource).Name;
-
-        // Translate LINQ expression to SQL immediately
-        // This allows the SQL to be serialized in model snapshots
-        var translator = new Query.Internal.MaterializedViewSqlTranslator(
-            (IModel)builder.Metadata.Model,
-            sourceTableName);
-        var selectSql = translator.Translate<TSource, TEntity>(query);
-
-        builder.HasNoKey();
-        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedView, true);
-        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewSource, sourceTableName);
-        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewQuery, selectSql);
-        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewPopulate, populate);
-
-        return builder;
-    }
-
-    /// <summary>
-    /// Marks the entity's materialised view as deferred: <c>EnsureCreatedAsync</c>
-    /// skips emitting it, so the caller can seed source data first and then
-    /// attach via <c>DatabaseFacade.CreateMaterializedViewAsync&lt;TEntity&gt;(populate: true)</c>.
-    /// </summary>
-    public static EntityTypeBuilder<TEntity> AsMaterializedViewDeferred<TEntity>(
-        this EntityTypeBuilder<TEntity> builder) where TEntity : class
-    {
-        ArgumentNullException.ThrowIfNull(builder);
-        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewDeferred, true);
-        return builder;
-    }
-
-    /// <summary>
-    /// Configures the entity as a refreshable materialized view (LINQ form).
-    /// The view runs on a schedule (<c>REFRESH EVERY|AFTER &lt;interval&gt;</c>) instead of
-    /// on every source-table write.
-    /// </summary>
-    /// <example>
-    /// <code>
-    /// entity.AsRefreshableMaterializedView&lt;HourlySummary, RawEvent&gt;(
-    ///     q => q.GroupBy(e => e.Hour).Select(g => new HourlySummary { ... }),
-    ///     r => r.Every(TimeSpan.FromMinutes(5))
-    ///           .RandomizeFor(TimeSpan.FromSeconds(30))
-    ///           .DependsOn&lt;OtherMv&gt;());
-    /// </code>
-    /// </example>
-    public static EntityTypeBuilder<TEntity> AsRefreshableMaterializedView<TEntity, TSource>(
-        this EntityTypeBuilder<TEntity> builder,
-        Expression<Func<IQueryable<TSource>, IQueryable<TEntity>>> query,
-        Action<RefreshableMaterializedViewBuilder> configure)
-        where TEntity : class
-        where TSource : class
-    {
-        ArgumentNullException.ThrowIfNull(builder);
-        ArgumentNullException.ThrowIfNull(query);
-        ArgumentNullException.ThrowIfNull(configure);
-
-        var sourceEntityType = builder.Metadata.Model.FindEntityType(typeof(TSource));
-        var sourceTableName = sourceEntityType?.GetTableName() ?? typeof(TSource).Name;
-
-        var translator = new Query.Internal.MaterializedViewSqlTranslator(
-            (IModel)builder.Metadata.Model,
-            sourceTableName);
-        var selectSql = translator.Translate<TSource, TEntity>(query);
-
-        builder.HasNoKey();
-        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedView, true);
-        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewSource, sourceTableName);
-        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewQuery, selectSql);
-        ApplyRefreshSpec(builder, configure);
-        return builder;
-    }
-
-    /// <summary>
-    /// Configures the entity as a refreshable materialized view with a raw SQL SELECT.
-    /// </summary>
-    public static EntityTypeBuilder<TEntity> AsRefreshableMaterializedViewRaw<TEntity>(
-        this EntityTypeBuilder<TEntity> builder,
-        string sourceTable,
-        string selectSql,
-        Action<RefreshableMaterializedViewBuilder> configure)
-        where TEntity : class
-    {
-        ArgumentNullException.ThrowIfNull(builder);
-        ArgumentException.ThrowIfNullOrEmpty(sourceTable);
-        ArgumentException.ThrowIfNullOrEmpty(selectSql);
-        ArgumentNullException.ThrowIfNull(configure);
-
-        builder.HasNoKey();
-        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedView, true);
-        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewSource, sourceTable);
-        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewQuery, selectSql.Trim());
-        ApplyRefreshSpec(builder, configure);
-        return builder;
-    }
-
-    /// <summary>
-    /// Non-generic overload of <see cref="AsRefreshableMaterializedViewRaw{TEntity}"/>.
-    /// </summary>
-    public static EntityTypeBuilder AsRefreshableMaterializedViewRaw(
+    public static EntityTypeBuilder WithMergeTreePrimaryKey(
         this EntityTypeBuilder builder,
-        string sourceTable,
-        string selectSql,
-        Action<RefreshableMaterializedViewBuilder> configure)
+        params string[] columns)
     {
         ArgumentNullException.ThrowIfNull(builder);
-        ArgumentException.ThrowIfNullOrEmpty(sourceTable);
-        ArgumentException.ThrowIfNullOrEmpty(selectSql);
-        ArgumentNullException.ThrowIfNull(configure);
+        ArgumentNullException.ThrowIfNull(columns);
+        if (columns.Length == 0)
+        {
+            throw new ArgumentException("At least one PRIMARY KEY column is required.", nameof(columns));
+        }
 
-        builder.HasNoKey();
-        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedView, true);
-        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewSource, sourceTable);
-        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewQuery, selectSql.Trim());
-        ApplyRefreshSpec(builder, configure);
+        builder.HasAnnotation(ClickHouseAnnotationNames.PrimaryKey, columns);
         return builder;
     }
 
-    private static void ApplyRefreshSpec(EntityTypeBuilder builder, Action<RefreshableMaterializedViewBuilder> configure)
+    /// <inheritdoc cref="WithMergeTreePrimaryKey(EntityTypeBuilder, string[])"/>
+    public static EntityTypeBuilder<TEntity> WithMergeTreePrimaryKey<TEntity>(
+        this EntityTypeBuilder<TEntity> builder,
+        params string[] columns)
+        where TEntity : class
     {
-        var refreshBuilder = new RefreshableMaterializedViewBuilder();
-        configure(refreshBuilder);
-        var spec = refreshBuilder.Build();
-
-        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshKind, spec.Kind);
-        builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshInterval, spec.Interval);
-        if (spec.Offset is not null)
-            builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshOffset, spec.Offset);
-        if (spec.RandomizeFor is not null)
-            builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshRandomizeFor, spec.RandomizeFor);
-        if (spec.DependsOn is { Length: > 0 })
-            builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshDependsOn, spec.DependsOn);
-        if (spec.Append)
-            builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshAppend, true);
-        if (spec.Empty)
-            builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshEmpty, true);
-        if (spec.Settings is { Count: > 0 })
-            builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshSettings, spec.Settings);
-        if (spec.Target is not null)
-            builder.HasAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshTarget, spec.Target);
+        ((EntityTypeBuilder)builder).WithMergeTreePrimaryKey(columns);
+        return builder;
     }
 
-    #endregion
 
     #region Dictionaries
 
@@ -2810,7 +2075,7 @@ public static class ClickHouseEntityTypeBuilderExtensions
     /// // Configure the result entity
     /// modelBuilder.Entity&lt;UserEventView&gt;(entity =>
     /// {
-    ///     entity.HasParameterizedView("user_events_view");
+    ///     entity.ToParameterizedView("user_events_view");
     /// });
     ///
     /// // Query the view
@@ -2821,6 +2086,7 @@ public static class ClickHouseEntityTypeBuilderExtensions
     ///     .ToListAsync();
     /// </code>
     /// </example>
+    [Obsolete("Use ToParameterizedView(name) instead. ToParameterizedView matches EF Core's ToView/ToTable naming convention; both methods are now functionally equivalent.")]
     public static EntityTypeBuilder<TEntity> HasParameterizedView<TEntity>(
         this EntityTypeBuilder<TEntity> builder,
         string viewName)
@@ -2829,10 +2095,9 @@ public static class ClickHouseEntityTypeBuilderExtensions
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentException.ThrowIfNullOrWhiteSpace(viewName);
 
-        // Mark as keyless since views don't have keys
         builder.HasNoKey();
+        builder.ToView(viewName);
 
-        // Store view configuration as annotations
         builder.HasAnnotation(ClickHouseAnnotationNames.ParameterizedView, true);
         builder.HasAnnotation(ClickHouseAnnotationNames.ParameterizedViewName, viewName);
 
@@ -2846,6 +2111,7 @@ public static class ClickHouseEntityTypeBuilderExtensions
     /// <param name="builder">The entity type builder.</param>
     /// <param name="viewName">The name of the parameterized view.</param>
     /// <returns>The entity type builder for chaining.</returns>
+    [Obsolete("Use ToParameterizedView(name) instead. ToParameterizedView matches EF Core's ToView/ToTable naming convention; both methods are now functionally equivalent.")]
     public static EntityTypeBuilder HasParameterizedView(
         this EntityTypeBuilder builder,
         string viewName)
@@ -2854,6 +2120,8 @@ public static class ClickHouseEntityTypeBuilderExtensions
         ArgumentException.ThrowIfNullOrWhiteSpace(viewName);
 
         builder.HasNoKey();
+        builder.ToView(viewName);
+
         builder.HasAnnotation(ClickHouseAnnotationNames.ParameterizedView, true);
         builder.HasAnnotation(ClickHouseAnnotationNames.ParameterizedViewName, viewName);
 
@@ -2911,17 +2179,14 @@ public static class ClickHouseEntityTypeBuilderExtensions
         var configuration = new ParameterizedViews.ParameterizedViewConfiguration<TView, TSource>();
         configure(configuration);
 
-        // Get or generate view name
         var viewName = configuration.ViewName ?? ConvertToSnakeCase(typeof(TView).Name);
 
-        // Mark as keyless (views don't have keys)
         builder.HasNoKey();
+        builder.ToView(viewName);
 
-        // Store basic annotations
         builder.HasAnnotation(ClickHouseAnnotationNames.ParameterizedView, true);
         builder.HasAnnotation(ClickHouseAnnotationNames.ParameterizedViewName, viewName);
 
-        // Build and store the full metadata
         var metadata = configuration.BuildMetadata(viewName);
         builder.HasAnnotation(ClickHouseAnnotationNames.ParameterizedViewMetadata, metadata);
 

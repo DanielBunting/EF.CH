@@ -87,6 +87,7 @@ public class SampleOperatorTests
                 e.ToTable("SampleOpTests_Rows");
                 e.HasKey(x => new { x.Bucket, x.Id });
                 e.UseMergeTree(x => new { x.Bucket, x.Id });
+                e.HasSampleBy(x => x.Bucket);
             });
     }
 }

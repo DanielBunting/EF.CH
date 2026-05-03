@@ -52,9 +52,10 @@ public class MvClickHouseHashFunctionTests
             mb.Entity<Tgt>(e =>
             {
                 e.ToTable("MvChHashTarget"); e.HasNoKey(); e.UseMergeTree(x => x.Id);
-                e.AsMaterializedView<Tgt, Row>(rows => rows
-                    .Select(r => new Tgt { Id = r.Id, NameHash = ClickHouseFunctions.CityHash64(r.Name) }));
+
             });
+            mb.MaterializedView<Tgt>().From<Row>().DefinedAs(rows => rows
+                    .Select(r => new Tgt { Id = r.Id, NameHash = ClickHouseFunctions.CityHash64(r.Name) }));
         }
     }
 }

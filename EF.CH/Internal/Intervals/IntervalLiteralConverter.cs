@@ -60,6 +60,9 @@ public static class IntervalLiteralConverter
         var unitRaw = match.Groups["unit"].Value.ToUpperInvariant();
         ClickHouseIntervalUnit? unit = unitRaw switch
         {
+            "NANOSECOND" => ClickHouseIntervalUnit.Nanosecond,
+            "MICROSECOND" => ClickHouseIntervalUnit.Microsecond,
+            "MILLISECOND" => ClickHouseIntervalUnit.Millisecond,
             "SECOND" => ClickHouseIntervalUnit.Second,
             "MINUTE" => ClickHouseIntervalUnit.Minute,
             "HOUR" => ClickHouseIntervalUnit.Hour,
@@ -68,7 +71,6 @@ public static class IntervalLiteralConverter
             "MONTH" => ClickHouseIntervalUnit.Month,
             "QUARTER" => ClickHouseIntervalUnit.Quarter,
             "YEAR" => ClickHouseIntervalUnit.Year,
-            // Sub-second units exist in CH but aren't in our enum; reject with null.
             _ => null,
         };
         return unit is null ? null : (count, unit.Value);

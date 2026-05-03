@@ -105,7 +105,7 @@ public class MergeCombinatorReadSideTests
             {
                 Bucket = g.Key,
                 Count = g.CountMerge(s => s.Count_s),
-                Total = g.SumMerge<Stat, double>(s => s.Sum_s),
+                Total = g.SumMerge<string, Stat, double>(s => s.Sum_s),
                 Uniq = g.UniqMerge(s => s.Uniq_s),
             })
             .OrderBy(r => r.Bucket)
@@ -147,10 +147,10 @@ public class MergeCombinatorReadSideTests
             {
                 Bucket = g.Key,
                 Count = g.CountMerge(s => s.Count_s),
-                Sum = g.SumMerge<BroadStat, double>(s => s.Sum_s),
+                Sum = g.SumMerge<string, BroadStat, double>(s => s.Sum_s),
                 Avg = g.AvgMerge(s => s.Avg_s),
-                Min = g.MinMerge<BroadStat, double>(s => s.Min_s),
-                Max = g.MaxMerge<BroadStat, double>(s => s.Max_s),
+                Min = g.MinMerge<string, BroadStat, double>(s => s.Min_s),
+                Max = g.MaxMerge<string, BroadStat, double>(s => s.Max_s),
                 Uniq = g.UniqMerge(s => s.Uniq_s),
                 UniqExact = g.UniqExactMerge(s => s.UniqExact_s),
             })
@@ -304,7 +304,9 @@ public class MergeCombinatorReadSideTests
                 e.Property(x => x.Max_s).HasAggregateFunction("max", typeof(double));
                 e.Property(x => x.Uniq_s).HasAggregateFunction("uniq", typeof(long));
                 e.Property(x => x.UniqExact_s).HasAggregateFunction("uniqExact", typeof(long));
-                e.AsMaterializedView<BroadStat, Raw>(src => src
+
+            });
+            mb.MaterializedView<BroadStat>().From<Raw>().DefinedAs(src => src
                     .GroupBy(x => x.Bucket)
                     .Select(g => new BroadStat
                     {
@@ -317,7 +319,6 @@ public class MergeCombinatorReadSideTests
                         Uniq_s = g.UniqState(x => x.UserId),
                         UniqExact_s = g.UniqExactState(x => x.UserId),
                     }));
-            });
         }
     }
 
@@ -333,10 +334,11 @@ public class MergeCombinatorReadSideTests
                 e.ToTable("QuantileStats"); e.HasNoKey();
                 e.UseAggregatingMergeTree(x => x.Bucket);
                 e.Property(x => x.Median_s).HasColumnType("AggregateFunction(quantile(0.5), Float64)");
-                e.AsMaterializedView<QuantileStat, Raw>(src => src
+
+            });
+            mb.MaterializedView<QuantileStat>().From<Raw>().DefinedAs(src => src
                     .GroupBy(x => x.Bucket)
                     .Select(g => new QuantileStat { Bucket = g.Key, Median_s = g.QuantileState(0.5, x => x.Value) }));
-            });
         }
     }
 
@@ -354,7 +356,9 @@ public class MergeCombinatorReadSideTests
                 e.Property(x => x.Count_s).HasAggregateFunction("count", typeof(ulong));
                 e.Property(x => x.Sum_s).HasAggregateFunction("sum", typeof(double));
                 e.Property(x => x.Uniq_s).HasAggregateFunction("uniq", typeof(long));
-                e.AsMaterializedView<Stat, Raw>(src => src
+
+            });
+            mb.MaterializedView<Stat>().From<Raw>().DefinedAs(src => src
                     .GroupBy(x => x.Bucket)
                     .Select(g => new Stat
                     {
@@ -363,7 +367,6 @@ public class MergeCombinatorReadSideTests
                         Sum_s = g.SumState(x => x.Value),
                         Uniq_s = g.UniqState(x => x.UserId),
                     }));
-            });
         }
     }
 }

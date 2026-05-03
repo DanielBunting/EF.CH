@@ -14,78 +14,23 @@ namespace EF.CH.Extensions;
 /// </summary>
 public static class ClickHouseDatabaseExtensions
 {
-    #region Generic Entity Type Methods
+    #region OptimizeTable
 
     /// <summary>
     /// Optimizes the table for the specified entity type, triggering a merge of data parts.
     /// </summary>
     /// <typeparam name="TEntity">The entity type.</typeparam>
     /// <param name="database">The database facade.</param>
-    /// <param name="cancellationToken">A cancellation token.</param>
-    /// <returns>A task representing the asynchronous operation.</returns>
-    public static Task<int> OptimizeTableAsync<TEntity>(
-        this DatabaseFacade database,
-        CancellationToken cancellationToken = default) where TEntity : class
-    {
-        return OptimizeTableAsync<TEntity>(database, configure: null, cancellationToken);
-    }
-
-    /// <summary>
-    /// Optimizes the table with FINAL modifier, forcing a complete merge.
-    /// </summary>
-    /// <typeparam name="TEntity">The entity type.</typeparam>
-    /// <param name="database">The database facade.</param>
-    /// <param name="cancellationToken">A cancellation token.</param>
-    /// <returns>A task representing the asynchronous operation.</returns>
-    public static Task<int> OptimizeTableFinalAsync<TEntity>(
-        this DatabaseFacade database,
-        CancellationToken cancellationToken = default) where TEntity : class
-    {
-        return OptimizeTableAsync<TEntity>(database, o => o.WithFinal(), cancellationToken);
-    }
-
-    /// <summary>
-    /// Optimizes a specific partition of the table.
-    /// </summary>
-    /// <typeparam name="TEntity">The entity type.</typeparam>
-    /// <param name="database">The database facade.</param>
-    /// <param name="partitionId">The partition ID (e.g., "202401" for monthly, "20240115" for daily).</param>
-    /// <param name="cancellationToken">A cancellation token.</param>
-    /// <returns>A task representing the asynchronous operation.</returns>
-    public static Task<int> OptimizeTablePartitionAsync<TEntity>(
-        this DatabaseFacade database,
-        string partitionId,
-        CancellationToken cancellationToken = default) where TEntity : class
-    {
-        return OptimizeTableAsync<TEntity>(database, o => o.WithPartition(partitionId), cancellationToken);
-    }
-
-    /// <summary>
-    /// Optimizes a specific partition with FINAL modifier.
-    /// </summary>
-    /// <typeparam name="TEntity">The entity type.</typeparam>
-    /// <param name="database">The database facade.</param>
-    /// <param name="partitionId">The partition ID (e.g., "202401" for monthly, "20240115" for daily).</param>
-    /// <param name="cancellationToken">A cancellation token.</param>
-    /// <returns>A task representing the asynchronous operation.</returns>
-    public static Task<int> OptimizeTablePartitionFinalAsync<TEntity>(
-        this DatabaseFacade database,
-        string partitionId,
-        CancellationToken cancellationToken = default) where TEntity : class
-    {
-        return OptimizeTableAsync<TEntity>(database, o => o.WithPartition(partitionId).WithFinal(), cancellationToken);
-    }
-
-    /// <summary>
-    /// Optimizes the table with custom options.
-    /// </summary>
-    /// <typeparam name="TEntity">The entity type.</typeparam>
-    /// <param name="database">The database facade.</param>
-    /// <param name="configure">An action to configure optimization options.</param>
+    /// <param name="configure">Optional action to configure optimization options
+    /// (FINAL, PARTITION, DEDUPLICATE).</param>
     /// <param name="cancellationToken">A cancellation token.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     /// <example>
     /// <code>
+    /// // No options — basic OPTIMIZE TABLE
+    /// await context.Database.OptimizeTableAsync&lt;Event&gt;();
+    ///
+    /// // With FINAL, partition, deduplicate, etc.
     /// await context.Database.OptimizeTableAsync&lt;Event&gt;(o => o
     ///     .WithPartition("202401")
     ///     .WithFinal()
@@ -94,97 +39,114 @@ public static class ClickHouseDatabaseExtensions
     /// </example>
     public static Task<int> OptimizeTableAsync<TEntity>(
         this DatabaseFacade database,
-        Action<OptimizeTableOptions>? configure,
+        Action<OptimizeTableOptions>? configure = null,
         CancellationToken cancellationToken = default) where TEntity : class
     {
-        var tableName = GetTableName<TEntity>(database);
-        return OptimizeTableCoreAsync(database, tableName, configure, cancellationToken);
+        var (tableName, schema) = GetTableInfo<TEntity>(database);
+
+        // Wrap configure with a model-aware preflight: when WithDeduplicate
+        // is called with an explicit column list, every primary-key column
+        // of TEntity must appear. Without this, ClickHouse rejects the
+        // OPTIMIZE … DEDUPLICATE BY at execution time with a generic
+        // server-side error and a much later failure point.
+        Action<OptimizeTableOptions>? wrapped = null;
+        if (configure is not null)
+        {
+            wrapped = options =>
+            {
+                configure(options);
+                ValidateDeduplicateAgainstModel<TEntity>(database, options);
+            };
+        }
+
+        return OptimizeTableCoreAsync(database, tableName, schema, wrapped ?? configure, cancellationToken);
     }
 
-    #endregion
+    private static void ValidateDeduplicateAgainstModel<TEntity>(
+        DatabaseFacade database,
+        OptimizeTableOptions options) where TEntity : class
+    {
+        if (!options.Deduplicate || options.DeduplicateBy is null || options.DeduplicateBy.Length == 0)
+            return;
 
-    #region String Table Name Methods
+        var context = database.GetService<ICurrentDbContext>().Context;
+        var entityType = context.Model.FindEntityType(typeof(TEntity));
+        if (entityType is null) return;
+
+        var pk = entityType.FindPrimaryKey();
+        if (pk is null || pk.Properties.Count == 0) return;
+
+        var pkColumnNames = pk.Properties
+            .Select(p => p.GetColumnName())
+            .Where(n => !string.IsNullOrEmpty(n))
+            .ToHashSet(StringComparer.Ordinal);
+
+        var dedupSet = new HashSet<string>(options.DeduplicateBy, StringComparer.Ordinal);
+
+        var missing = pkColumnNames
+            .Where(pkCol => !dedupSet.Contains(pkCol)
+                && !dedupSet.Any(d => string.Equals(d, pkCol, StringComparison.Ordinal)))
+            .ToList();
+
+        if (missing.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"WithDeduplicate column list for {typeof(TEntity).Name} omits primary key " +
+                $"column(s): {string.Join(", ", missing)}. ClickHouse requires every column in " +
+                "the table's ORDER BY (which the EF Core primary key maps to) to appear in " +
+                "DEDUPLICATE BY; otherwise the merge picks an arbitrary surviving row. " +
+                "Either add the missing column(s) to WithDeduplicate, or call WithDeduplicate() " +
+                "with no arguments to deduplicate by every column.");
+        }
+    }
+
+    /// <summary>
+    /// Synchronous counterpart of
+    /// <see cref="OptimizeTableAsync{TEntity}(DatabaseFacade, Action{OptimizeTableOptions}?, CancellationToken)"/>.
+    /// </summary>
+    public static int OptimizeTable<TEntity>(
+        this DatabaseFacade database,
+        Action<OptimizeTableOptions>? configure = null) where TEntity : class
+        => OptimizeTableAsync<TEntity>(database, configure).GetAwaiter().GetResult();
 
     /// <summary>
     /// Optimizes a table by name.
     /// </summary>
     /// <param name="database">The database facade.</param>
     /// <param name="tableName">The table name.</param>
+    /// <param name="configure">Optional action to configure optimization options
+    /// (FINAL, PARTITION, DEDUPLICATE).</param>
     /// <param name="cancellationToken">A cancellation token.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
+    /// <example>
+    /// <code>
+    /// // No options
+    /// await context.Database.OptimizeTableAsync("Events");
+    ///
+    /// // With FINAL on a specific partition
+    /// await context.Database.OptimizeTableAsync("Events", o => o
+    ///     .WithPartition("202401")
+    ///     .WithFinal());
+    /// </code>
+    /// </example>
     public static Task<int> OptimizeTableAsync(
         this DatabaseFacade database,
         string tableName,
+        Action<OptimizeTableOptions>? configure = null,
         CancellationToken cancellationToken = default)
     {
-        return OptimizeTableCoreAsync(database, tableName, configure: null, cancellationToken);
+        return OptimizeTableCoreAsync(database, tableName, schema: null, configure, cancellationToken);
     }
 
     /// <summary>
-    /// Optimizes a table by name with FINAL modifier.
+    /// Synchronous counterpart of
+    /// <see cref="OptimizeTableAsync(DatabaseFacade, string, Action{OptimizeTableOptions}?, CancellationToken)"/>.
     /// </summary>
-    /// <param name="database">The database facade.</param>
-    /// <param name="tableName">The table name.</param>
-    /// <param name="cancellationToken">A cancellation token.</param>
-    /// <returns>A task representing the asynchronous operation.</returns>
-    public static Task<int> OptimizeTableFinalAsync(
+    public static int OptimizeTable(
         this DatabaseFacade database,
         string tableName,
-        CancellationToken cancellationToken = default)
-    {
-        return OptimizeTableCoreAsync(database, tableName, o => o.WithFinal(), cancellationToken);
-    }
-
-    /// <summary>
-    /// Optimizes a specific partition of a table by name.
-    /// </summary>
-    /// <param name="database">The database facade.</param>
-    /// <param name="tableName">The table name.</param>
-    /// <param name="partitionId">The partition ID.</param>
-    /// <param name="cancellationToken">A cancellation token.</param>
-    /// <returns>A task representing the asynchronous operation.</returns>
-    public static Task<int> OptimizeTablePartitionAsync(
-        this DatabaseFacade database,
-        string tableName,
-        string partitionId,
-        CancellationToken cancellationToken = default)
-    {
-        return OptimizeTableCoreAsync(database, tableName, o => o.WithPartition(partitionId), cancellationToken);
-    }
-
-    /// <summary>
-    /// Optimizes a specific partition of a table by name with FINAL modifier.
-    /// </summary>
-    /// <param name="database">The database facade.</param>
-    /// <param name="tableName">The table name.</param>
-    /// <param name="partitionId">The partition ID.</param>
-    /// <param name="cancellationToken">A cancellation token.</param>
-    /// <returns>A task representing the asynchronous operation.</returns>
-    public static Task<int> OptimizeTablePartitionFinalAsync(
-        this DatabaseFacade database,
-        string tableName,
-        string partitionId,
-        CancellationToken cancellationToken = default)
-    {
-        return OptimizeTableCoreAsync(database, tableName, o => o.WithPartition(partitionId).WithFinal(), cancellationToken);
-    }
-
-    /// <summary>
-    /// Optimizes a table by name with custom options.
-    /// </summary>
-    /// <param name="database">The database facade.</param>
-    /// <param name="tableName">The table name.</param>
-    /// <param name="configure">An action to configure optimization options.</param>
-    /// <param name="cancellationToken">A cancellation token.</param>
-    /// <returns>A task representing the asynchronous operation.</returns>
-    public static Task<int> OptimizeTableAsync(
-        this DatabaseFacade database,
-        string tableName,
-        Action<OptimizeTableOptions>? configure,
-        CancellationToken cancellationToken = default)
-    {
-        return OptimizeTableCoreAsync(database, tableName, configure, cancellationToken);
-    }
+        Action<OptimizeTableOptions>? configure = null)
+        => OptimizeTableAsync(database, tableName, configure).GetAwaiter().GetResult();
 
     #endregion
 
@@ -193,6 +155,7 @@ public static class ClickHouseDatabaseExtensions
     private static Task<int> OptimizeTableCoreAsync(
         DatabaseFacade database,
         string tableName,
+        string? schema,
         Action<OptimizeTableOptions>? configure,
         CancellationToken cancellationToken)
     {
@@ -202,17 +165,24 @@ public static class ClickHouseDatabaseExtensions
         var options = new OptimizeTableOptions();
         configure?.Invoke(options);
 
-        var sql = BuildOptimizeSql(database, tableName, options);
+        var sql = BuildOptimizeSql(database, tableName, schema, options);
         return database.ExecuteSqlRawAsync(sql, cancellationToken);
     }
 
     private static string BuildOptimizeSql(
         DatabaseFacade database,
         string tableName,
+        string? schema,
         OptimizeTableOptions options)
     {
         var sqlHelper = database.GetService<ISqlGenerationHelper>();
-        var quotedTable = sqlHelper.DelimitIdentifier(tableName);
+        // Qualify with the entity's mapped schema when known. Without this, OPTIMIZE
+        // runs against the connection's current database — wrong target in
+        // multi-database deployments where the entity is mapped to a non-default
+        // schema.
+        var quotedTable = string.IsNullOrEmpty(schema)
+            ? sqlHelper.DelimitIdentifier(tableName)
+            : sqlHelper.DelimitIdentifier(tableName, schema);
 
         var sql = $"OPTIMIZE TABLE {quotedTable}";
 
@@ -242,20 +212,33 @@ public static class ClickHouseDatabaseExtensions
     }
 
     private static string GetTableName<TEntity>(DatabaseFacade database) where TEntity : class
+        => GetTableInfo<TEntity>(database).tableName;
+
+    private static (string tableName, string? schema) GetTableInfo<TEntity>(DatabaseFacade database) where TEntity : class
     {
         var context = database.GetService<ICurrentDbContext>().Context;
         var entityType = context.Model.FindEntityType(typeof(TEntity))
             ?? throw new InvalidOperationException(
                 $"Entity type '{typeof(TEntity).Name}' is not part of the model.");
 
-        return entityType.GetTableName()
+        var tableName = entityType.GetTableName()
             ?? throw new InvalidOperationException(
                 $"Entity type '{typeof(TEntity).Name}' does not have a table name.");
+
+        return (tableName, entityType.GetSchema());
     }
 
     #endregion
 
     #region TRUNCATE
+
+    /// <summary>
+    /// Synchronous counterpart of <see cref="TruncateTableAsync{TEntity}(DatabaseFacade, string?, CancellationToken)"/>.
+    /// </summary>
+    public static int TruncateTable<TEntity>(
+        this DatabaseFacade database,
+        string? onCluster = null) where TEntity : class
+        => TruncateTableAsync<TEntity>(database, onCluster).GetAwaiter().GetResult();
 
     /// <summary>
     /// Issues <c>TRUNCATE TABLE "..."</c> for the entity's mapped table.
@@ -267,6 +250,15 @@ public static class ClickHouseDatabaseExtensions
         string? onCluster = null,
         CancellationToken cancellationToken = default) where TEntity : class
         => TruncateTableAsync(database, GetTableName<TEntity>(database), onCluster, cancellationToken);
+
+    /// <summary>
+    /// Synchronous counterpart of <see cref="TruncateTableAsync(DatabaseFacade, string, string?, CancellationToken)"/>.
+    /// </summary>
+    public static int TruncateTable(
+        this DatabaseFacade database,
+        string tableName,
+        string? onCluster = null)
+        => TruncateTableAsync(database, tableName, onCluster).GetAwaiter().GetResult();
 
     /// <summary>
     /// Issues <c>TRUNCATE TABLE "..."</c> for an explicit table name.
@@ -293,6 +285,12 @@ public static class ClickHouseDatabaseExtensions
 
     #region SYSTEM admin commands
 
+    /// <summary>
+    /// Synchronous counterpart of <see cref="ReloadDictionaryAsync"/>.
+    /// </summary>
+    public static int ReloadDictionary(this DatabaseFacade database, string name)
+        => ReloadDictionaryAsync(database, name).GetAwaiter().GetResult();
+
     public static Task<int> ReloadDictionaryAsync(this DatabaseFacade database, string name, CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
@@ -300,14 +298,60 @@ public static class ClickHouseDatabaseExtensions
         return database.ExecuteSqlRawAsync($"SYSTEM RELOAD DICTIONARY {helper.DelimitIdentifier(name)}", ct);
     }
 
+    /// <summary>
+    /// Synchronous counterpart of <see cref="FlushLogsAsync"/>.
+    /// </summary>
+    public static int FlushLogs(this DatabaseFacade database)
+        => FlushLogsAsync(database).GetAwaiter().GetResult();
+
     public static Task<int> FlushLogsAsync(this DatabaseFacade database, CancellationToken ct = default)
         => database.ExecuteSqlRawAsync("SYSTEM FLUSH LOGS", ct);
+
+    /// <summary>
+    /// Synchronous counterpart of <see cref="SyncReplicaAsync"/>.
+    /// </summary>
+    public static int SyncReplica(this DatabaseFacade database, string tableName, bool strict = false)
+        => SyncReplicaAsync(database, tableName, strict).GetAwaiter().GetResult();
 
     public static Task<int> SyncReplicaAsync(this DatabaseFacade database, string tableName, bool strict = false, CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(tableName);
+        return SyncReplicaCoreAsync(database, tableName, schema: null, strict, ct);
+    }
+
+    /// <summary>
+    /// Typed overload that resolves the table name and schema from the EF Core
+    /// model. Prefer this when the entity is mapped via <c>ToTable("name", "schema")</c>
+    /// — the string overload only sees the name and would otherwise emit an unqualified
+    /// command that targets the connection's current database.
+    /// </summary>
+    public static Task<int> SyncReplicaAsync<TEntity>(
+        this DatabaseFacade database,
+        bool strict = false,
+        CancellationToken ct = default) where TEntity : class
+    {
+        var (tableName, schema) = GetTableInfo<TEntity>(database);
+        return SyncReplicaCoreAsync(database, tableName, schema, strict, ct);
+    }
+
+    /// <summary>
+    /// Synchronous counterpart of <see cref="SyncReplicaAsync{TEntity}"/>.
+    /// </summary>
+    public static int SyncReplica<TEntity>(this DatabaseFacade database, bool strict = false) where TEntity : class
+        => SyncReplicaAsync<TEntity>(database, strict).GetAwaiter().GetResult();
+
+    private static Task<int> SyncReplicaCoreAsync(
+        DatabaseFacade database,
+        string tableName,
+        string? schema,
+        bool strict,
+        CancellationToken ct)
+    {
         var helper = database.GetService<ISqlGenerationHelper>();
-        var sql = $"SYSTEM SYNC REPLICA {helper.DelimitIdentifier(tableName)}" + (strict ? " STRICT" : string.Empty);
+        var qualified = string.IsNullOrEmpty(schema)
+            ? helper.DelimitIdentifier(tableName)
+            : helper.DelimitIdentifier(tableName, schema);
+        var sql = $"SYSTEM SYNC REPLICA {qualified}" + (strict ? " STRICT" : string.Empty);
         return database.ExecuteSqlRawAsync(sql, ct);
     }
 
@@ -322,38 +366,128 @@ public static class ClickHouseDatabaseExtensions
     #region Deferred materialised views
 
     /// <summary>
-    /// Creates a materialised view that was declared with
-    /// <see cref="ClickHouseEntityTypeBuilderExtensions.AsMaterializedViewDeferred{TEntity}"/>.
-    /// The view's target table must already exist
-    /// (normally created via <c>EnsureCreatedAsync</c>). Use <paramref name="populate"/>
-    /// to backfill from the source table at attach time.
-    /// </summary>
+    /// Creates a materialised view that was declared via
+    /// <c>modelBuilder.MaterializedView&lt;TEntity&gt;().…Deferred()</c> (or, for
+    /// refreshable MVs, <c>.RefreshEvery(...)</c> / <c>.RefreshAfter(...)</c>).
+    /// The dispatch is automatic: if the entity carries a <c>MaterializedViewRefreshKind</c>
+    /// annotation, the refreshable form is emitted; otherwise the standard form.
+    /// The view's target table (when one is configured) must already exist —
+    /// normally via <c>EnsureCreatedAsync</c>.
+
+    /// <typeparam name="TEntity">The materialised view entity type.</typeparam>
+    /// <param name="database">The database facade.</param>
+    /// <param name="configure">Optional action to configure the create call
+    /// (POPULATE, ON CLUSTER, IF NOT EXISTS opt-out).</param>
+    /// <param name="cancellationToken">A cancellation token.</param>
+    /// <example>
+    /// <code>
+    /// // Default (IF NOT EXISTS, no populate)
+    /// await db.CreateMaterializedViewAsync&lt;MyMv&gt;();
+    ///
+    /// // With POPULATE backfill
+    /// await db.CreateMaterializedViewAsync&lt;MyMv&gt;(o => o.WithPopulate());
+    ///
+    /// // Refreshable MV — same call, dispatched via annotations
+    /// await db.CreateMaterializedViewAsync&lt;HourlySummary&gt;();
+    /// </code>
+    /// </example>
     public static Task<int> CreateMaterializedViewAsync<TEntity>(
         this DatabaseFacade database,
-        bool populate = false,
+        Action<CreateMaterializedViewOptions>? configure = null,
         CancellationToken cancellationToken = default) where TEntity : class
     {
+        var options = new CreateMaterializedViewOptions();
+        configure?.Invoke(options);
+
         var context = database.GetService<ICurrentDbContext>().Context;
         var entityType = context.Model.FindEntityType(typeof(TEntity))
             ?? throw new InvalidOperationException($"Entity type '{typeof(TEntity).Name}' is not in the model.");
 
         var viewName = entityType.GetTableName()
             ?? throw new InvalidOperationException($"Entity '{typeof(TEntity).Name}' has no table name.");
-        var selectSql = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewQuery)?.Value as string
-            ?? throw new InvalidOperationException(
-                $"Entity '{typeof(TEntity).Name}' is not configured as a materialised view. " +
-                "Call AsMaterializedView(…) or AsMaterializedViewRaw(…) first.");
 
         var helper = database.GetService<ISqlGenerationHelper>();
-        var engineSql = BuildEngineClauseForEntity(entityType);
-        var sql = new System.Text.StringBuilder()
-            .Append("CREATE MATERIALIZED VIEW IF NOT EXISTS ").Append(helper.DelimitIdentifier(viewName)).Append(' ')
-            .Append(engineSql)
-            .Append(populate ? " POPULATE AS " : " AS ")
-            .Append(selectSql)
-            .ToString();
+        var isRefreshable = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshKind) != null;
+        var sql = isRefreshable
+            ? BuildRefreshableMaterializedViewSql(entityType, viewName, helper, options)
+            : BuildMaterializedViewSql(entityType, viewName, helper, options);
 
         return database.ExecuteSqlRawAsync(sql, cancellationToken);
+    }
+
+    /// <summary>
+    /// Synchronous counterpart of <see cref="CreateMaterializedViewAsync{TEntity}"/>.
+    /// </summary>
+    public static int CreateMaterializedView<TEntity>(
+        this DatabaseFacade database,
+        Action<CreateMaterializedViewOptions>? configure = null) where TEntity : class
+        => CreateMaterializedViewAsync<TEntity>(database, configure).GetAwaiter().GetResult();
+
+    private static string BuildMaterializedViewSql(
+        IEntityType entityType,
+        string viewName,
+        ISqlGenerationHelper helper,
+        CreateMaterializedViewOptions options)
+    {
+        var selectSql = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewQuery)?.Value as string
+            ?? throw new InvalidOperationException(
+                $"Entity '{entityType.ClrType.Name}' is not configured as a materialised view. " +
+                "Call AsMaterializedView(…) or AsMaterializedViewRaw(…) first.");
+
+        var engineSql = BuildEngineClauseForEntity(entityType);
+        var sb = new System.Text.StringBuilder("CREATE MATERIALIZED VIEW ");
+        if (options.IfNotExists) sb.Append("IF NOT EXISTS ");
+        sb.Append(helper.DelimitIdentifier(viewName));
+        AppendOnCluster(sb, options.OnClusterName, helper);
+        sb.Append(' ').Append(engineSql);
+        sb.Append(options.Populate ? " POPULATE AS " : " AS ");
+        sb.Append(selectSql);
+        return sb.ToString();
+    }
+
+    private static string BuildRefreshableMaterializedViewSql(
+        IEntityType entityType,
+        string viewName,
+        ISqlGenerationHelper helper,
+        CreateMaterializedViewOptions options)
+    {
+        var selectSql = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewQuery)?.Value as string
+            ?? throw new InvalidOperationException(
+                $"Entity '{entityType.ClrType.Name}' is not configured as a refreshable MV (missing query).");
+
+        var kind = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshKind)?.Value as string ?? "EVERY";
+        var interval = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshInterval)?.Value as string
+            ?? throw new InvalidOperationException(
+                $"Entity '{entityType.ClrType.Name}' has no refresh interval — was it declared with AsRefreshableMaterializedView?");
+        var offset = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshOffset)?.Value as string;
+        var randomize = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshRandomizeFor)?.Value as string;
+        var append = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshAppend)?.Value as bool? ?? false;
+        var empty = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshEmpty)?.Value as bool? ?? false;
+        var target = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshTarget)?.Value as string;
+
+        var sb = new System.Text.StringBuilder("CREATE MATERIALIZED VIEW ");
+        if (options.IfNotExists) sb.Append("IF NOT EXISTS ");
+        sb.Append(helper.DelimitIdentifier(viewName));
+        AppendOnCluster(sb, options.OnClusterName, helper);
+        sb.Append(' ').Append("REFRESH ").Append(kind).Append(' ').Append(interval);
+        if (!string.IsNullOrEmpty(offset)) sb.Append(" OFFSET ").Append(offset);
+        if (!string.IsNullOrEmpty(randomize)) sb.Append(" RANDOMIZE FOR ").Append(randomize);
+        if (append) sb.Append(" APPEND");
+        if (!string.IsNullOrEmpty(target))
+            sb.Append(" TO ").Append(helper.DelimitIdentifier(target));
+        else
+            sb.Append(' ').Append(BuildEngineClauseForEntity(entityType));
+        if (empty) sb.Append(" EMPTY");
+        sb.Append(" AS ").Append(selectSql);
+        return sb.ToString();
+    }
+
+    private static void AppendOnCluster(System.Text.StringBuilder sb, string? cluster, ISqlGenerationHelper helper)
+    {
+        if (string.IsNullOrEmpty(cluster)) return;
+        sb.Append(ClickHouseClusterMacros.ContainsMacro(cluster)
+            ? $" ON CLUSTER '{cluster.Replace("'", "''")}'"
+            : $" ON CLUSTER {helper.DelimitIdentifier(cluster)}");
     }
 
     private static string BuildEngineClauseForEntity(IEntityType entityType)
@@ -367,48 +501,6 @@ public static class ClickHouseDatabaseExtensions
         if (orderBy is { Length: > 0 })
             sb.Append(" ORDER BY (").Append(string.Join(", ", orderBy.Select(c => "\"" + c + "\""))).Append(')');
         return sb.ToString();
-    }
-
-    /// <summary>
-    /// Issues <c>CREATE MATERIALIZED VIEW … REFRESH …</c> for an entity declared with
-    /// <see cref="ClickHouseEntityTypeBuilderExtensions.AsRefreshableMaterializedView"/>.
-    /// Intended to back the deferred-creation path the same way
-    /// <see cref="CreateMaterializedViewAsync{TEntity}"/> does for non-refreshable MVs.
-    /// </summary>
-    public static Task<int> CreateRefreshableMaterializedViewAsync<TEntity>(
-        this DatabaseFacade database,
-        CancellationToken cancellationToken = default) where TEntity : class
-    {
-        var (entityType, viewName, helper) = ResolveRefreshable<TEntity>(database);
-        var selectSql = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewQuery)?.Value as string
-            ?? throw new InvalidOperationException(
-                $"Entity '{typeof(TEntity).Name}' is not configured as a refreshable MV (missing query).");
-
-        var kind = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshKind)?.Value as string ?? "EVERY";
-        var interval = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshInterval)?.Value as string
-            ?? throw new InvalidOperationException(
-                $"Entity '{typeof(TEntity).Name}' has no refresh interval — was it declared with AsRefreshableMaterializedView?");
-        var offset = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshOffset)?.Value as string;
-        var randomize = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshRandomizeFor)?.Value as string;
-        var append = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshAppend)?.Value as bool? ?? false;
-        var empty = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshEmpty)?.Value as bool? ?? false;
-        var target = entityType.FindAnnotation(ClickHouseAnnotationNames.MaterializedViewRefreshTarget)?.Value as string;
-
-        var sb = new System.Text.StringBuilder()
-            .Append("CREATE MATERIALIZED VIEW IF NOT EXISTS ")
-            .Append(helper.DelimitIdentifier(viewName)).Append(' ')
-            .Append("REFRESH ").Append(kind).Append(' ').Append(interval);
-        if (!string.IsNullOrEmpty(offset)) sb.Append(" OFFSET ").Append(offset);
-        if (!string.IsNullOrEmpty(randomize)) sb.Append(" RANDOMIZE FOR ").Append(randomize);
-        if (append) sb.Append(" APPEND");
-        if (!string.IsNullOrEmpty(target))
-            sb.Append(" TO ").Append(helper.DelimitIdentifier(target));
-        else
-            sb.Append(' ').Append(BuildEngineClauseForEntity(entityType));
-        if (empty) sb.Append(" EMPTY");
-        sb.Append(" AS ").Append(selectSql);
-
-        return database.ExecuteSqlRawAsync(sb.ToString(), cancellationToken);
     }
 
     /// <summary>
@@ -450,6 +542,14 @@ public static class ClickHouseDatabaseExtensions
         var (_, viewName, _) = ResolveRefreshable<TEntity>(database);
         return await ReadRefreshStatusAsync(database, viewName, cancellationToken).ConfigureAwait(false);
     }
+
+    /// <summary>
+    /// Synchronous counterpart of <see cref="WaitForRefreshAsync{TEntity}"/>.
+    /// </summary>
+    public static void WaitForRefresh<TEntity>(
+        this DatabaseFacade database,
+        TimeSpan? timeout = null) where TEntity : class
+        => WaitForRefreshAsync<TEntity>(database, timeout).GetAwaiter().GetResult();
 
     /// <summary>
     /// Polls <c>system.view_refreshes</c> until <c>last_success_time</c> advances past
@@ -611,7 +711,9 @@ public static class ClickHouseDatabaseExtensions
     #region Parameterized Views
 
     /// <summary>
-    /// Creates a parameterized view in ClickHouse.
+    /// Creates a parameterized view in ClickHouse. Always emits <c>IF NOT EXISTS</c>
+    /// — the call is idempotent. To force a recreate, drop first via
+    /// <see cref="DropParameterizedViewIfExistsAsync"/>.
     /// </summary>
     /// <param name="database">The database facade.</param>
     /// <param name="viewName">The name of the view to create.</param>
@@ -619,7 +721,6 @@ public static class ClickHouseDatabaseExtensions
     /// The SELECT SQL for the view, including parameter placeholders.
     /// Use ClickHouse syntax: <c>{parameter_name:Type}</c> for parameters.
     /// </param>
-    /// <param name="ifNotExists">Whether to include IF NOT EXISTS clause (default: false).</param>
     /// <param name="cancellationToken">A cancellation token.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
     /// <example>
@@ -636,59 +737,70 @@ public static class ClickHouseDatabaseExtensions
         this DatabaseFacade database,
         string viewName,
         string selectSql,
-        bool ifNotExists = false,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(database);
         ArgumentException.ThrowIfNullOrWhiteSpace(viewName);
         ArgumentException.ThrowIfNullOrWhiteSpace(selectSql);
 
-        var sql = BuildCreateViewSql(database, viewName, selectSql, ifNotExists);
+        var sql = BuildCreateParameterizedViewSql(database, viewName, selectSql);
         return database.ExecuteSqlRawAsync(sql, cancellationToken);
     }
 
     /// <summary>
-    /// Drops a parameterized view from ClickHouse.
+    /// Drops a parameterized view from ClickHouse. Throws if the view does not exist.
+    /// Use <see cref="DropParameterizedViewIfExistsAsync"/> for the silent variant.
     /// </summary>
     /// <param name="database">The database facade.</param>
     /// <param name="viewName">The name of the view to drop.</param>
-    /// <param name="ifExists">Whether to include IF EXISTS clause (default: true).</param>
     /// <param name="cancellationToken">A cancellation token.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    /// <example>
-    /// <code>
-    /// await context.Database.DropParameterizedViewAsync("user_events_view");
-    /// </code>
-    /// </example>
     public static Task<int> DropParameterizedViewAsync(
         this DatabaseFacade database,
         string viewName,
-        bool ifExists = true,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(database);
         ArgumentException.ThrowIfNullOrWhiteSpace(viewName);
 
-        var sql = BuildDropViewSql(database, viewName, ifExists);
+        var sql = BuildDropParameterizedViewSql(database, viewName, ifExists: false);
         return database.ExecuteSqlRawAsync(sql, cancellationToken);
     }
 
-    private static string BuildCreateViewSql(
+    /// <summary>
+    /// Drops a parameterized view from ClickHouse, emitting <c>IF EXISTS</c>.
+    /// Silent if the view does not exist.
+    /// </summary>
+    /// <param name="database">The database facade.</param>
+    /// <param name="viewName">The name of the view to drop.</param>
+    /// <param name="cancellationToken">A cancellation token.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
+    public static Task<int> DropParameterizedViewIfExistsAsync(
+        this DatabaseFacade database,
+        string viewName,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(database);
+        ArgumentException.ThrowIfNullOrWhiteSpace(viewName);
+
+        var sql = BuildDropParameterizedViewSql(database, viewName, ifExists: true);
+        return database.ExecuteSqlRawAsync(sql, cancellationToken);
+    }
+
+    private static string BuildCreateParameterizedViewSql(
         DatabaseFacade database,
         string viewName,
-        string selectSql,
-        bool ifNotExists)
+        string selectSql)
     {
         var sqlHelper = database.GetService<ISqlGenerationHelper>();
         var quotedName = sqlHelper.DelimitIdentifier(viewName);
 
-        var ifNotExistsClause = ifNotExists ? "IF NOT EXISTS " : "";
         // Escape curly braces to prevent ExecuteSqlRawAsync from interpreting them as format specifiers
         var escapedSql = selectSql.Trim().Replace("{", "{{").Replace("}", "}}");
-        return $"CREATE VIEW {ifNotExistsClause}{quotedName} AS\n{escapedSql}";
+        return $"CREATE VIEW IF NOT EXISTS {quotedName} AS\n{escapedSql}";
     }
 
-    private static string BuildDropViewSql(
+    private static string BuildDropParameterizedViewSql(
         DatabaseFacade database,
         string viewName,
         bool ifExists)
@@ -701,10 +813,17 @@ public static class ClickHouseDatabaseExtensions
     }
 
     /// <summary>
+    /// Synchronous counterpart of <see cref="EnsureParameterizedViewsAsync"/>.
+    /// Always emits <c>IF NOT EXISTS</c> — the operation is idempotent.
+    /// </summary>
+    public static int EnsureParameterizedViews(this DatabaseFacade database)
+        => EnsureParameterizedViewsAsync(database).GetAwaiter().GetResult();
+
+    /// <summary>
     /// Creates all parameterized views configured via AsParameterizedView in the model.
+    /// Always emits <c>IF NOT EXISTS</c> — the operation is idempotent.
     /// </summary>
     /// <param name="database">The database facade.</param>
-    /// <param name="ifNotExists">Whether to include IF NOT EXISTS clause (default: true).</param>
     /// <param name="cancellationToken">A cancellation token.</param>
     /// <returns>The number of views created.</returns>
     /// <remarks>
@@ -714,7 +833,7 @@ public static class ClickHouseDatabaseExtensions
     /// CREATE VIEW statements.
     /// </para>
     /// <para>
-    /// Views configured with only <c>HasParameterizedView(name)</c> (without fluent configuration)
+    /// Views configured with only <c>ToParameterizedView(name)</c> (without fluent configuration)
     /// are skipped since they don't have the projection and parameter metadata.
     /// </para>
     /// </remarks>
@@ -727,36 +846,15 @@ public static class ClickHouseDatabaseExtensions
     /// </example>
     public static async Task<int> EnsureParameterizedViewsAsync(
         this DatabaseFacade database,
-        bool ifNotExists = true,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(database);
 
         var context = database.GetService<ICurrentDbContext>().Context;
-        var model = context.Model;
         var viewsCreated = 0;
 
-        foreach (var entityType in model.GetEntityTypes())
+        foreach (var sql in Views.ViewCreationHelpers.EnumerateParameterizedViewDdl(context.Model))
         {
-            // Check if this is a parameterized view with fluent configuration
-            var isParameterizedView = entityType.FindAnnotation(
-                Metadata.ClickHouseAnnotationNames.ParameterizedView)?.Value as bool? ?? false;
-
-            if (!isParameterizedView)
-                continue;
-
-            var metadata = entityType.FindAnnotation(
-                Metadata.ClickHouseAnnotationNames.ParameterizedViewMetadata)?.Value as ParameterizedViews.ParameterizedViewMetadataBase;
-
-            if (metadata == null)
-            {
-                // Skip views configured with HasParameterizedView() only (no fluent configuration)
-                continue;
-            }
-
-            var sql = ParameterizedViews.ParameterizedViewSqlGenerator.GenerateCreateViewSql(model, metadata, ifNotExists);
-
-            // Escape curly braces for ExecuteSqlRawAsync
             var escapedSql = sql.Replace("{", "{{").Replace("}", "}}");
             await database.ExecuteSqlRawAsync(escapedSql, cancellationToken);
             viewsCreated++;
@@ -766,13 +864,22 @@ public static class ClickHouseDatabaseExtensions
     }
 
     /// <summary>
+    /// Synchronous counterpart of <see cref="EnsureParameterizedViewAsync{TView}"/>.
+    /// Always emits <c>IF NOT EXISTS</c> — the operation is idempotent.
+    /// Returns the rows-affected count from the underlying DDL command.
+    /// </summary>
+    public static int EnsureParameterizedView<TView>(this DatabaseFacade database)
+        where TView : class
+        => EnsureParameterizedViewAsync<TView>(database).GetAwaiter().GetResult();
+
+    /// <summary>
     /// Creates a specific parameterized view configured via AsParameterizedView.
+    /// Always emits <c>IF NOT EXISTS</c> — the operation is idempotent.
     /// </summary>
     /// <typeparam name="TView">The view result entity type.</typeparam>
     /// <param name="database">The database facade.</param>
-    /// <param name="ifNotExists">Whether to include IF NOT EXISTS clause (default: true).</param>
     /// <param name="cancellationToken">A cancellation token.</param>
-    /// <returns>A task representing the asynchronous operation.</returns>
+    /// <returns>The rows-affected count from the underlying DDL command.</returns>
     /// <exception cref="InvalidOperationException">
     /// If the entity type is not configured as a parameterized view with fluent configuration.
     /// </exception>
@@ -781,9 +888,8 @@ public static class ClickHouseDatabaseExtensions
     /// await context.Database.EnsureParameterizedViewAsync&lt;UserEventView&gt;();
     /// </code>
     /// </example>
-    public static Task EnsureParameterizedViewAsync<TView>(
+    public static Task<int> EnsureParameterizedViewAsync<TView>(
         this DatabaseFacade database,
-        bool ifNotExists = true,
         CancellationToken cancellationToken = default)
         where TView : class
     {
@@ -810,9 +916,9 @@ public static class ClickHouseDatabaseExtensions
             Metadata.ClickHouseAnnotationNames.ParameterizedViewMetadata)?.Value as ParameterizedViews.ParameterizedViewMetadataBase
             ?? throw new InvalidOperationException(
                 $"Entity type '{typeof(TView).Name}' does not have fluent view configuration. " +
-                "Use AsParameterizedView<TView, TSource>() instead of HasParameterizedView() to enable DDL generation.");
+                "Use AsParameterizedView<TView, TSource>() instead of ToParameterizedView() to enable DDL generation.");
 
-        var sql = ParameterizedViews.ParameterizedViewSqlGenerator.GenerateCreateViewSql(model, metadata, ifNotExists);
+        var sql = ParameterizedViews.ParameterizedViewSqlGenerator.GenerateCreateViewSql(model, metadata, ifNotExists: true);
 
         // Escape curly braces for ExecuteSqlRawAsync
         var escapedSql = sql.Replace("{", "{{").Replace("}", "}}");
@@ -821,10 +927,11 @@ public static class ClickHouseDatabaseExtensions
 
     /// <summary>
     /// Gets the CREATE VIEW SQL for a parameterized view without executing it.
+    /// Always includes <c>IF NOT EXISTS</c> to match the behaviour of
+    /// <see cref="EnsureParameterizedViewAsync{TView}"/>.
     /// </summary>
     /// <typeparam name="TView">The view result entity type.</typeparam>
     /// <param name="database">The database facade.</param>
-    /// <param name="ifNotExists">Whether to include IF NOT EXISTS clause (default: false).</param>
     /// <returns>The CREATE VIEW SQL statement.</returns>
     /// <remarks>
     /// Useful for debugging or generating migration scripts.
@@ -835,9 +942,7 @@ public static class ClickHouseDatabaseExtensions
     /// Console.WriteLine(sql);
     /// </code>
     /// </example>
-    public static string GetParameterizedViewSql<TView>(
-        this DatabaseFacade database,
-        bool ifNotExists = false)
+    public static string GetParameterizedViewSql<TView>(this DatabaseFacade database)
         where TView : class
     {
         ArgumentNullException.ThrowIfNull(database);
@@ -854,7 +959,7 @@ public static class ClickHouseDatabaseExtensions
             ?? throw new InvalidOperationException(
                 $"Entity type '{typeof(TView).Name}' does not have fluent view configuration.");
 
-        return ParameterizedViews.ParameterizedViewSqlGenerator.GenerateCreateViewSql(model, metadata, ifNotExists);
+        return ParameterizedViews.ParameterizedViewSqlGenerator.GenerateCreateViewSql(model, metadata, ifNotExists: true);
     }
 
     #endregion
@@ -862,13 +967,16 @@ public static class ClickHouseDatabaseExtensions
     #region Plain Views
 
     /// <summary>
-    /// Creates a ClickHouse view from a raw SELECT SQL string.
+    /// Creates a ClickHouse view from a raw SELECT SQL string. Always emits
+    /// <c>IF NOT EXISTS</c> — the call is idempotent. Pass <c>orReplace: true</c>
+    /// to instead emit <c>CREATE OR REPLACE VIEW</c>.
     /// </summary>
     /// <param name="database">The database facade.</param>
     /// <param name="viewName">The view name.</param>
     /// <param name="selectSql">The SELECT SQL body (without CREATE VIEW prefix).</param>
-    /// <param name="ifNotExists">Emit IF NOT EXISTS.</param>
-    /// <param name="orReplace">Emit OR REPLACE. Mutually exclusive with <paramref name="ifNotExists"/>.</param>
+    /// <param name="orReplace">
+    /// Emit <c>CREATE OR REPLACE VIEW</c> instead of <c>CREATE VIEW IF NOT EXISTS</c>.
+    /// </param>
     /// <param name="onCluster">Optional ON CLUSTER cluster name.</param>
     /// <param name="schema">Optional schema (database) qualifier.</param>
     /// <param name="cancellationToken">A cancellation token.</param>
@@ -876,7 +984,6 @@ public static class ClickHouseDatabaseExtensions
         this DatabaseFacade database,
         string viewName,
         string selectSql,
-        bool ifNotExists = false,
         bool orReplace = false,
         string? onCluster = null,
         string? schema = null,
@@ -886,19 +993,15 @@ public static class ClickHouseDatabaseExtensions
         ArgumentException.ThrowIfNullOrWhiteSpace(viewName);
         ArgumentException.ThrowIfNullOrWhiteSpace(selectSql);
 
-        if (ifNotExists && orReplace)
-        {
-            throw new ArgumentException(
-                "ClickHouse CREATE VIEW does not allow combining IF NOT EXISTS with OR REPLACE.",
-                nameof(orReplace));
-        }
-
         var metadata = new Views.ViewMetadataBase
         {
             ViewName = viewName,
             ResultType = typeof(object),
             RawSelectSql = selectSql,
-            IfNotExists = ifNotExists,
+            // ClickHouse CREATE VIEW cannot combine IF NOT EXISTS with OR REPLACE,
+            // so OR REPLACE wins when explicitly requested; otherwise we always
+            // emit IF NOT EXISTS for idempotency.
+            IfNotExists = !orReplace,
             OrReplace = orReplace,
             OnCluster = onCluster,
             Schema = schema
@@ -911,12 +1014,12 @@ public static class ClickHouseDatabaseExtensions
     }
 
     /// <summary>
-    /// Drops a ClickHouse view.
+    /// Drops a ClickHouse view. Throws if the view does not exist. Use
+    /// <see cref="DropViewIfExistsAsync"/> for the silent variant.
     /// </summary>
     public static Task<int> DropViewAsync(
         this DatabaseFacade database,
         string viewName,
-        bool ifExists = true,
         string? onCluster = null,
         string? schema = null,
         CancellationToken cancellationToken = default)
@@ -924,14 +1027,39 @@ public static class ClickHouseDatabaseExtensions
         ArgumentNullException.ThrowIfNull(database);
         ArgumentException.ThrowIfNullOrWhiteSpace(viewName);
 
-        var sql = Views.ViewSqlGenerator.GenerateDropViewSql(viewName, schema, ifExists, onCluster);
+        var sql = Views.ViewSqlGenerator.GenerateDropViewSql(viewName, schema, ifExists: false, onCluster);
         return database.ExecuteSqlRawAsync(sql, cancellationToken);
     }
 
     /// <summary>
+    /// Drops a ClickHouse view, emitting <c>IF EXISTS</c>. Silent if the view
+    /// does not exist.
+    /// </summary>
+    public static Task<int> DropViewIfExistsAsync(
+        this DatabaseFacade database,
+        string viewName,
+        string? onCluster = null,
+        string? schema = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(database);
+        ArgumentException.ThrowIfNullOrWhiteSpace(viewName);
+
+        var sql = Views.ViewSqlGenerator.GenerateDropViewSql(viewName, schema, ifExists: true, onCluster);
+        return database.ExecuteSqlRawAsync(sql, cancellationToken);
+    }
+
+    /// <summary>
+    /// Synchronous counterpart of <see cref="EnsureViewsAsync"/>.
+    /// </summary>
+    public static int EnsureViews(this DatabaseFacade database)
+        => EnsureViewsAsync(database).GetAwaiter().GetResult();
+
+    /// <summary>
     /// Creates all plain views configured via <c>AsView</c> / <c>AsViewRaw</c> in the model.
-    /// Skips entities marked <c>AsViewDeferred</c> and entities configured with only
-    /// <c>HasView(name)</c> (no DDL metadata to emit).
+    /// Always emits <c>IF NOT EXISTS</c> — the operation is idempotent. Skips entities
+    /// marked <c>AsViewDeferred</c> and entities configured with only <c>HasView(name)</c>
+    /// (no DDL metadata to emit).
     /// </summary>
     /// <returns>The number of views created.</returns>
     public static async Task<int> EnsureViewsAsync(
@@ -941,27 +1069,10 @@ public static class ClickHouseDatabaseExtensions
         ArgumentNullException.ThrowIfNull(database);
 
         var context = database.GetService<ICurrentDbContext>().Context;
-        var model = context.Model;
         var viewsCreated = 0;
 
-        foreach (var entityType in model.GetEntityTypes())
+        foreach (var sql in Views.ViewCreationHelpers.EnumeratePlainViewDdl(context.Model))
         {
-            var isView = entityType.FindAnnotation(
-                Metadata.ClickHouseAnnotationNames.View)?.Value as bool? ?? false;
-            if (!isView)
-                continue;
-
-            var deferred = entityType.FindAnnotation(
-                Metadata.ClickHouseAnnotationNames.ViewDeferred)?.Value as bool? ?? false;
-            if (deferred)
-                continue;
-
-            var metadata = entityType.FindAnnotation(
-                Metadata.ClickHouseAnnotationNames.ViewMetadata)?.Value as Views.ViewMetadataBase;
-            if (metadata == null)
-                continue;
-
-            var sql = Views.ViewSqlGenerator.GenerateCreateViewSql(model, metadata);
             var escapedSql = sql.Replace("{", "{{").Replace("}", "}}");
             await database.ExecuteSqlRawAsync(escapedSql, cancellationToken);
             viewsCreated++;
@@ -971,10 +1082,20 @@ public static class ClickHouseDatabaseExtensions
     }
 
     /// <summary>
+    /// Synchronous counterpart of <see cref="EnsureViewAsync{TView}"/>.
+    /// Always emits <c>IF NOT EXISTS</c> — the operation is idempotent.
+    /// Returns the rows-affected count from the underlying DDL command.
+    /// </summary>
+    public static int EnsureView<TView>(this DatabaseFacade database)
+        where TView : class
+        => EnsureViewAsync<TView>(database).GetAwaiter().GetResult();
+
+    /// <summary>
     /// Creates a single plain view configured via <c>AsView</c> / <c>AsViewRaw</c>.
+    /// Always emits <c>IF NOT EXISTS</c> — the operation is idempotent.
     /// </summary>
     /// <typeparam name="TView">The view result entity type.</typeparam>
-    public static Task EnsureViewAsync<TView>(
+    public static Task<int> EnsureViewAsync<TView>(
         this DatabaseFacade database,
         CancellationToken cancellationToken = default)
         where TView : class
@@ -1003,7 +1124,8 @@ public static class ClickHouseDatabaseExtensions
                 $"Entity type '{typeof(TView).Name}' does not have view DDL metadata. " +
                 "Use AsView<TView, TSource>() or AsViewRaw<TView>() instead of HasView() to enable DDL generation.");
 
-        var sql = Views.ViewSqlGenerator.GenerateCreateViewSql(model, metadata);
+        var sql = Views.ViewSqlGenerator.GenerateCreateViewSql(
+            model, Views.ViewCreationHelpers.ForceIfNotExists(metadata));
         var escapedSql = sql.Replace("{", "{{").Replace("}", "}}");
         return database.ExecuteSqlRawAsync(escapedSql, cancellationToken);
     }

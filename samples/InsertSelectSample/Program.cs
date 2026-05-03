@@ -1,5 +1,6 @@
 using EF.CH.Extensions;
 using Microsoft.EntityFrameworkCore;
+using EF.CH.Metadata;
 
 // ============================================================
 // INSERT ... SELECT Sample
@@ -56,15 +57,17 @@ Console.WriteLine("\n--- Data Archival (Copy Electronics) ---");
 var electronicsCount = await context.Events.CountAsync(e => e.Category == "Electronics");
 Console.WriteLine($"Found {electronicsCount:N0} Electronics events");
 
-var archiveResult = await context.ArchivedEvents.ExecuteInsertFromQueryAsync(
-    context.Events.Where(e => e.Category == "Electronics"),
-    e => new ArchivedEvent
-    {
-        Id = e.Id,
-        Timestamp = e.Timestamp,
-        Category = e.Category,
-        Amount = e.Amount
-    });
+var archiveResult = await context.Events
+    .Where(e => e.Category == "Electronics")
+    .InsertIntoAsync(
+        context.ArchivedEvents,
+        e => new ArchivedEvent
+        {
+            Id = e.Id,
+            Timestamp = e.Timestamp,
+            Category = e.Category,
+            Amount = e.Amount
+        });
 
 Console.WriteLine($"Archived in {archiveResult.Elapsed.TotalMilliseconds:F2}ms");
 Console.WriteLine($"Generated SQL:\n{archiveResult.Sql}\n");
@@ -83,15 +86,17 @@ await context.Database.TruncateTableAsync<ArchivedEvent>();
 
 // Captured DateTime variable - properly resolved
 var cutoffDate = DateTime.UtcNow.AddDays(-14);
-var dateArchiveResult = await context.ArchivedEvents.ExecuteInsertFromQueryAsync(
-    context.Events.Where(e => e.Timestamp < cutoffDate),
-    e => new ArchivedEvent
-    {
-        Id = e.Id,
-        Timestamp = e.Timestamp,
-        Category = e.Category,
-        Amount = e.Amount
-    });
+var dateArchiveResult = await context.Events
+    .Where(e => e.Timestamp < cutoffDate)
+    .InsertIntoAsync(
+        context.ArchivedEvents,
+        e => new ArchivedEvent
+        {
+            Id = e.Id,
+            Timestamp = e.Timestamp,
+            Category = e.Category,
+            Amount = e.Amount
+        });
 
 Console.WriteLine($"Archived events older than 14 days in {dateArchiveResult.Elapsed.TotalMilliseconds:F2}ms");
 Console.WriteLine($"Generated SQL:\n{dateArchiveResult.Sql}\n");
@@ -108,15 +113,17 @@ Console.WriteLine("\n--- Cross-table Copy (Multiple Filters) ---");
 // Clear archive for this demo
 await context.Database.TruncateTableAsync<ArchivedEvent>();
 
-var copyResult = await context.ArchivedEvents.ExecuteInsertFromQueryAsync(
-    context.Events.Where(e => e.Category == "Clothing" || e.Category == "Books"),
-    e => new ArchivedEvent
-    {
-        Id = e.Id,
-        Timestamp = e.Timestamp,
-        Category = e.Category,
-        Amount = e.Amount
-    });
+var copyResult = await context.Events
+    .Where(e => e.Category == "Clothing" || e.Category == "Books")
+    .InsertIntoAsync(
+        context.ArchivedEvents,
+        e => new ArchivedEvent
+        {
+            Id = e.Id,
+            Timestamp = e.Timestamp,
+            Category = e.Category,
+            Amount = e.Amount
+        });
 
 Console.WriteLine($"Copied Clothing and Books events in {copyResult.Elapsed.TotalMilliseconds:F2}ms");
 
@@ -158,8 +165,8 @@ Console.WriteLine("\n--- Copy All Records ---");
 // Clear archive for this demo
 await context.Database.TruncateTableAsync<ArchivedEvent>();
 
-var allResult = await context.ArchivedEvents.ExecuteInsertFromQueryAsync(
-    context.Events,
+var allResult = await context.Events.InsertIntoAsync(
+    context.ArchivedEvents,
     e => new ArchivedEvent
     {
         Id = e.Id,
@@ -182,15 +189,17 @@ await context.Database.TruncateTableAsync<ArchivedEvent>();
 
 // Server-side INSERT ... SELECT
 var serverSideStart = DateTime.UtcNow;
-await context.ArchivedEvents.ExecuteInsertFromQueryAsync(
-    context.Events.Where(e => e.Category == "Home"),
-    e => new ArchivedEvent
-    {
-        Id = e.Id,
-        Timestamp = e.Timestamp,
-        Category = e.Category,
-        Amount = e.Amount
-    });
+await context.Events
+    .Where(e => e.Category == "Home")
+    .InsertIntoAsync(
+        context.ArchivedEvents,
+        e => new ArchivedEvent
+        {
+            Id = e.Id,
+            Timestamp = e.Timestamp,
+            Category = e.Category,
+            Amount = e.Amount
+        });
 var serverSideTime = DateTime.UtcNow - serverSideStart;
 
 var serverCount = await context.ArchivedEvents.CountAsync();
@@ -249,7 +258,7 @@ public class SampleDbContext : DbContext
             entity.ToTable("Events");
             entity.HasKey(e => e.Id);
             entity.UseMergeTree(x => new { x.Timestamp, x.Id });
-            entity.HasPartitionByMonth(x => x.Timestamp);
+            entity.HasPartitionBy(x => x.Timestamp, PartitionGranularity.Month);
         });
 
         modelBuilder.Entity<ArchivedEvent>(entity =>
@@ -257,7 +266,7 @@ public class SampleDbContext : DbContext
             entity.ToTable("ArchivedEvents");
             entity.HasKey(e => e.Id);
             entity.UseMergeTree(x => new { x.Timestamp, x.Id });
-            entity.HasPartitionByMonth(x => x.Timestamp);
+            entity.HasPartitionBy(x => x.Timestamp, PartitionGranularity.Month);
         });
     }
 }

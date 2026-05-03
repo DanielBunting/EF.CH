@@ -33,8 +33,14 @@ public static class ClickHouseDbContextOptionsExtensions
         ArgumentNullException.ThrowIfNull(optionsBuilder);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
+        var (driverConnectionString, httpPort) = ExtractHttpPort(connectionString);
+
         var extension = GetOrCreateExtension(optionsBuilder)
-            .WithConnectionString(connectionString);
+            .WithConnectionString(driverConnectionString);
+        if (httpPort.HasValue)
+        {
+            extension = extension.WithHttpPort(httpPort);
+        }
 
         ((IDbContextOptionsBuilderInfrastructure)optionsBuilder).AddOrUpdateExtension(extension);
 
@@ -44,6 +50,44 @@ public static class ClickHouseDbContextOptionsExtensions
         clickHouseOptionsAction?.Invoke(new ClickHouseDbContextOptionsBuilder(optionsBuilder));
 
         return optionsBuilder;
+    }
+
+    /// <summary>
+    /// Normalises the connection string before it reaches the ADO.NET driver:
+    /// strips out the EF.CH-specific <c>HttpPort=</c> field, and renames the
+    /// SQL-Server-style <c>Server=</c> alias to ClickHouse's preferred <c>Host=</c>
+    /// (the underlying <c>ClickHouse.Driver</c> does not recognise <c>Server=</c>
+    /// and would silently fall back to the default host). Returns the cleaned
+    /// connection string and the parsed HTTP port (if any).
+    /// </summary>
+    private static (string ConnectionString, int? HttpPort) ExtractHttpPort(string connectionString)
+    {
+        var parts = connectionString.Split(';', StringSplitOptions.None);
+        int? httpPort = null;
+        var kept = new List<string>(parts.Length);
+
+        foreach (var part in parts)
+        {
+            var kv = part.Split('=', 2);
+            if (kv.Length == 2
+                && kv[0].Trim().Equals("HttpPort", StringComparison.OrdinalIgnoreCase)
+                && int.TryParse(kv[1].Trim(), out var p))
+            {
+                httpPort = p;
+                continue;
+            }
+
+            // Normalise SQL-Server-style `Server=` to ClickHouse's `Host=`.
+            if (kv.Length == 2 && kv[0].Trim().Equals("Server", StringComparison.OrdinalIgnoreCase))
+            {
+                kept.Add($"Host={kv[1]}");
+                continue;
+            }
+
+            kept.Add(part);
+        }
+
+        return (string.Join(';', kept), httpPort);
     }
 
     /// <summary>
@@ -234,6 +278,24 @@ public class ClickHouseDbContextOptionsBuilder
         return this;
     }
 
+    /// <summary>
+    /// Opt into strict-transaction mode. ClickHouse does not support transactions;
+    /// by default <c>BeginTransaction</c> returns a no-op (with a warn-once log)
+    /// so EF Core's migration executor and code that opens a transaction-scoped
+    /// block keep working. In strict mode, <c>BeginTransaction</c> and
+    /// <c>BeginTransactionAsync</c> throw <see cref="ClickHouseUnsupportedOperationException"/>.
+    /// Use this when you want to be certain no caller is silently relying on
+    /// transactional semantics the provider can't deliver.
+    /// </summary>
+    /// <param name="strict">Whether to throw on transaction creation (default: true).</param>
+    /// <returns>The same builder instance for method chaining.</returns>
+    public virtual ClickHouseDbContextOptionsBuilder UseStrictTransactions(bool strict = true)
+    {
+        var extension = GetOrCreateExtension().WithStrictTransactions(strict);
+        ((IDbContextOptionsBuilderInfrastructure)_optionsBuilder).AddOrUpdateExtension(extension);
+        return this;
+    }
+
     #region Multi-Datacenter Configuration
 
     /// <summary>
@@ -340,6 +402,35 @@ public class ClickHouseDbContextOptionsBuilder
     /// </summary>
     public virtual ClickHouseDbContextOptionsBuilder UseCluster()
         => UseCluster(ClickHouseClusterMacros.Cluster);
+
+    /// <summary>
+    /// Sets the HTTP port used by the export APIs (CSV / JSON / JSONEachRow / format streaming).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The EF connection string typically carries the ClickHouse <em>native protocol</em> port
+    /// (e.g. 9000) used by the ADO.NET driver, while the export APIs talk HTTP (typically 8123).
+    /// Use this when the connection string's <c>Port=</c> field is the native port — for example
+    /// with Testcontainers, where <c>GetConnectionString()</c> returns the mapped native port.
+    /// </para>
+    /// <para>
+    /// Alternatively, add an <c>HttpPort=</c> field to the connection string itself; that value
+    /// takes precedence over this builder option.
+    /// </para>
+    /// </remarks>
+    /// <param name="httpPort">The HTTP port (typically 8123).</param>
+    /// <returns>The same builder instance for method chaining.</returns>
+    public virtual ClickHouseDbContextOptionsBuilder UseHttpPort(int httpPort)
+    {
+        if (httpPort <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(httpPort), "HTTP port must be positive.");
+        }
+
+        var extension = GetOrCreateExtension().WithHttpPort(httpPort);
+        ((IDbContextOptionsBuilderInfrastructure)_optionsBuilder).AddOrUpdateExtension(extension);
+        return this;
+    }
 
     /// <summary>
     /// Adds a named connection configuration using a fluent builder.

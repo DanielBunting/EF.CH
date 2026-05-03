@@ -29,7 +29,7 @@ External Data (simulated CSV)
     |                               |
     |<---------- Join / Enrich -----|
     |
-    |---ExecuteInsertFromQueryAsync---> [FinalRecord] (destination)
+    |---InsertIntoAsync---> [FinalRecord] (destination)
     |
     |---BeginTempTableScope--->
          |--- Extract (temp #1)
@@ -48,7 +48,7 @@ External Data (simulated CSV)
 | Populate temp | `tempTable.InsertAsync(entities)` |
 | Insert into temp | `query.InsertIntoTempTableAsync(tempTable)` |
 | Query temp table | `tempTable.Query().Where(...).ToListAsync()` |
-| INSERT...SELECT | `dbSet.ExecuteInsertFromQueryAsync(sourceQuery, mapping)` |
+| INSERT...SELECT | `sourceQuery.InsertIntoAsync(dbSet, mapping)` |
 | Scoped cleanup | `context.BeginTempTableScope()` |
 | Scoped create | `scope.CreateFromQueryAsync(query)` |
 
@@ -191,15 +191,17 @@ await tempLookup.InsertAsync(lookups);
 
 ```csharp
 // Server-side data movement - no client round-trip
-var result = await context.FinalRecords.ExecuteInsertFromQueryAsync(
-    context.RawImports.Where(r => r.Status == "valid"),
-    raw => new FinalRecord
-    {
-        ExternalId = raw.ExternalId,
-        CategoryCode = raw.CategoryCode,
-        Amount = raw.RawAmount,
-        ProcessedAt = DateTime.UtcNow
-    });
+var result = await context.RawImports
+    .Where(r => r.Status == "valid")
+    .InsertIntoAsync(
+        context.FinalRecords,
+        raw => new FinalRecord
+        {
+            ExternalId = raw.ExternalId,
+            CategoryCode = raw.CategoryCode,
+            Amount = raw.RawAmount,
+            ProcessedAt = DateTime.UtcNow
+        });
 ```
 
 ### Scoped Multi-Table Workflow
@@ -211,8 +213,8 @@ await using (var scope = context.BeginTempTableScope())
     var extract = await scope.CreateFromQueryAsync(sourceQuery);
     var filtered = await scope.CreateFromQueryAsync(extract.Query().Where(...));
 
-    await context.FinalRecords.ExecuteInsertFromQueryAsync(
-        filtered.Query(), mapping);
+    await filtered.Query().InsertIntoAsync(
+        context.FinalRecords, mapping);
 }
 // Temp tables automatically dropped here
 ```

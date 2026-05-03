@@ -121,12 +121,13 @@ public class MvJoinedWherePostJoinTests
             {
                 e.ToTable("MvWhereAfterJoinInnerTarget"); e.HasNoKey();
                 e.UseSummingMergeTree(x => x.Region);
-                e.AsMaterializedView<Tgt, Order>(orders => orders
+
+            });
+            mb.MaterializedView<Tgt>().From<Order>().DefinedAs(orders => orders
                     .Join(_customers, o => o.CustomerId, c => c.Id, (o, c) => new { o.Amount, c.Region })
                     .Where(x => x.Region == "eu")
                     .GroupBy(x => x.Region)
                     .Select(g => new Tgt { Region = g.Key, Total = g.Sum(x => x.Amount) }));
-            });
         }
     }
 
@@ -143,12 +144,13 @@ public class MvJoinedWherePostJoinTests
             {
                 e.ToTable("MvWhereAfterJoinOuterTarget"); e.HasNoKey();
                 e.UseSummingMergeTree(x => x.Region);
-                e.AsMaterializedView<Tgt, Order>(orders => orders
+
+            });
+            mb.MaterializedView<Tgt>().From<Order>().DefinedAs(orders => orders
                     .Join(_customers, o => o.CustomerId, c => c.Id, (o, c) => new { o.Amount, c.Region })
                     .Where(x => x.Amount > 20)
                     .GroupBy(x => x.Region)
                     .Select(g => new Tgt { Region = g.Key, Total = g.Sum(x => x.Amount) }));
-            });
         }
     }
 
@@ -165,12 +167,13 @@ public class MvJoinedWherePostJoinTests
             {
                 e.ToTable("MvWhereAfterJoinBothTarget"); e.HasNoKey();
                 e.UseSummingMergeTree(x => x.Region);
-                e.AsMaterializedView<Tgt, Order>(orders => orders
+
+            });
+            mb.MaterializedView<Tgt>().From<Order>().DefinedAs(orders => orders
                     .Join(_customers, o => o.CustomerId, c => c.Id, (o, c) => new { o.Amount, c.Region })
                     .Where(x => x.Region == "eu" && x.Amount >= 30)
                     .GroupBy(x => x.Region)
                     .Select(g => new Tgt { Region = g.Key, Total = g.Sum(x => x.Amount) }));
-            });
         }
     }
 }

@@ -42,7 +42,7 @@ public class AppDbContext : DbContext
         {
             entity.HasKey(e => e.Id);
             entity.UseMergeTree(e => new { e.Timestamp, e.EventType })
-                .HasPartitionByMonth(e => e.Timestamp);
+                .HasPartitionBy(e => e.Timestamp, PartitionGranularity.Month);
         });
     }
 }

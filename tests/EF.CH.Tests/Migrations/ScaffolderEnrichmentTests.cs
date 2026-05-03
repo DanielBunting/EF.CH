@@ -41,7 +41,7 @@ public class ScaffolderEnrichmentTests : IAsyncLifetime
     private string GetConnectionString() => _container.GetConnectionString();
 
     /// <summary>
-    /// Verifies that entity types configured with AsMaterializedViewRaw
+    /// Verifies that entity types configured via modelBuilder.MaterializedView<T>().FromTable(...).DefinedAsRaw(...)
     /// have the correct annotations on the model.
     /// This confirms the model configuration is working correctly.
     /// </summary>
@@ -231,8 +231,9 @@ public class MvSourceAndTargetContext : DbContext
         {
             entity.ToTable("daily_summary_mv");
             entity.UseSummingMergeTree(x => new { x.Date, x.Category });
-            entity.AsMaterializedView<DailySummary, SourceEvent>(
-                query: events => events
+
+        });
+        modelBuilder.MaterializedView<DailySummary>().From<SourceEvent>().DefinedAs(events => events
                     .GroupBy(e => new { Date = e.EventTime.Date, e.Category })
                     .Select(g => new DailySummary
                     {
@@ -240,9 +241,7 @@ public class MvSourceAndTargetContext : DbContext
                         Category = g.Key.Category,
                         EventCount = g.Count(),
                         TotalAmount = g.Sum(e => e.Amount)
-                    }),
-                populate: false);
-        });
+                    }));
     }
 }
 

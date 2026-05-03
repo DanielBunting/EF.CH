@@ -3,6 +3,7 @@ using EF.CH.BulkInsert;
 using EF.CH.Extensions;
 using Microsoft.EntityFrameworkCore;
 using Testcontainers.ClickHouse;
+using EF.CH.Metadata;
 
 // ============================================================
 // Event Analytics Pipeline Sample
@@ -462,7 +463,7 @@ public class AnalyticsDbContext(string connectionString) : DbContext
             entity.ToTable("page_view_summary_mv");
             entity.HasNoKey();
             entity.UseSummingMergeTree(x => new { x.Date, x.Page });
-            entity.HasPartitionByMonth(x => x.Date);
+            entity.HasPartitionBy(x => x.Date, PartitionGranularity.Month);
 
             entity.Property(e => e.Page).HasLowCardinality();
             entity.Property(e => e.UniqueVisitors)
@@ -474,7 +475,9 @@ public class AnalyticsDbContext(string connectionString) : DbContext
                 .ThenBy(x => x.Date);
 
             // Materialized view: count page views from raw events using typed LINQ.
-            entity.AsMaterializedView<PageViewSummary, RawEvent>(events => events
+
+        });
+        modelBuilder.MaterializedView<PageViewSummary>().From<RawEvent>().DefinedAs(events => events
                 .Where(e => e.EventType == "page_view")
                 .GroupBy(e => new { Date = e.Timestamp.Date, e.Page })
                 .Select(g => new PageViewSummary
@@ -484,7 +487,6 @@ public class AnalyticsDbContext(string connectionString) : DbContext
                     ViewCount = g.Count(),
                     UniqueVisitors = 1L,
                 }));
-        });
 
         // ============================================================
         // ReplacingMergeTree: Latest user session state
@@ -493,9 +495,7 @@ public class AnalyticsDbContext(string connectionString) : DbContext
         {
             entity.ToTable("user_sessions");
             entity.HasNoKey();
-            entity.UseReplacingMergeTree(
-                x => x.Version,
-                x => new { x.UserId });
+            entity.UseReplacingMergeTree(x => new { x.UserId }).WithVersion(x => x.Version);
 
             entity.Property(e => e.UserId).HasLowCardinality();
         });

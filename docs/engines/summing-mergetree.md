@@ -79,7 +79,7 @@ entity.UseSummingMergeTree(x => x.Day);
 modelBuilder.Entity<DailyMetrics>(entity =>
 {
     entity.UseSummingMergeTree(x => new { x.Date, x.MetricName })
-        .HasPartitionByMonth(x => x.Date);
+        .HasPartitionBy(x => x.Date, PartitionGranularity.Month);
 });
 ```
 
@@ -109,7 +109,7 @@ modelBuilder.Entity<PageStats>(entity =>
     entity.HasNoKey();
 
     entity.UseSummingMergeTree(x => new { x.Hour, x.PageUrl })
-        .HasPartitionByMonth(x => x.Hour)
+        .HasPartitionBy(x => x.Hour, PartitionGranularity.Month)
         .HasTtl(x => x.Hour, ClickHouseInterval.Months(6));
 });
 ```

@@ -25,7 +25,7 @@ namespace EF.CH.ParameterizedViews;
 ///
 ///     protected override void OnModelCreating(ModelBuilder modelBuilder)
 ///     {
-///         modelBuilder.Entity&lt;UserEventView&gt;(e => e.HasParameterizedView("user_events_view"));
+///         modelBuilder.Entity&lt;UserEventView&gt;(e => e.ToParameterizedView("user_events_view"));
 ///     }
 /// }
 ///
@@ -51,7 +51,7 @@ public sealed class ClickHouseParameterizedView<TResult>
     /// <param name="context">The DbContext instance.</param>
     /// <remarks>
     /// Metadata is resolved from EF Core model annotations configured via
-    /// HasParameterizedView() in OnModelCreating.
+    /// ToParameterizedView() in OnModelCreating.
     /// The metadata is cached statically for performance.
     /// </remarks>
     public ClickHouseParameterizedView(DbContext context)
@@ -216,7 +216,7 @@ public sealed class ClickHouseParameterizedView<TResult>
         if (!isParameterizedView)
             throw new InvalidOperationException(
                 $"Entity type '{typeof(TResult).Name}' is not configured as a parameterized view. " +
-                "Use HasParameterizedView() in OnModelCreating.");
+                "Use ToParameterizedView() in OnModelCreating.");
 
         var viewName = entityType.FindAnnotation(ClickHouseAnnotationNames.ParameterizedViewName)?.Value as string
             ?? throw new InvalidOperationException(

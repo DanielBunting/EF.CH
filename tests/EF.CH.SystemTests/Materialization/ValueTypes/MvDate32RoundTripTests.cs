@@ -60,10 +60,11 @@ public class MvDate32RoundTripTests
                 e.ToTable("MvDate32Target"); e.HasNoKey();
                 e.UseSummingMergeTree(x => x.Day);
                 e.Property(x => x.Day).HasColumnType("Date32");
-                e.AsMaterializedView<Tgt, Src>(rows => rows
+
+            });
+            mb.MaterializedView<Tgt>().From<Src>().DefinedAs(rows => rows
                     .GroupBy(r => r.Day)
                     .Select(g => new Tgt { Day = g.Key, Hits = g.Sum(r => r.Hits) }));
-            });
         }
     }
 }

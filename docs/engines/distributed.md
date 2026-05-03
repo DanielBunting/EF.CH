@@ -83,7 +83,7 @@ modelBuilder.Entity<EventLocal>(entity =>
     entity.HasNoKey();
 
     entity.UseMergeTree(x => new { x.EventTime, x.Id })
-        .HasPartitionByMonth(x => x.EventTime);
+        .HasPartitionBy(x => x.EventTime, PartitionGranularity.Month);
 });
 
 // Distributed table (proxy across cluster)
@@ -129,7 +129,7 @@ modelBuilder.Entity<ClickEvent>(entity =>
     entity.HasNoKey();
 
     entity.UseMergeTree(x => new { x.EventTime, x.Id })
-        .HasPartitionByMonth(x => x.EventTime)
+        .HasPartitionBy(x => x.EventTime, PartitionGranularity.Month)
         .HasTtl(x => x.EventTime, ClickHouseInterval.Months(3));
 });
 

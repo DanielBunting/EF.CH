@@ -39,12 +39,12 @@ options.UseClickHouse("Host=localhost", o => o
 
 All entities without an explicit `UseCluster` call will use `default_cluster` for their DDL operations.
 
-## Replicated Engine Chaining
+## MergeTree Engine Chaining
 
-When using replicated engines, `WithCluster` is available directly on the engine builder.
+`WithCluster`, `WithReplication`, and `WithTableGroup` are available on every MergeTree-family builder. Replication is a property of the engine; chaining `WithReplication` flips the SQL output to the matching `Replicated*` variant.
 
 ```csharp
-entity.UseReplicatedMergeTree(x => x.Id)
+entity.UseMergeTree(x => x.Id)
     .WithCluster("my_cluster")
     .WithReplication("/clickhouse/{database}/{table}");
 ```
@@ -78,7 +78,8 @@ options.UseClickHouse("Host=localhost", o => o
 ```csharp
 modelBuilder.Entity<Order>(entity =>
 {
-    entity.UseReplicatedMergeTree(x => new { x.OrderDate, x.Id })
+    entity.UseMergeTree(x => new { x.OrderDate, x.Id })
+        .WithReplication("/clickhouse/{database}/{table}")
         .WithTableGroup("Core");
 });
 

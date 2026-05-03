@@ -99,9 +99,10 @@ public class MvTypedNullDefaultTests
             mb.Entity<StringTgt>(e =>
             {
                 e.ToTable("MvNullDefStringTarget"); e.HasNoKey(); e.UseMergeTree(x => x.Id);
-                e.AsMaterializedView<StringTgt, Row>(rows => rows
-                    .Select(r => new StringTgt { Id = r.Id, Zero = default(string)!, N = r.N }));
+
             });
+            mb.MaterializedView<StringTgt>().From<Row>().DefinedAs(rows => rows
+                    .Select(r => new StringTgt { Id = r.Id, Zero = default(string)!, N = r.N }));
         }
     }
 
@@ -114,9 +115,10 @@ public class MvTypedNullDefaultTests
             mb.Entity<LongTgt>(e =>
             {
                 e.ToTable("MvNullDefLongTarget"); e.HasNoKey(); e.UseMergeTree(x => x.Id);
-                e.AsMaterializedView<LongTgt, Row>(rows => rows
-                    .Select(r => new LongTgt { Id = r.Id, Zero = default(long), N = r.N }));
+
             });
+            mb.MaterializedView<LongTgt>().From<Row>().DefinedAs(rows => rows
+                    .Select(r => new LongTgt { Id = r.Id, Zero = default(long), N = r.N }));
         }
     }
 
@@ -129,9 +131,10 @@ public class MvTypedNullDefaultTests
             mb.Entity<DoubleTgt>(e =>
             {
                 e.ToTable("MvNullDefDoubleTarget"); e.HasNoKey(); e.UseMergeTree(x => x.Id);
-                e.AsMaterializedView<DoubleTgt, Row>(rows => rows
-                    .Select(r => new DoubleTgt { Id = r.Id, Zero = default(double), N = r.N }));
+
             });
+            mb.MaterializedView<DoubleTgt>().From<Row>().DefinedAs(rows => rows
+                    .Select(r => new DoubleTgt { Id = r.Id, Zero = default(double), N = r.N }));
         }
     }
 
@@ -144,9 +147,10 @@ public class MvTypedNullDefaultTests
             mb.Entity<BoolTgt>(e =>
             {
                 e.ToTable("MvNullDefBoolTarget"); e.HasNoKey(); e.UseMergeTree(x => x.Id);
-                e.AsMaterializedView<BoolTgt, Row>(rows => rows
-                    .Select(r => new BoolTgt { Id = r.Id, Zero = default(bool), N = r.N }));
+
             });
+            mb.MaterializedView<BoolTgt>().From<Row>().DefinedAs(rows => rows
+                    .Select(r => new BoolTgt { Id = r.Id, Zero = default(bool), N = r.N }));
         }
     }
 
@@ -159,9 +163,10 @@ public class MvTypedNullDefaultTests
             mb.Entity<IntTgt>(e =>
             {
                 e.ToTable("MvNullDefIntTarget"); e.HasNoKey(); e.UseMergeTree(x => x.Id);
-                e.AsMaterializedView<IntTgt, Row>(rows => rows
-                    .Select(r => new IntTgt { Id = r.Id, Zero = default(int), N = r.N }));
+
             });
+            mb.MaterializedView<IntTgt>().From<Row>().DefinedAs(rows => rows
+                    .Select(r => new IntTgt { Id = r.Id, Zero = default(int), N = r.N }));
         }
     }
 }

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using EF.CH.BulkInsert;
 using EF.CH.Extensions;
 using Microsoft.EntityFrameworkCore;
+using EF.CH.Metadata;
 
 // ============================================================
 // Bulk Insert Sample
@@ -119,7 +120,8 @@ await context.Database.TruncateTableAsync<Event>();
 events = GenerateEvents(10_000);
 
 result = await context.BulkInsertAsync(events, options => options
-    .WithAsyncInsert(wait: true));
+    .WithAsyncInsert()
+    .WaitForCompletion());
 
 Console.WriteLine($"Inserted {result.RowsInserted:N0} rows with async_insert=1");
 Console.WriteLine($"Throughput: {result.RowsPerSecond:N0} rows/sec");
@@ -365,7 +367,7 @@ public class EventDbContext : DbContext
             entity.ToTable("Events");
             entity.HasKey(e => e.Id);
             entity.UseMergeTree(x => new { x.Timestamp, x.Id });
-            entity.HasPartitionByMonth(x => x.Timestamp);
+            entity.HasPartitionBy(x => x.Timestamp, PartitionGranularity.Month);
         });
 
         modelBuilder.Entity<Product>(entity =>

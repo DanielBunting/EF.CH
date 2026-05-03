@@ -38,8 +38,8 @@ UserSession (ReplacingMergeTree)
 | Null engine | `entity.UseNullEngine()` |
 | SummingMergeTree | `entity.UseSummingMergeTree(x => new { x.Date, x.Page })` |
 | AggregatingMergeTree | `entity.UseAggregatingMergeTree(x => new { x.Date, x.EventType })` |
-| ReplacingMergeTree | `entity.UseReplacingMergeTree(x => x.Version, x => new { x.UserId })` |
-| Materialized view (raw) | `entity.AsMaterializedViewRaw(sourceTable, selectSql, populate)` |
+| ReplacingMergeTree | `entity.UseReplacingMergeTree(x => new { x.UserId }).WithVersion(x => x.Version)` |
+| Materialized view (raw) | `modelBuilder.MaterializedView<T>().FromTable(sourceTable).DefinedAsRaw(selectSql).Populate()` |
 | Projection | `entity.HasProjection("name").OrderBy(x => x.Col)` |
 | AggregateFunction column | `property.HasAggregateFunction("sum", typeof(decimal))` |
 | SimpleAggregateFunction | `property.HasSimpleAggregateFunction("sum")` |
@@ -160,7 +160,7 @@ entity.UseSummingMergeTree(x => new { x.Date, x.Page });
 entity.UseAggregatingMergeTree(x => new { x.Date, x.EventType });
 
 // ReplacingMergeTree: keeps latest version per key
-entity.UseReplacingMergeTree(x => x.Version, x => new { x.UserId });
+entity.UseReplacingMergeTree(x => new { x.UserId }).WithVersion(x => x.Version);
 ```
 
 ### AggregateFunction Columns

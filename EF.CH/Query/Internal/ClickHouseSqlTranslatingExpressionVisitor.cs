@@ -337,9 +337,15 @@ public class ClickHouseSqlTranslatingExpressionVisitor : RelationalSqlTranslatin
             nullableResultType,
             _typeMappingSource.FindMapping(nonNullableResultType));
 
-        // ClickHouse's row_number() returns UInt64, but Window.RowNumber() declares
-        // long — wrap in toInt64 so the row reader sees Int64 as the projection type.
-        if (functionName == "row_number" && nonNullableResultType == typeof(long))
+        // ClickHouse's ranking and counting window functions (row_number / rank /
+        // dense_rank / count) return UInt64, but the Window helper declares long —
+        // wrap in toInt64 so the row reader sees Int64 as the projection type.
+        // Without this the reader trips InvalidCastException(UInt64 → Int64).
+        if (nonNullableResultType == typeof(long)
+            && (functionName == "row_number"
+                || functionName == "rank"
+                || functionName == "dense_rank"
+                || functionName == "count"))
         {
             return _sqlExpressionFactory.WrapWithClrCast(windowExpr, typeof(long));
         }
@@ -464,18 +470,27 @@ public class ClickHouseSqlTranslatingExpressionVisitor : RelationalSqlTranslatin
                 break;
 
             case nameof(WindowSpec.Preceding):
-                var precedingOffset = GetConstantInt(call.Arguments[0]);
+                var precedingOffset = GetConstantInt(call.Arguments[0])
+                    ?? throw NonConstantFrameOffset(nameof(WindowSpec.Preceding));
                 SetBound(ref frameStart, ref frameStartOffset, ref frameEnd, ref frameEndOffset,
                     ref boundIndex, WindowFrameBound.Preceding, precedingOffset);
                 break;
 
             case nameof(WindowSpec.Following):
-                var followingOffset = GetConstantInt(call.Arguments[0]);
+                var followingOffset = GetConstantInt(call.Arguments[0])
+                    ?? throw NonConstantFrameOffset(nameof(WindowSpec.Following));
                 SetBound(ref frameStart, ref frameStartOffset, ref frameEnd, ref frameEndOffset,
                     ref boundIndex, WindowFrameBound.Following, followingOffset);
                 break;
         }
     }
+
+    private static InvalidOperationException NonConstantFrameOffset(string method) =>
+        new($"WindowSpec.{method}(int) requires a literal offset that can be const-folded at " +
+            "translation time. EF Core promotes captured locals (including xUnit Theory params) to " +
+            "query parameters before our preprocessor runs, leaving the frame clause without a " +
+            "concrete offset and producing malformed SQL. Pass an `int` literal directly, " +
+            "or wrap it in `EF.Constant(n)` if you need a runtime value.");
 
     /// <summary>
     /// Visits new expressions, handling tuple creation for ClickHouse.
@@ -661,6 +676,9 @@ public class ClickHouseSqlTranslatingExpressionVisitor : RelationalSqlTranslatin
 
         var interval = unit.Value switch
         {
+            ClickHouseIntervalUnit.Nanosecond => ClickHouseInterval.Nanoseconds(intervalValue.Value),
+            ClickHouseIntervalUnit.Microsecond => ClickHouseInterval.Microseconds(intervalValue.Value),
+            ClickHouseIntervalUnit.Millisecond => ClickHouseInterval.Milliseconds(intervalValue.Value),
             ClickHouseIntervalUnit.Second => ClickHouseInterval.Seconds(intervalValue.Value),
             ClickHouseIntervalUnit.Minute => ClickHouseInterval.Minutes(intervalValue.Value),
             ClickHouseIntervalUnit.Hour => ClickHouseInterval.Hours(intervalValue.Value),
@@ -1008,9 +1026,14 @@ public class ClickHouseSqlTranslatingExpressionVisitor : RelationalSqlTranslatin
             nullableResultType,
             _typeMappingSource.FindMapping(resultType));
 
-        // ClickHouse's row_number() returns UInt64, but Window.RowNumber() declares
-        // long — wrap in toInt64 so the row reader sees Int64 as the projection type.
-        if (functionName == "row_number" && resultType == typeof(long))
+        // ClickHouse's ranking and counting window functions (row_number / rank /
+        // dense_rank / count) return UInt64, but the Window helper declares long —
+        // wrap in toInt64 so the row reader sees Int64 as the projection type.
+        if (resultType == typeof(long)
+            && (functionName == "row_number"
+                || functionName == "rank"
+                || functionName == "dense_rank"
+                || functionName == "count"))
         {
             return _sqlExpressionFactory.WrapWithClrCast(windowExpr, typeof(long));
         }
@@ -1070,13 +1093,15 @@ public class ClickHouseSqlTranslatingExpressionVisitor : RelationalSqlTranslatin
                 break;
 
             case nameof(WindowBuilder<int>.Preceding):
-                var precedingOffset = GetConstantInt(call.Arguments[0]);
+                var precedingOffset = GetConstantInt(call.Arguments[0])
+                    ?? throw NonConstantFrameOffset(nameof(WindowBuilder<int>.Preceding));
                 SetBound(ref frameStart, ref frameStartOffset, ref frameEnd, ref frameEndOffset,
                     ref boundIndex, WindowFrameBound.Preceding, precedingOffset);
                 break;
 
             case nameof(WindowBuilder<int>.Following):
-                var followingOffset = GetConstantInt(call.Arguments[0]);
+                var followingOffset = GetConstantInt(call.Arguments[0])
+                    ?? throw NonConstantFrameOffset(nameof(WindowBuilder<int>.Following));
                 SetBound(ref frameStart, ref frameStartOffset, ref frameEnd, ref frameEndOffset,
                     ref boundIndex, WindowFrameBound.Following, followingOffset);
                 break;

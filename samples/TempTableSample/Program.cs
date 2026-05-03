@@ -1,5 +1,6 @@
 using EF.CH.Extensions;
 using Microsoft.EntityFrameworkCore;
+using EF.CH.Metadata;
 
 // ============================================================
 // Temporary Tables Sample
@@ -223,7 +224,7 @@ public class SampleDbContext : DbContext
             entity.ToTable("Orders");
             entity.HasKey(e => e.Id);
             entity.UseMergeTree(x => new { x.OrderDate, x.Id });
-            entity.HasPartitionByMonth(x => x.OrderDate);
+            entity.HasPartitionBy(x => x.OrderDate, PartitionGranularity.Month);
         });
     }
 }

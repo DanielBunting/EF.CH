@@ -11,6 +11,7 @@
 using EF.CH.Extensions;
 using Microsoft.EntityFrameworkCore;
 using Testcontainers.ClickHouse;
+using EF.CH.Metadata;
 
 // Start ClickHouse container
 var container = new ClickHouseBuilder()
@@ -191,16 +192,16 @@ static async Task DemoDropParameterizedView(string connectionString)
 
     await using var context = new ViewDemoContext(connectionString);
 
-    // Drop with IF EXISTS (default)
+    // DropParameterizedViewAsync (strict): throws if the view does not exist.
     await context.Database.DropParameterizedViewAsync("category_summary_view");
-    Console.WriteLine("Dropped view: category_summary_view (IF EXISTS)");
+    Console.WriteLine("Dropped view: category_summary_view");
 
-    // Drop with explicit ifExists: false would throw if the view does not exist
-    await context.Database.DropParameterizedViewAsync("user_events_view", ifExists: true);
+    // DropParameterizedViewIfExistsAsync (silent): does not throw if missing.
+    await context.Database.DropParameterizedViewIfExistsAsync("user_events_view");
     Console.WriteLine("Dropped view: user_events_view (IF EXISTS)");
 
-    // Dropping a non-existent view with ifExists: true is safe
-    await context.Database.DropParameterizedViewAsync("nonexistent_view", ifExists: true);
+    // Dropping a non-existent view via the IfExists variant is safe.
+    await context.Database.DropParameterizedViewIfExistsAsync("nonexistent_view");
     Console.WriteLine("Dropped view: nonexistent_view (IF EXISTS, no error)");
 }
 
@@ -226,7 +227,8 @@ static async Task DemoEnsureParameterizedViews(string connectionString)
     Console.WriteLine("metadata (view definition and parameters) via the fluent API.");
     Console.WriteLine("Views created via CreateParameterizedViewAsync are not tracked here.\n");
 
-    // Recreate views manually for verification
+    // Recreate views manually for verification — CreateParameterizedViewAsync
+    // is idempotent (always emits IF NOT EXISTS).
     await context.Database.CreateParameterizedViewAsync(
         "user_events_view",
         """
@@ -234,8 +236,7 @@ static async Task DemoEnsureParameterizedViews(string connectionString)
         FROM events
         WHERE UserId = {user_id:UInt64}
           AND Timestamp >= {start_date:DateTime}
-        """,
-        ifNotExists: true);
+        """);
 
     Console.WriteLine("Recreated user_events_view with IF NOT EXISTS.");
 
@@ -303,7 +304,7 @@ public class ViewDemoContext(string connectionString) : DbContext
             entity.HasNoKey();
             entity.ToTable("events");
             entity.UseMergeTree(x => new { x.Timestamp, x.EventId });
-            entity.HasPartitionByMonth(x => x.Timestamp);
+            entity.HasPartitionBy(x => x.Timestamp, PartitionGranularity.Month);
         });
 
         // Keyless entity for parameterized view results.

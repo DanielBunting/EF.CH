@@ -185,4 +185,46 @@ public class ConnectionRoutingTests
         Assert.Null(config.MigrationsHistoryCluster);
         Assert.True(config.ReplicateMigrationsHistory);
     }
+
+    /// <summary>
+    /// CTE-led queries — <c>WITH … SELECT …</c> — must classify as reads.
+    /// The interceptor's prefix list includes <c>WITH</c>; this test pins
+    /// that contract so a future tightening of the read-prefix list (e.g.
+    /// requiring a literal <c>SELECT</c>) doesn't silently start routing
+    /// CTEs to the write endpoint.
+    /// </summary>
+    [Fact]
+    public void Routing_ClassifiesWithLedSelect_AsRead()
+    {
+        const string sql = "WITH summary AS (SELECT count() AS c FROM events) SELECT c FROM summary";
+        Assert.True(InvokeIsReadOperation(sql));
+    }
+
+    /// <summary>
+    /// Documents the current classifier limitation: <c>WITH … INSERT</c>
+    /// (CTE-led INSERT) is treated as a READ because the prefix scan only
+    /// looks at the first SQL keyword. ClickHouse may support this syntax in
+    /// future releases — the test fails loudly today so we notice and
+    /// tighten the classifier when that happens.
+    /// </summary>
+    [Fact]
+    public void Routing_ClassifiesWithLedInsert_AsWrite()
+    {
+        const string sql = "WITH x AS (SELECT 1) INSERT INTO target SELECT * FROM x";
+        Assert.False(InvokeIsReadOperation(sql),
+            "WITH-led INSERT must classify as a WRITE — current naive prefix-scan " +
+            "classifies it as a READ. If a future change tightens the parser to look " +
+            "past the WITH clause, this test passes.");
+    }
+
+    private static bool InvokeIsReadOperation(string sql)
+    {
+        var asm = typeof(EF.CH.Infrastructure.ClickHouseRoutingConnection).Assembly;
+        var t = asm.GetType("EF.CH.Infrastructure.ClickHouseCommandInterceptor")
+            ?? throw new InvalidOperationException("ClickHouseCommandInterceptor not found");
+        var m = t.GetMethod("IsReadOperation",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+            ?? throw new InvalidOperationException("IsReadOperation not found");
+        return (bool)m.Invoke(null, new object[] { sql })!;
+    }
 }

@@ -118,9 +118,19 @@ public sealed class TempTableHandle<T> : IAsyncDisposable where T : class
             command.CommandText = $"DROP TABLE IF EXISTS {QuotedTableName}";
             await command.ExecuteNonQueryAsync();
         }
+        catch
+        {
+            // DROP TABLE here is best-effort cleanup. A connectivity-class
+            // failure (server gone, transient socket error) shouldn't shadow
+            // whatever exception the caller is already handling in the
+            // `finally { await handle.DisposeAsync(); }` pattern. The IF
+            // EXISTS guard means there's no useful information to surface
+            // beyond the connectivity error itself.
+        }
         finally
         {
-            await _relationalConnection.CloseAsync();
+            try { await _relationalConnection.CloseAsync(); }
+            catch { /* same rationale — best-effort. */ }
         }
     }
 

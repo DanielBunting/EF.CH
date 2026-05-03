@@ -1,5 +1,6 @@
 using EF.CH.Extensions;
 using Microsoft.EntityFrameworkCore;
+using EF.CH.Metadata;
 
 // ============================================================
 // EF.CH Distributed Table Sample with Sharding
@@ -275,7 +276,7 @@ public class DistributedDbContext : DbContext
             entity.HasKey(e => e.Id);
 
             entity.UseMergeTree(x => new { x.EventTime, x.Id });
-            entity.HasPartitionByMonth(x => x.EventTime);
+            entity.HasPartitionBy(x => x.EventTime, PartitionGranularity.Month);
         });
 
         // ============================================================
@@ -294,13 +295,14 @@ public class DistributedDbContext : DbContext
             // Fluent Chain API for Distributed Engine
             // ============================================================
             // UseDistributed(cluster, table) - creates a distributed table
-            // WithShardingKey() - determines how data is routed to shards
+            // WithShardingKey()           - direct property access, e.g. x => x.UserId
+            // WithShardingKeyExpression() - raw SQL for computed sharding keys
             //
             // cityHash64(UserId) ensures:
             // 1. Same user's events always go to the same shard (locality)
             // 2. Even distribution across shards (good hash function)
             entity.UseDistributed("shard_cluster", "events_local")
-                  .WithShardingKey("cityHash64(UserId)");
+                  .WithShardingKeyExpression("cityHash64(UserId)");
         });
     }
 }

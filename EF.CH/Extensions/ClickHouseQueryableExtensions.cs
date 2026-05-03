@@ -1,5 +1,6 @@
 using System.Linq.Expressions;
 using System.Reflection;
+using EF.CH.Infrastructure;
 using EF.CH.Query.Internal;
 
 namespace EF.CH.Extensions;
@@ -111,7 +112,8 @@ public static class ClickHouseQueryableExtensions
             .First(m => m.Name == nameof(Sample) && m.GetParameters().Length == 3);
 
     /// <summary>
-    /// Applies ClickHouse query settings to the query.
+    /// Applies a single ClickHouse query setting to the query.
+    /// Chain calls to apply multiple settings.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -127,36 +129,6 @@ public static class ClickHouseQueryableExtensions
     /// - max_execution_time: Query timeout in seconds
     /// </para>
     /// </remarks>
-    /// <typeparam name="TEntity">The entity type.</typeparam>
-    /// <param name="source">The source queryable.</param>
-    /// <param name="settings">Dictionary of setting names and values.</param>
-    /// <returns>A queryable with SETTINGS applied.</returns>
-    public static IQueryable<TEntity> WithSettings<TEntity>(
-        this IQueryable<TEntity> source,
-        IDictionary<string, object> settings)
-    {
-        ArgumentNullException.ThrowIfNull(source);
-        ArgumentNullException.ThrowIfNull(settings);
-
-        if (settings.Count == 0)
-        {
-            return source;
-        }
-
-        // Create a copy of the settings dictionary to avoid mutations
-        var settingsCopy = new Dictionary<string, object>(settings);
-
-        return source.Provider.CreateQuery<TEntity>(
-            Expression.Call(
-                null,
-                WithSettingsMethodInfo.MakeGenericMethod(typeof(TEntity)),
-                source.Expression,
-                WrapInEfConstant(settingsCopy)));
-    }
-
-    /// <summary>
-    /// Applies a single ClickHouse query setting to the query.
-    /// </summary>
     /// <typeparam name="TEntity">The entity type.</typeparam>
     /// <param name="source">The source queryable.</param>
     /// <param name="name">The setting name.</param>
@@ -179,13 +151,35 @@ public static class ClickHouseQueryableExtensions
                 WrapInEfConstant(value)));
     }
 
-    internal static readonly MethodInfo WithSettingsMethodInfo =
-        typeof(ClickHouseQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
-            .First(m => m.Name == nameof(WithSettings));
+    /// <summary>
+    /// Applies a single strongly-typed ClickHouse query setting to the query.
+    /// </summary>
+    /// <remarks>
+    /// Routes through the same string-keyed pipeline as
+    /// <see cref="WithSetting{TEntity}(IQueryable{TEntity}, string, object)"/> —
+    /// generated SQL is byte-identical for equivalent calls. The typed overload
+    /// only adds a compile-time check on the value type.
+    /// </remarks>
+    /// <typeparam name="TEntity">The entity type.</typeparam>
+    /// <typeparam name="TValue">The setting's value type.</typeparam>
+    /// <param name="source">The source queryable.</param>
+    /// <param name="setting">A typed setting handle, e.g. <c>ClickHouseSettings.MaxThreads</c>.</param>
+    /// <param name="value">The setting value.</param>
+    /// <returns>A queryable with the setting applied.</returns>
+    public static IQueryable<TEntity> WithSetting<TEntity, TValue>(
+        this IQueryable<TEntity> source,
+        Setting<TValue> setting,
+        TValue value)
+    {
+        ArgumentNullException.ThrowIfNull(setting);
+        return source.WithSetting(setting.Name, value!);
+    }
 
     internal static readonly MethodInfo WithSettingMethodInfo =
         typeof(ClickHouseQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
-            .First(m => m.Name == nameof(WithSetting));
+            .First(m => m.Name == nameof(WithSetting)
+                && m.GetParameters().Length == 3
+                && m.GetParameters()[1].ParameterType == typeof(string));
 
     /// <summary>
     /// Applies PREWHERE clause for optimized filtering before column reads.
@@ -233,35 +227,41 @@ public static class ClickHouseQueryableExtensions
     /// This is useful for "top N per category" queries without needing window functions.
     /// </para>
     /// <para>
-    /// The key selector defines the grouping columns. Use OrderBy/OrderByDescending before
-    /// LimitBy to control which rows are kept within each group.
+    /// The key selector defines the grouping columns. Use OrderBy/OrderByDescending
+    /// before LimitBy to control which rows are kept within each group. Chaining
+    /// <c>.Skip(m)</c> or <c>.Take(m)</c> after LimitBy is supported and emits a
+    /// global <c>LIMIT [m,] …</c> after the per-group <c>LIMIT n BY key</c>;
+    /// ClickHouse evaluates LIMIT BY before the global LIMIT, so the global
+    /// skip/take applies to the already-grouped result. To skip rows
+    /// <em>within</em> each group, use the
+    /// <c>(keySelector, limit, offset)</c> overload instead.
     /// </para>
     /// </remarks>
     /// <typeparam name="TEntity">The entity type.</typeparam>
     /// <typeparam name="TKey">The key type (single column or anonymous type for compound keys).</typeparam>
     /// <param name="source">The source queryable.</param>
-    /// <param name="limit">The maximum number of rows to return per group.</param>
     /// <param name="keySelector">Expression selecting the grouping key column(s).</param>
+    /// <param name="limit">The maximum number of rows to return per group.</param>
     /// <returns>A queryable with LIMIT BY applied.</returns>
     /// <example>
     /// <code>
     /// // Top 5 events per category
     /// var results = context.Events
     ///     .OrderByDescending(e => e.Score)
-    ///     .LimitBy(5, e => e.Category)
+    ///     .LimitBy(e => e.Category, 5)
     ///     .ToList();
     ///
     /// // Compound key: top 3 per category and region
     /// var results = context.Events
     ///     .OrderByDescending(e => e.Score)
-    ///     .LimitBy(3, e => new { e.Category, e.Region })
+    ///     .LimitBy(e => new { e.Category, e.Region }, 3)
     ///     .ToList();
     /// </code>
     /// </example>
     public static IQueryable<TEntity> LimitBy<TEntity, TKey>(
         this IQueryable<TEntity> source,
-        int limit,
-        Expression<Func<TEntity, TKey>> keySelector)
+        Expression<Func<TEntity, TKey>> keySelector,
+        int limit)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(keySelector);
@@ -277,47 +277,33 @@ public static class ClickHouseQueryableExtensions
                 null,
                 LimitByMethodInfo.MakeGenericMethod(typeof(TEntity), typeof(TKey)),
                 source.Expression,
-                WrapInEfConstant(limit),
-                Expression.Quote(keySelector)));
+                Expression.Quote(keySelector),
+                WrapInEfConstant(limit)));
     }
 
     /// <summary>
-    /// Applies LIMIT BY clause with an offset to skip rows before taking top N per group.
+    /// Applies LIMIT offset, limit BY clause to skip rows <em>within each group</em>
+    /// before taking the top N. Use this overload when you need a per-group
+    /// offset; <c>.Skip(...)</c> chained after the basic
+    /// <see cref="LimitBy{TEntity, TKey}(IQueryable{TEntity}, Expression{Func{TEntity, TKey}}, int)"/>
+    /// overload emits a global OFFSET after the LIMIT BY, which is a different
+    /// semantic.
     /// </summary>
-    /// <remarks>
-    /// LIMIT BY with offset skips the first N rows in each group before returning the limit.
-    /// This is useful for pagination within groups.
-    /// </remarks>
     /// <typeparam name="TEntity">The entity type.</typeparam>
     /// <typeparam name="TKey">The key type (single column or anonymous type for compound keys).</typeparam>
     /// <param name="source">The source queryable.</param>
-    /// <param name="offset">The number of rows to skip per group.</param>
-    /// <param name="limit">The maximum number of rows to return per group after skipping.</param>
     /// <param name="keySelector">Expression selecting the grouping key column(s).</param>
+    /// <param name="limit">The maximum number of rows to return per group.</param>
+    /// <param name="offset">The number of rows to skip within each group before taking <paramref name="limit"/>.</param>
     /// <returns>A queryable with LIMIT offset, limit BY applied.</returns>
-    /// <example>
-    /// <code>
-    /// // Skip 2, take 5 per user (rows 3-7 per user)
-    /// var results = context.Events
-    ///     .OrderByDescending(e => e.CreatedAt)
-    ///     .LimitBy(2, 5, e => e.UserId)
-    ///     .ToList();
-    /// </code>
-    /// </example>
     public static IQueryable<TEntity> LimitBy<TEntity, TKey>(
         this IQueryable<TEntity> source,
-        int offset,
+        Expression<Func<TEntity, TKey>> keySelector,
         int limit,
-        Expression<Func<TEntity, TKey>> keySelector)
+        int offset)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(keySelector);
-
-        if (offset < 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(offset),
-                "Offset must be non-negative.");
-        }
 
         if (limit <= 0)
         {
@@ -325,14 +311,20 @@ public static class ClickHouseQueryableExtensions
                 "Limit must be a positive integer.");
         }
 
+        if (offset < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(offset),
+                "Offset must be non-negative.");
+        }
+
         return source.Provider.CreateQuery<TEntity>(
             Expression.Call(
                 null,
                 LimitByWithOffsetMethodInfo.MakeGenericMethod(typeof(TEntity), typeof(TKey)),
                 source.Expression,
-                WrapInEfConstant(offset),
+                Expression.Quote(keySelector),
                 WrapInEfConstant(limit),
-                Expression.Quote(keySelector)));
+                WrapInEfConstant(offset)));
     }
 
     internal static readonly MethodInfo LimitByMethodInfo =
@@ -470,7 +462,7 @@ public static class ClickHouseQueryableExtensions
             nameof(WithTotals), BindingFlags.Public | BindingFlags.Static)!;
 
     /// <summary>
-    /// Wraps the current query as a Common Table Expression (CTE) with the given name.
+    /// Wraps the current query as a single Common Table Expression (CTE) with the given name.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -481,16 +473,20 @@ public static class ClickHouseQueryableExtensions
     /// Generates: <c>WITH "name" AS (SELECT ...) SELECT ... FROM "name"</c>
     /// </para>
     /// <para>
-    /// Limitations:
-    /// - Single CTE per query (multi-CTE deferred to future version)
-    /// - No recursive CTEs (limited ClickHouse support)
+    /// <b>Single CTE only.</b> A query may declare exactly one CTE. Calling this
+    /// twice in the same query throws — multi-CTE support is reserved for a future
+    /// release under the name <c>AsCte</c>. Use a single named CTE today; promote to
+    /// <c>AsCte</c> when multi-CTE lands.
+    /// </para>
+    /// <para>
+    /// Recursive CTEs are not supported (ClickHouse has limited recursive CTE support).
     /// </para>
     /// </remarks>
     /// <typeparam name="TEntity">The entity type.</typeparam>
     /// <param name="source">The source queryable to use as CTE body.</param>
     /// <param name="name">The CTE name (used in WITH clause and FROM reference).</param>
     /// <returns>A queryable that will be rendered as a CTE.</returns>
-    public static IQueryable<TEntity> AsCte<TEntity>(this IQueryable<TEntity> source, string name)
+    public static IQueryable<TEntity> AsSingleCte<TEntity>(this IQueryable<TEntity> source, string name)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentException.ThrowIfNullOrEmpty(name);
@@ -498,14 +494,14 @@ public static class ClickHouseQueryableExtensions
         return source.Provider.CreateQuery<TEntity>(
             Expression.Call(
                 null,
-                AsCteMethodInfo.MakeGenericMethod(typeof(TEntity)),
+                AsSingleCteMethodInfo.MakeGenericMethod(typeof(TEntity)),
                 source.Expression,
                 WrapInEfConstant(name)));
     }
 
-    internal static readonly MethodInfo AsCteMethodInfo =
+    internal static readonly MethodInfo AsSingleCteMethodInfo =
         typeof(ClickHouseQueryableExtensions).GetMethods(BindingFlags.Public | BindingFlags.Static)
-            .First(m => m.Name == nameof(AsCte));
+            .First(m => m.Name == nameof(AsSingleCte));
 
     /// <summary>
     /// Injects a raw SQL condition into the WHERE clause of the query.
@@ -543,6 +539,32 @@ public static class ClickHouseQueryableExtensions
             .First(m => m.Name == nameof(WithRawFilter));
 
     /// <summary>
+    /// Entry point for the ARRAY JOIN fluent chain. Add array selectors with
+    /// <see cref="ArrayJoinBuilder{TEntity}.Of{T1}"/> and finalize with
+    /// <c>Select((entity, t1, t2, ...) =&gt; ...)</c>.
+    /// </summary>
+    /// <example>
+    /// <code>
+    /// // Single array
+    /// q.ArrayJoin().Of(e => e.Tags).Select((e, t) => new { e.Id, t });
+    ///
+    /// // LEFT ARRAY JOIN
+    /// q.ArrayJoin(left: true).Of(e => e.Tags).Select((e, t) => new { e.Id, t });
+    ///
+    /// // Multiple arrays — element-wise join, up to 5
+    /// q.ArrayJoin().Of(e => e.A).Of(e => e.B).Of(e => e.C)
+    ///   .Select((e, a, b, c) => new { e.Id, a, b, c });
+    /// </code>
+    /// </example>
+    public static ArrayJoinBuilder<TEntity> ArrayJoin<TEntity>(
+        this IQueryable<TEntity> source,
+        bool left = false)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        return new ArrayJoinBuilder<TEntity>(source, left);
+    }
+
+    /// <summary>
     /// Applies ARRAY JOIN to unnest an array column into individual rows.
     /// Rows with empty arrays are skipped.
     /// </summary>
@@ -553,6 +575,9 @@ public static class ClickHouseQueryableExtensions
     /// <param name="arraySelector">Expression selecting the array column to unnest.</param>
     /// <param name="resultSelector">Expression projecting each entity and unnested element into a result.</param>
     /// <returns>A queryable with ARRAY JOIN applied, producing one row per array element.</returns>
+    /// <remarks>
+    /// Prefer the <see cref="ArrayJoin{TEntity}"/> builder for new code.
+    /// </remarks>
     public static IQueryable<TResult> ArrayJoin<TEntity, TElement, TResult>(
         this IQueryable<TEntity> source,
         Expression<Func<TEntity, IEnumerable<TElement>>> arraySelector,

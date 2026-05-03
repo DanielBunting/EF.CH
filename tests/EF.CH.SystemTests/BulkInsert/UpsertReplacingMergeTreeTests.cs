@@ -7,7 +7,7 @@ using Xunit;
 namespace EF.CH.SystemTests.BulkInsert;
 
 /// <summary>
-/// Coverage of <c>UpsertRangeAsync</c> against ReplacingMergeTree. After OPTIMIZE FINAL
+/// Coverage of <c>BulkInsertAsync</c> against ReplacingMergeTree. After OPTIMIZE FINAL
 /// the latest version per key wins.
 /// </summary>
 [Collection(SingleNodeCollection.Name)]
@@ -24,12 +24,12 @@ public class UpsertReplacingMergeTreeTests
         await ctx.Database.EnsureDeletedAsync();
         await ctx.Database.EnsureCreatedAsync();
 
-        await ctx.Items.UpsertRangeAsync(new[]
+        await ctx.Items.BulkInsertAsync(new[]
         {
             new Item { Id = 1, Version = 1, Score = 10 },
             new Item { Id = 2, Version = 1, Score = 20 },
         });
-        await ctx.Items.UpsertRangeAsync(new[]
+        await ctx.Items.BulkInsertAsync(new[]
         {
             new Item { Id = 1, Version = 2, Score = 100 },  // newer version wins
         });
@@ -56,7 +56,7 @@ public class UpsertReplacingMergeTreeTests
             {
                 e.ToTable("UpsertReplacing_Items");
                 e.HasKey(x => new { x.Id, x.Version });
-                e.UseReplacingMergeTree(x => x.Version, x => x.Id);
+                e.UseReplacingMergeTree(x => x.Id).WithVersion(x => x.Version);
             });
     }
 }

@@ -7,7 +7,7 @@ namespace EF.CH.Query.Internal;
 
 /// <summary>
 /// Prevents EF Core from parameterizing arguments to ClickHouse-specific extension methods
-/// like Sample(), WithSetting(), WithSettings(), and window functions.
+/// like Sample(), WithSetting(), and window functions.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -104,9 +104,19 @@ public class ClickHouseEvaluatableExpressionFilterPlugin : IEvaluatableExpressio
                 return false;
             }
 
-            // Never evaluate NewGuidV7() - it's a server-side function stub
+            // Never evaluate UUID stubs — they're translation-only — EXCEPT
+            // DateTimeToUUIDv7, which is genuinely .NET-implemented (via
+            // Guid.CreateVersion7(DateTimeOffset)) and is meant to be evaluated
+            // client-side so the resulting Guid binds as a parameter. The CH
+            // server-side `dateTimeToUUIDv7` function is experimental and
+            // missing from many stable builds; client-side evaluation makes
+            // the surface portable across all CH versions.
             if (declaringType == typeof(ClickHouseUuidDbFunctionsExtensions))
             {
+                if (method.Name == nameof(ClickHouseUuidDbFunctionsExtensions.DateTimeToUUIDv7))
+                {
+                    return true;
+                }
                 return false;
             }
 
@@ -129,7 +139,18 @@ public class ClickHouseEvaluatableExpressionFilterPlugin : IEvaluatableExpressio
                 declaringType == typeof(ClickHouseStringSplitDbFunctionsExtensions) ||
                 declaringType == typeof(ClickHouseTextSearchDbFunctionsExtensions) ||
                 declaringType == typeof(ClickHouseTypeCheckDbFunctionsExtensions) ||
-                declaringType == typeof(ClickHouseAggregates))
+                declaringType == typeof(ClickHouseAggregates) ||
+                declaringType == typeof(ClickHouseConditionalDbFunctionsExtensions) ||
+                declaringType == typeof(ClickHouseStringPatternDbFunctionsExtensions) ||
+                declaringType == typeof(ClickHouseSafeCastDbFunctionsExtensions) ||
+                declaringType == typeof(ClickHouseBitDbFunctionsExtensions) ||
+                declaringType == typeof(ClickHouseJsonExtractDbFunctionsExtensions) ||
+                declaringType == typeof(ClickHouseRandomDbFunctionsExtensions) ||
+                declaringType == typeof(ClickHouseServerDbFunctionsExtensions) ||
+                declaringType == typeof(ClickHouseTupleDbFunctionsExtensions) ||
+                declaringType == typeof(ClickHouseStringExtraDbFunctionsExtensions) ||
+                declaringType == typeof(ClickHouseMathDbFunctionsExtensions) ||
+                declaringType == typeof(ClickHouseArrayDbFunctionsExtensions))
             {
                 return false;
             }
@@ -138,17 +159,20 @@ public class ClickHouseEvaluatableExpressionFilterPlugin : IEvaluatableExpressio
             {
                 var genericDef = method.GetGenericMethodDefinition();
 
-                // Don't parameterize calls to Sample, WithSetting, WithSettings, or LimitBy
+                // Don't parameterize calls to Sample, WithSetting, or LimitBy
                 if (genericDef == ClickHouseQueryableExtensions.SampleMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.SampleWithOffsetMethodInfo ||
-                    genericDef == ClickHouseQueryableExtensions.WithSettingsMethodInfo ||
+                    genericDef == ClickHouseQueryableExtensions.WithSettingMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.LimitByMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.LimitByWithOffsetMethodInfo ||
-                    genericDef == ClickHouseQueryableExtensions.AsCteMethodInfo ||
+                    genericDef == ClickHouseQueryableExtensions.AsSingleCteMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.WithRawFilterMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.ArrayJoinMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.LeftArrayJoinMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.ArrayJoin2MethodInfo ||
+                    genericDef == ClickHouseArrayJoinExtensions.ArrayJoin3MethodInfo ||
+                    genericDef == ClickHouseArrayJoinExtensions.ArrayJoin4MethodInfo ||
+                    genericDef == ClickHouseArrayJoinExtensions.ArrayJoin5MethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.AsofJoinMethodInfo ||
                     genericDef == ClickHouseQueryableExtensions.AsofLeftJoinMethodInfo)
                 {

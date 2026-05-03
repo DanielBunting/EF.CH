@@ -130,7 +130,7 @@ Choose ORDER BY columns based on your most frequent `WHERE` and `GROUP BY` patte
 | `SaveChanges()` for deletes | `ExecuteDeleteAsync()` | `query.ExecuteDeleteAsync()` |
 | `SaveChanges()` for inserts | `SaveChanges()` (small) or `BulkInsertAsync()` (large) | `context.BulkInsertAsync(entities)` |
 | `DbContext.Database.BeginTransaction()` | Not supported (no-op) | N/A |
-| Partitioned table (SQL Server Enterprise) | `PARTITION BY` (every engine) | `entity.HasPartitionByMonth(x => x.Date)` |
+| Partitioned table (SQL Server Enterprise) | `PARTITION BY` (every engine) | `entity.HasPartitionBy(x => x.Date, PartitionGranularity.Month)` |
 | Table-valued parameters | Temporary tables | `query.ToTempTableAsync(context)` |
 | Materialized/indexed views | Materialized views (first-class) | `entity.AsMaterializedView<TView, TSource>(query)` |
 | `COUNT(DISTINCT col)` | `uniq()` (approximate) or `uniqExact()` (exact) | `group.Uniq(x => x.Col)` or `group.UniqExact(x => x.Col)` |
@@ -262,7 +262,7 @@ Time-based partitioning enables efficient data lifecycle management (TTL, partit
 
 ```csharp
 entity.UseMergeTree(x => new { x.EventDate, x.Id })
-    .HasPartitionByMonth(x => x.EventDate)
+    .HasPartitionBy(x => x.EventDate, PartitionGranularity.Month)
     .HasTtl(x => x.EventDate, TimeSpan.FromDays(90));
 ```
 

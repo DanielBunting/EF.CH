@@ -1,15 +1,15 @@
 # Replicated Engines
 
-Replicated engines synchronize data across multiple ClickHouse nodes using ZooKeeper or ClickHouse Keeper for coordination. EF.CH supports all six replicated MergeTree variants with fluent API configuration for cluster assignment, ZooKeeper paths, and replica naming.
+Replicated engines synchronize data across multiple ClickHouse nodes using ZooKeeper or ClickHouse Keeper for coordination. EF.CH treats replication as a *property* of the engine, not a separate engine type — call `WithReplication(...)` on any `Use*MergeTree` builder and EF.CH emits the matching `Replicated*` engine variant at SQL-generation time.
 
 ## Engine Variants
 
-Each replicated engine mirrors its non-replicated counterpart, adding multi-node replication.
+Each MergeTree-family builder gains a `Replicated*` form when you call `WithReplication`. Engine-specific knobs (`WithVersion`, `WithSign`, `WithIsDeleted`) compose with replication and cluster knobs in any order.
 
 ### ReplicatedMergeTree
 
 ```csharp
-entity.UseReplicatedMergeTree(x => x.Id)
+entity.UseMergeTree(x => x.Id)
     .WithCluster("my_cluster")
     .WithReplication("/clickhouse/{database}/{table}");
 ```
@@ -30,7 +30,8 @@ ORDER BY ("Id");
 ### ReplicatedReplacingMergeTree
 
 ```csharp
-entity.UseReplicatedReplacingMergeTree(x => x.Version, x => x.Id)
+entity.UseReplacingMergeTree(x => x.Id)
+    .WithVersion(x => x.Version)
     .WithCluster("my_cluster")
     .WithReplication("/clickhouse/{database}/{table}");
 ```
@@ -45,7 +46,7 @@ ORDER BY ("Id");
 ### ReplicatedSummingMergeTree
 
 ```csharp
-entity.UseReplicatedSummingMergeTree(x => new { x.Hour, x.Category })
+entity.UseSummingMergeTree(x => new { x.Hour, x.Category })
     .WithCluster("my_cluster")
     .WithReplication("/clickhouse/{database}/{table}");
 ```
@@ -60,7 +61,7 @@ ORDER BY ("Hour", "Category");
 ### ReplicatedAggregatingMergeTree
 
 ```csharp
-entity.UseReplicatedAggregatingMergeTree(x => x.Timestamp)
+entity.UseAggregatingMergeTree(x => x.Timestamp)
     .WithCluster("my_cluster")
     .WithReplication("/clickhouse/{database}/{table}");
 ```
@@ -75,7 +76,8 @@ ORDER BY ("Timestamp");
 ### ReplicatedCollapsingMergeTree
 
 ```csharp
-entity.UseReplicatedCollapsingMergeTree(x => x.Sign, x => new { x.UserId })
+entity.UseCollapsingMergeTree(x => new { x.UserId })
+    .WithSign(x => x.Sign)
     .WithCluster("my_cluster")
     .WithReplication("/clickhouse/{database}/{table}");
 ```
@@ -90,11 +92,11 @@ ORDER BY ("UserId");
 ### ReplicatedVersionedCollapsingMergeTree
 
 ```csharp
-entity.UseReplicatedVersionedCollapsingMergeTree(
-    x => x.Sign, x => x.Version, x => new { x.UserId }
-)
-.WithCluster("my_cluster")
-.WithReplication("/clickhouse/{database}/{table}");
+entity.UseVersionedCollapsingMergeTree(x => new { x.UserId })
+    .WithSign(x => x.Sign)
+    .WithVersion(x => x.Version)
+    .WithCluster("my_cluster")
+    .WithReplication("/clickhouse/{database}/{table}");
 ```
 
 ```sql
@@ -147,25 +149,16 @@ To override the default:
 
 ## Fluent Chaining
 
-The replicated engine builder supports fluent chaining and implicit conversion back to `EntityTypeBuilder<T>`, allowing you to continue configuring the entity.
+`WithReplication`, `WithCluster`, and `WithTableGroup` come from the shared `MergeTreeFamilyBuilder` base, so they are available on every typed builder. Each chained call returns the leaf builder, so engine-specific knobs remain reachable in any order; the builder also implicitly converts back to `EntityTypeBuilder<T>` so you can keep configuring the entity without an explicit `.And()`.
 
 ```csharp
-entity.UseReplicatedMergeTree(x => x.Id)
+entity.UseMergeTree(x => x.Id)
     .WithCluster("geo_cluster")
     .WithReplication("/clickhouse/geo/{database}/{table}")
     .WithTableGroup("Core")
-    .And()  // or just continue chaining
-    .HasPartitionByMonth(x => x.OrderDate)
+    .And()  // or just continue chaining via implicit conversion
+    .HasPartitionBy(x => x.OrderDate, PartitionGranularity.Month)
     .HasTtl(x => x.OrderDate, TimeSpan.FromDays(365));
-```
-
-The `.And()` call explicitly returns the `EntityTypeBuilder<TEntity>`, but implicit conversion also works:
-
-```csharp
-// Implicit conversion -- no .And() needed
-entity.UseReplicatedMergeTree(x => x.Id)
-    .WithCluster("geo_cluster")
-    .HasPartitionByMonth(x => x.OrderDate);
 ```
 
 ## Full Example
@@ -179,12 +172,12 @@ public class AnalyticsDbContext : DbContext
     {
         modelBuilder.Entity<PageView>(entity =>
         {
-            entity.UseReplicatedMergeTree(x => new { x.Timestamp, x.UserId })
+            entity.UseMergeTree(x => new { x.Timestamp, x.UserId })
                 .WithCluster("analytics_cluster")
                 .WithReplication("/clickhouse/analytics/{database}/{table}")
                 .WithTableGroup("Core");
 
-            entity.HasPartitionByMonth(x => x.Timestamp);
+            entity.HasPartitionBy(x => x.Timestamp, PartitionGranularity.Month);
             entity.HasTtl(x => x.Timestamp, TimeSpan.FromDays(90));
 
             entity.HasIndex(x => x.UserId)

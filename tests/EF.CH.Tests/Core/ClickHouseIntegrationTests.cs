@@ -2,6 +2,7 @@ using EF.CH.Extensions;
 using Microsoft.EntityFrameworkCore;
 using Testcontainers.ClickHouse;
 using Xunit;
+using EF.CH.Metadata;
 
 namespace EF.CH.Tests.Core;
 
@@ -471,14 +472,9 @@ public class ClickHouseIntegrationTests : IAsyncLifetime
         });
         await context.SaveChangesAsync();
 
-        var settings = new Dictionary<string, object>
-        {
-            { "max_threads", 2 },
-            { "max_block_size", 1000 }
-        };
-
         var results = await context.Events
-            .WithSettings(settings)
+            .WithSetting("max_threads", 2)
+            .WithSetting("max_block_size", 1000)
             .ToListAsync();
 
         Assert.Single(results);
@@ -788,6 +784,10 @@ public class EventsDbContext : DbContext
             entity.ToTable("Events");
             entity.HasKey(e => e.Id);
             entity.UseMergeTree("EventTime", "Id");
+            // The .Sample() integration test creates the underlying table with
+            // SAMPLE BY xxHash32(Id) via raw DDL; declare the same on the model so
+            // the postprocessor's SAMPLE-validation guard recognises it.
+            entity.HasSampleBy("xxHash32(\"Id\")");
         });
     }
 }
@@ -891,7 +891,7 @@ public class OrdersDbContext : DbContext
             entity.ToTable("Orders");
             entity.HasKey(e => e.Id);
             entity.UseMergeTree(x => new { x.OrderDate, x.Id });
-            entity.HasPartitionByMonth(x => x.OrderDate);
+            entity.HasPartitionBy(x => x.OrderDate, PartitionGranularity.Month);
         });
     }
 }
@@ -916,7 +916,7 @@ public class CustomersDbContext : DbContext
         {
             entity.ToTable("Customers");
             entity.HasKey(e => e.Id);
-            entity.UseReplacingMergeTree(x => x.UpdatedAt, x => x.Id);
+            entity.UseReplacingMergeTree(x => x.Id).WithVersion(x => x.UpdatedAt);
         });
     }
 }
@@ -942,7 +942,7 @@ public class MetricsDbContext : DbContext
             entity.ToTable("Metrics");
             entity.HasNoKey();
             entity.UseMergeTree(x => new { x.Timestamp, x.MetricName });
-            entity.HasPartitionByDay(x => x.Timestamp);
+            entity.HasPartitionBy(x => x.Timestamp, PartitionGranularity.Day);
         });
     }
 }
@@ -968,7 +968,7 @@ public class SalesDbContext : DbContext
             entity.ToTable("Sales");
             entity.HasKey(e => e.Id);
             entity.UseMergeTree(x => new { x.SaleDate, x.Id });
-            entity.HasPartitionByMonth(x => x.SaleDate);
+            entity.HasPartitionBy(x => x.SaleDate, PartitionGranularity.Month);
         });
     }
 }
@@ -997,10 +997,9 @@ public class DeletableUsersDbContext : DbContext
         {
             entity.ToTable("DeletableUsers");
             entity.HasKey(e => e.Id);
-            entity.UseReplacingMergeTree(
-                x => x.Version,
-                x => x.IsDeleted,
-                x => x.Id);
+            entity.UseReplacingMergeTree(x => x.Id)
+                .WithVersion(x => x.Version)
+                .WithIsDeleted(x => x.IsDeleted);
         });
     }
 }

@@ -117,7 +117,7 @@ Date truncation pairs naturally with ClickHouse partitioning:
 modelBuilder.Entity<Event>(entity =>
 {
     entity.UseMergeTree(x => new { x.Timestamp, x.Id });
-    entity.HasPartitionByMonth(x => x.Timestamp);
+    entity.HasPartitionBy(x => x.Timestamp, PartitionGranularity.Month);
 });
 
 // This query benefits from partition pruning when filtered by date range

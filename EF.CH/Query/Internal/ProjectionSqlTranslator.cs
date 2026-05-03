@@ -583,6 +583,10 @@ internal class ProjectionExpressionVisitor<TSource> : ExpressionVisitor
             "QuantilesIf" => TranslateMultiQuantileIfAggregate("quantilesIf", methodExpr),
             "QuantilesTDigestIf" => TranslateMultiQuantileIfAggregate("quantilesTDigestIf", methodExpr),
 
+            // Typed-return aggregates
+            "CountUInt64" => "count()",
+            "SumUInt64" => TranslateSimpleClickHouseAggregate("sum", methodExpr),
+
             _ => throw new NotSupportedException($"ClickHouse aggregate {methodName} is not supported.")
         };
     }

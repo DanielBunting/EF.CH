@@ -40,7 +40,7 @@ The scaffolder queries `system.tables` to detect the engine type and parameters 
 |----------|------------------------|
 | Engine name | `UseMergeTree(...)`, `UseReplacingMergeTree(...)`, etc. |
 | ORDER BY columns | Columns passed to the engine method |
-| PARTITION BY expression | `HasPartitionBy(...)` or `HasPartitionByMonth(...)` |
+| PARTITION BY expression | `HasPartitionBy(...)` or `HasPartitionBy(..., PartitionGranularity.Month)` |
 | PRIMARY KEY (if different from ORDER BY) | `HasPrimaryKey(...)` |
 | SAMPLE BY | `HasSampleBy(...)` |
 | Version column (ReplacingMergeTree) | Version parameter in engine method |

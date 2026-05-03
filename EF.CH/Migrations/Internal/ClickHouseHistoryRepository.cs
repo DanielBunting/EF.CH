@@ -166,9 +166,11 @@ public class ClickHouseHistoryRepository : HistoryRepository
         var migrationIdColumn = SqlGenerationHelper.DelimitIdentifier(MigrationIdColumnName);
         var productVersionColumn = SqlGenerationHelper.DelimitIdentifier(ProductVersionColumnName);
 
-        // Escape single quotes in values
-        var migrationId = row.MigrationId.Replace("'", "\\'");
-        var productVersion = row.ProductVersion.Replace("'", "\\'");
+        // Escape backslash first, then apostrophe — ClickHouse interprets `\` as
+        // a C-style escape inside `'…'` literals, so a value ending in `\` would
+        // otherwise escape the closing quote and break out of the literal.
+        var migrationId = EscapeSqlLiteral(row.MigrationId);
+        var productVersion = EscapeSqlLiteral(row.ProductVersion);
 
         return $"""
             INSERT INTO {tableName} ({migrationIdColumn}, {productVersionColumn})
@@ -187,7 +189,7 @@ public class ClickHouseHistoryRepository : HistoryRepository
 
         var tableName = SqlGenerationHelper.DelimitIdentifier(TableName, TableSchema);
         var migrationIdColumn = SqlGenerationHelper.DelimitIdentifier(MigrationIdColumnName);
-        var escapedMigrationId = migrationId.Replace("'", "\\'");
+        var escapedMigrationId = EscapeSqlLiteral(migrationId);
 
         // ClickHouse uses ALTER TABLE DELETE for row deletion (mutation)
         return $"""
@@ -259,4 +261,13 @@ public class ClickHouseHistoryRepository : HistoryRepository
         // ClickHouse doesn't support procedural IF statements
         return string.Empty;
     }
+
+    /// <summary>
+    /// Escapes a value for embedding inside a single-quoted ClickHouse string
+    /// literal. Backslash is escaped first, then apostrophe — without the
+    /// backslash escape, a value ending in <c>\</c> would escape the closing
+    /// quote and break out of the literal.
+    /// </summary>
+    private static string EscapeSqlLiteral(string value) =>
+        value.Replace("\\", "\\\\").Replace("'", "\\'");
 }

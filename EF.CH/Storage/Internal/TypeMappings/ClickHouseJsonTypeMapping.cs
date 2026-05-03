@@ -169,7 +169,13 @@ public class ClickHouseJsonTypeMapping : RelationalTypeMapping
     }
 
     /// <summary>
-    /// Escapes a JSON string for use in a ClickHouse SQL literal.
+    /// Escapes a JSON string for embedding inside a ClickHouse single-quoted SQL
+    /// literal. ClickHouse interprets the standard C-style escape characters
+    /// (<c>\n</c>, <c>\r</c>, <c>\t</c>, <c>\b</c>, <c>\f</c>, <c>\0</c>) inside
+    /// <c>'…'</c> literals, so a JSON value containing a literal control char would
+    /// otherwise produce a malformed literal. Passes ASCII printables through
+    /// unchanged; non-ASCII (UTF-8) bytes are also preserved verbatim because
+    /// ClickHouse string literals are UTF-8 by default.
     /// </summary>
     private static string EscapeJsonString(string json)
     {
@@ -178,15 +184,15 @@ public class ClickHouseJsonTypeMapping : RelationalTypeMapping
         {
             switch (c)
             {
-                case '\'':
-                    builder.Append("\\'");
-                    break;
-                case '\\':
-                    builder.Append("\\\\");
-                    break;
-                default:
-                    builder.Append(c);
-                    break;
+                case '\'': builder.Append("\\'"); break;
+                case '\\': builder.Append("\\\\"); break;
+                case '\n': builder.Append("\\n"); break;
+                case '\r': builder.Append("\\r"); break;
+                case '\t': builder.Append("\\t"); break;
+                case '\b': builder.Append("\\b"); break;
+                case '\f': builder.Append("\\f"); break;
+                case '\0': builder.Append("\\0"); break;
+                default: builder.Append(c); break;
             }
         }
         return builder.ToString();

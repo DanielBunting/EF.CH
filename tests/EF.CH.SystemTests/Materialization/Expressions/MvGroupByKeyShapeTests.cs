@@ -146,10 +146,11 @@ public class MvGroupByKeyShapeTests
             mb.Entity<AnonTgt>(e =>
             {
                 e.ToTable("MvGbAnonTarget"); e.HasNoKey(); e.UseSummingMergeTree(x => new { x.A, x.B });
-                e.AsMaterializedView<AnonTgt, Row>(rows => rows
+
+            });
+            mb.MaterializedView<AnonTgt>().From<Row>().DefinedAs(rows => rows
                     .GroupBy(r => new { r.A, r.B })
                     .Select(g => new AnonTgt { A = g.Key.A, B = g.Key.B, Total = g.Sum(r => r.N) }));
-            });
         }
     }
 
@@ -162,10 +163,11 @@ public class MvGroupByKeyShapeTests
             mb.Entity<MemberTgt>(e =>
             {
                 e.ToTable("MvGbMemberTarget"); e.HasNoKey(); e.UseSummingMergeTree(x => x.A);
-                e.AsMaterializedView<MemberTgt, Row>(rows => rows
+
+            });
+            mb.MaterializedView<MemberTgt>().From<Row>().DefinedAs(rows => rows
                     .GroupBy(r => r.A)
                     .Select(g => new MemberTgt { A = g.Key, Total = g.Sum(r => r.N) }));
-            });
         }
     }
 
@@ -178,10 +180,11 @@ public class MvGroupByKeyShapeTests
             mb.Entity<MethodTgt>(e =>
             {
                 e.ToTable("MvGbMethodTarget"); e.HasNoKey(); e.UseSummingMergeTree(x => x.Bucket);
-                e.AsMaterializedView<MethodTgt, Row>(rows => rows
+
+            });
+            mb.MaterializedView<MethodTgt>().From<Row>().DefinedAs(rows => rows
                     .GroupBy(r => ClickHouseFunctions.ToStartOfHour(r.At))
                     .Select(g => new MethodTgt { Bucket = g.Key, Total = g.Sum(r => r.N) }));
-            });
         }
     }
 
@@ -194,10 +197,11 @@ public class MvGroupByKeyShapeTests
             mb.Entity<InitTgt>(e =>
             {
                 e.ToTable("MvGbInitTarget"); e.HasNoKey(); e.UseSummingMergeTree(x => new { x.A, x.B });
-                e.AsMaterializedView<InitTgt, Row>(rows => rows
+
+            });
+            mb.MaterializedView<InitTgt>().From<Row>().DefinedAs(rows => rows
                     .GroupBy(r => new InitTgt { A = r.A, B = r.B })
                     .Select(g => new InitTgt { A = g.Key.A, B = g.Key.B, Total = g.Sum(r => r.N) }));
-            });
         }
     }
 
@@ -210,10 +214,11 @@ public class MvGroupByKeyShapeTests
             mb.Entity<ConstTgt>(e =>
             {
                 e.ToTable("MvGbConstTarget"); e.HasNoKey(); e.UseSummingMergeTree(x => x.Bucket);
-                e.AsMaterializedView<ConstTgt, Row>(rows => rows
+
+            });
+            mb.MaterializedView<ConstTgt>().From<Row>().DefinedAs(rows => rows
                     .GroupBy(_ => 1L)
                     .Select(g => new ConstTgt { Bucket = g.Key, Total = g.Sum(r => r.N) }));
-            });
         }
     }
 
@@ -226,10 +231,11 @@ public class MvGroupByKeyShapeTests
             mb.Entity<BinTgt>(e =>
             {
                 e.ToTable("MvGbBinTarget"); e.HasNoKey(); e.UseSummingMergeTree(x => x.Parity);
-                e.AsMaterializedView<BinTgt, Row>(rows => rows
+
+            });
+            mb.MaterializedView<BinTgt>().From<Row>().DefinedAs(rows => rows
                     .GroupBy(r => (long)(r.B % 2))
                     .Select(g => new BinTgt { Parity = g.Key, Total = g.Sum(r => r.N) }));
-            });
         }
     }
 }

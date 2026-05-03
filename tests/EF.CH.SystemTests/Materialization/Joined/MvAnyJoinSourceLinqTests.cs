@@ -34,7 +34,7 @@ public class MvAnyJoinSourceLinqTests
         await RawClickHouse.SettleMaterializationAsync(Conn, "AnyJoinTarget");
         // End-to-end smoke check that ANY INNER JOIN MV definition is accepted by
         // ClickHouse and produces output. SQL shape is pinned by the unit test
-        // AsMaterializedView_AnyJoin_EmitsAnyInnerJoin; ANY's strictness semantics
+        // MaterializedView_AnyJoin_EmitsAnyInnerJoin; ANY's strictness semantics
         // (one match per left row) are ClickHouse's responsibility.
         Assert.True(await RawClickHouse.RowCountAsync(Conn, "AnyJoinTarget") > 0);
     }
@@ -95,11 +95,12 @@ public class MvAnyJoinSourceLinqTests
             {
                 e.ToTable("AnyJoinTarget"); e.HasNoKey();
                 e.UseSummingMergeTree(x => x.Region);
-                e.AsMaterializedView<Revenue, Order>(orders => orders
+
+            });
+            mb.MaterializedView<Revenue>().From<Order>().DefinedAs(orders => orders
                     .AnyJoin(_customers, o => o.CustomerId, c => c.Id, (o, c) => new { o.Amount, c.Region })
                     .GroupBy(x => x.Region)
                     .Select(g => new Revenue { Region = g.Key, Total = g.Sum(x => x.Amount) }));
-            });
         }
     }
 
@@ -116,11 +117,12 @@ public class MvAnyJoinSourceLinqTests
             {
                 e.ToTable("AnyLeftJoinTarget"); e.HasNoKey();
                 e.UseSummingMergeTree(x => x.Region);
-                e.AsMaterializedView<Revenue, Order>(orders => orders
+
+            });
+            mb.MaterializedView<Revenue>().From<Order>().DefinedAs(orders => orders
                     .AnyLeftJoin(_customers, o => o.CustomerId, c => c.Id, (o, c) => new { o.Amount, c.Region })
                     .GroupBy(x => x.Region)
                     .Select(g => new Revenue { Region = g.Key, Total = g.Sum(x => x.Amount) }));
-            });
         }
     }
 
@@ -137,11 +139,12 @@ public class MvAnyJoinSourceLinqTests
             {
                 e.ToTable("AnyRightJoinTarget"); e.HasNoKey();
                 e.UseSummingMergeTree(x => x.Region);
-                e.AsMaterializedView<Revenue, Order>(orders => orders
+
+            });
+            mb.MaterializedView<Revenue>().From<Order>().DefinedAs(orders => orders
                     .AnyRightJoin(_customers, o => o.CustomerId, c => c.Id, (o, c) => new { o.Amount, c.Region })
                     .GroupBy(x => x.Region)
                     .Select(g => new Revenue { Region = g.Key, Total = g.Sum(x => x.Amount) }));
-            });
         }
     }
 }

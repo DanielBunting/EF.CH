@@ -100,7 +100,7 @@ modelBuilder.Entity<EventLocal>(entity =>
 {
     entity.ToTable("events_local");
     entity.UseMergeTree(x => new { x.EventTime, x.Id });
-    entity.HasPartitionByMonth(x => x.EventTime);
+    entity.HasPartitionBy(x => x.EventTime, PartitionGranularity.Month);
 });
 
 // Distributed table - unified view across all shards

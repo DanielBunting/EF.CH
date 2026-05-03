@@ -60,6 +60,9 @@ public class ClickHouseConventionSetBuilder : RelationalConventionSetBuilder
         // Add convention that applies value converters to typed JSON properties
         conventionSet.ModelFinalizingConventions.Add(new ClickHouseJsonValueConverterConvention());
 
+        // Validate HasDefaultForNull is not combined with ValueGenerated*
+        conventionSet.ModelFinalizingConventions.Add(new DefaultForNullValidationConvention());
+
         return conventionSet;
     }
 }

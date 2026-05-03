@@ -11,6 +11,7 @@ using System.Runtime.CompilerServices;
 using EF.CH.Extensions;
 using Microsoft.EntityFrameworkCore;
 using Testcontainers.ClickHouse;
+using EF.CH.Metadata;
 
 var container = new ClickHouseBuilder()
     .WithImage("clickhouse/clickhouse-server:25.6")
@@ -163,9 +164,9 @@ static async Task DemoInsertSelect(BulkOpsContext context)
 
     // Server-side INSERT...SELECT with mapping between different entity types.
     // Data never leaves ClickHouse -- the mapping expression is translated to SQL.
-    var insertResult = await context.SensorArchive
-        .ExecuteInsertFromQueryAsync(
-            sourceQuery,
+    var insertResult = await sourceQuery
+        .InsertIntoAsync(
+            context.SensorArchive,
             src => new SensorArchiveEntry
             {
                 SensorId = src.SensorId,
@@ -199,7 +200,7 @@ static async Task DemoOptimizeTable(BulkOpsContext context)
 
     // Optimize with FINAL (forces complete merge)
     Console.WriteLine("Running OPTIMIZE TABLE SensorReadings FINAL...");
-    await context.Database.OptimizeTableFinalAsync<SensorReading>();
+    await context.Database.OptimizeTableAsync<SensorReading>(o => o.WithFinal());
     // Allow time for the merge to complete
     await Task.Delay(500);
     Console.WriteLine("  OPTIMIZE FINAL complete.");
@@ -294,15 +295,15 @@ public class BulkOpsContext(string connectionString) : DbContext
         modelBuilder.Entity<SensorReading>(entity =>
         {
             entity.HasNoKey();
-            entity.UseMergeTree(x => new { x.SensorId, x.ReadingAt })
-                .HasPartitionByMonth(x => x.ReadingAt);
+            entity.UseMergeTree(x => new { x.SensorId, x.ReadingAt });
+            entity.HasPartitionBy(x => x.ReadingAt, PartitionGranularity.Month);
         });
 
         modelBuilder.Entity<SensorArchiveEntry>(entity =>
         {
             entity.HasNoKey();
-            entity.UseMergeTree(x => new { x.SensorId, x.ReadingAt })
-                .HasPartitionByMonth(x => x.ReadingAt);
+            entity.UseMergeTree(x => new { x.SensorId, x.ReadingAt });
+            entity.HasPartitionBy(x => x.ReadingAt, PartitionGranularity.Month);
         });
     }
 }

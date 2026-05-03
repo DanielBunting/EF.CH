@@ -22,6 +22,11 @@ public class ClickHouseDateTimeTypeMapping : RelationalTypeMapping
     public string? TimeZone { get; }
 
     /// <summary>
+    /// The resolved TimeZoneInfo for literal-side wall-clock conversion.
+    /// </summary>
+    private TimeZoneInfo TimeZoneInfo { get; }
+
+    /// <summary>
     /// Creates a DateTime64 type mapping with the specified precision.
     /// </summary>
     /// <param name="precision">Decimal places for sub-second precision (default: 3 for milliseconds).</param>
@@ -40,6 +45,7 @@ public class ClickHouseDateTimeTypeMapping : RelationalTypeMapping
     {
         Precision = precision;
         TimeZone = timeZone;
+        TimeZoneInfo = ResolveTimeZone(timeZone);
     }
 
     protected ClickHouseDateTimeTypeMapping(
@@ -50,6 +56,7 @@ public class ClickHouseDateTimeTypeMapping : RelationalTypeMapping
     {
         Precision = precision;
         TimeZone = timeZone;
+        TimeZoneInfo = ResolveTimeZone(timeZone);
     }
 
     private static string BuildStoreType(int precision, string? timeZone)
@@ -59,6 +66,16 @@ public class ClickHouseDateTimeTypeMapping : RelationalTypeMapping
             return $"DateTime64({precision})";
         }
         return $"DateTime64({precision}, '{timeZone}')";
+    }
+
+    private static TimeZoneInfo ResolveTimeZone(string? timeZone)
+    {
+        if (string.IsNullOrEmpty(timeZone) ||
+            timeZone.Equals("UTC", StringComparison.OrdinalIgnoreCase))
+        {
+            return TimeZoneInfo.Utc;
+        }
+        return TimeZoneInfo.FindSystemTimeZoneById(timeZone);
     }
 
     protected override RelationalTypeMapping Clone(RelationalTypeMappingParameters parameters)
@@ -72,7 +89,6 @@ public class ClickHouseDateTimeTypeMapping : RelationalTypeMapping
     {
         var dateTime = (DateTime)value;
 
-        // Format with appropriate precision
         var format = Precision switch
         {
             0 => "yyyy-MM-dd HH:mm:ss",
@@ -85,7 +101,23 @@ public class ClickHouseDateTimeTypeMapping : RelationalTypeMapping
             _ => "yyyy-MM-dd HH:mm:ss.fffffff"
         };
 
-        return $"'{dateTime.ToString(format, CultureInfo.InvariantCulture)}'";
+        if (TimeZoneInfo == TimeZoneInfo.Utc)
+        {
+            return $"'{dateTime.ToString(format, CultureInfo.InvariantCulture)}'";
+        }
+
+        // Non-UTC TZ: emit UTC + Z via parseDateTime64BestEffort. A plain
+        // wall-clock literal would be reinterpreted in the column's TZ by CH,
+        // collapsing the spring-forward gap and indistinguishing the fall-back
+        // hour. UTC + Z is unambiguous across DST transitions.
+        var utc = dateTime.Kind switch
+        {
+            DateTimeKind.Utc => dateTime,
+            DateTimeKind.Local => dateTime.ToUniversalTime(),
+            _ => DateTime.SpecifyKind(dateTime, DateTimeKind.Utc)
+        };
+        var pSafe = Precision >= 1 ? Precision : 1;
+        return $"parseDateTime64BestEffort('{utc.ToString(format, CultureInfo.InvariantCulture)}Z', {pSafe}, '{TimeZone}')";
     }
 }
 
@@ -236,6 +268,59 @@ public class ClickHouseDateTimeOffsetTypeMapping : RelationalTypeMapping
         TimeZoneInfo = ResolveTimeZone(timeZone);
     }
 
+    /// <summary>
+    /// Converter: writes the UTC <see cref="DateTime"/> for parameter binding;
+    /// reads it back as a <see cref="DateTimeOffset"/> in the column's timezone.
+    /// </summary>
+    private static ValueConverter<DateTimeOffset, DateTime> CreateConverter(string? timeZone)
+    {
+        var tz = ResolveTimeZone(timeZone);
+        return new ValueConverter<DateTimeOffset, DateTime>(
+            dto => dto.UtcDateTime,
+            dt => ConvertToDateTimeOffset(dt, tz));
+    }
+
+    /// <summary>
+    /// Converts the driver's materialised value for a <c>DateTime64(P, 'TZ')</c>
+    /// column into a <see cref="DateTimeOffset"/>. ClickHouse.Driver returns the
+    /// local-in-TZ wall-clock as a <see cref="DateTime"/>, with
+    /// <see cref="DateTimeKind.Utc"/> when the column's offset at that instant
+    /// is zero (e.g. Europe/London during GMT, including the post-fall-back
+    /// occurrence of an ambiguous hour) and <see cref="DateTimeKind.Unspecified"/>
+    /// when a non-zero offset is in effect. We use that distinction to pick the
+    /// correct offset across DST transitions without losing information at the
+    /// fall-back ambiguous hour.
+    /// </summary>
+    private static DateTimeOffset ConvertToDateTimeOffset(DateTime driverValue, TimeZoneInfo tz)
+    {
+        if (tz == TimeZoneInfo.Utc)
+        {
+            return new DateTimeOffset(DateTime.SpecifyKind(driverValue, DateTimeKind.Utc), TimeSpan.Zero);
+        }
+
+        if (driverValue.Kind == DateTimeKind.Utc)
+        {
+            // Driver's signal that the offset at this instant is zero; the
+            // wall-clock value already equals the UTC instant.
+            return new DateTimeOffset(driverValue, TimeSpan.Zero);
+        }
+
+        var local = DateTime.SpecifyKind(driverValue, DateTimeKind.Unspecified);
+        TimeSpan offset;
+        if (tz.IsAmbiguousTime(local))
+        {
+            // Fall-back ambiguous hour. Kind=Utc would have selected the zero
+            // offset; Kind=Unspecified means we want the non-zero (DST) one.
+            var offsets = tz.GetAmbiguousTimeOffsets(local);
+            offset = offsets[0] != TimeSpan.Zero ? offsets[0] : offsets[1];
+        }
+        else
+        {
+            offset = tz.GetUtcOffset(local);
+        }
+        return new DateTimeOffset(local, offset);
+    }
+
     protected ClickHouseDateTimeOffsetTypeMapping(
         RelationalTypeMappingParameters parameters,
         int precision,
@@ -249,39 +334,6 @@ public class ClickHouseDateTimeOffsetTypeMapping : RelationalTypeMapping
 
     private static string BuildStoreType(int precision, string timeZone)
         => $"DateTime64({precision}, '{timeZone}')";
-
-    /// <summary>
-    /// Creates a value converter that writes as UTC and reads using the specified timezone.
-    /// </summary>
-    private static ValueConverter<DateTimeOffset, DateTime> CreateConverter(string? timeZone)
-    {
-        var tz = ResolveTimeZone(timeZone);
-        return new ValueConverter<DateTimeOffset, DateTime>(
-            // Write: always convert to UTC for storage
-            dto => dto.UtcDateTime,
-            // Read: interpret as UTC, then convert to target timezone with correct offset
-            dt => ConvertToDateTimeOffset(dt, tz));
-    }
-
-    /// <summary>
-    /// Converts a UTC DateTime to a DateTimeOffset in the specified timezone.
-    /// </summary>
-    private static DateTimeOffset ConvertToDateTimeOffset(DateTime utcDateTime, TimeZoneInfo tz)
-    {
-        // Ensure the DateTime is treated as UTC
-        var utc = DateTime.SpecifyKind(utcDateTime, DateTimeKind.Utc);
-
-        if (tz == TimeZoneInfo.Utc)
-        {
-            // Fast path for UTC - no conversion needed
-            return new DateTimeOffset(utc, TimeSpan.Zero);
-        }
-
-        // Convert from UTC to the target timezone
-        var local = TimeZoneInfo.ConvertTimeFromUtc(utc, tz);
-        var offset = tz.GetUtcOffset(local);
-        return new DateTimeOffset(local, offset);
-    }
 
     /// <summary>
     /// Resolves an IANA timezone name to a TimeZoneInfo.
@@ -325,9 +377,22 @@ public class ClickHouseDateTimeOffsetTypeMapping : RelationalTypeMapping
             1 => "yyyy-MM-dd HH:mm:ss.f",
             2 => "yyyy-MM-dd HH:mm:ss.ff",
             3 => "yyyy-MM-dd HH:mm:ss.fff",
-            _ => "yyyy-MM-dd HH:mm:ss.ffffff"
+            4 => "yyyy-MM-dd HH:mm:ss.ffff",
+            5 => "yyyy-MM-dd HH:mm:ss.fffff",
+            6 => "yyyy-MM-dd HH:mm:ss.ffffff",
+            _ => "yyyy-MM-dd HH:mm:ss.fffffff"
         };
 
-        return $"'{utc.ToString(format, CultureInfo.InvariantCulture)}'";
+        if (TimeZoneInfo == TimeZoneInfo.Utc)
+        {
+            return $"'{utc.ToString(format, CultureInfo.InvariantCulture)}'";
+        }
+
+        // Non-UTC TZ: emit UTC + Z via parseDateTime64BestEffort. A plain
+        // wall-clock literal would be reinterpreted in the column's TZ by CH,
+        // collapsing the spring-forward gap and indistinguishing the fall-back
+        // hour. UTC + Z is unambiguous across DST transitions.
+        var pSafe = Precision >= 1 ? Precision : 1;
+        return $"parseDateTime64BestEffort('{utc.ToString(format, CultureInfo.InvariantCulture)}Z', {pSafe}, '{TimeZone}')";
     }
 }

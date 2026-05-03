@@ -72,13 +72,13 @@ try
     // the final value persists.
     Console.WriteLine("[2] Inserting key 'beta-search' three times with different values...");
 
-    await context.Flags.UpsertRangeAsync([new FeatureFlag { Name = "beta-search", Enabled = false, RolloutPct = 0 }]);
+    await context.Flags.BulkInsertAsync([new FeatureFlag { Name = "beta-search", Enabled = false, RolloutPct = 0 }]);
     Console.WriteLine("    UPSERT  beta-search  Enabled=false  RolloutPct=0");
 
-    await context.Flags.UpsertRangeAsync([new FeatureFlag { Name = "beta-search", Enabled = true, RolloutPct = 10 }]);
+    await context.Flags.BulkInsertAsync([new FeatureFlag { Name = "beta-search", Enabled = true, RolloutPct = 10 }]);
     Console.WriteLine("    UPSERT  beta-search  Enabled=true   RolloutPct=10");
 
-    await context.Flags.UpsertRangeAsync([new FeatureFlag { Name = "beta-search", Enabled = true, RolloutPct = 100 }]);
+    await context.Flags.BulkInsertAsync([new FeatureFlag { Name = "beta-search", Enabled = true, RolloutPct = 100 }]);
     Console.WriteLine("    UPSERT  beta-search  Enabled=true   RolloutPct=100\n");
 
     var rowCount = await context.Flags.LongCountAsync();
@@ -108,8 +108,8 @@ try
 
     // Step 4: Overwrite an existing flag. This is the canonical "update" path
     // for KeeperMap: there is no ALTER TABLE UPDATE dance, just INSERT.
-    Console.WriteLine("[4] Rolling 'ai-suggest' from 25% -> 75% via UpsertRangeAsync on the same key...");
-    await context.Flags.UpsertRangeAsync(
+    Console.WriteLine("[4] Rolling 'ai-suggest' from 25% -> 75% via BulkInsertAsync on the same key...");
+    await context.Flags.BulkInsertAsync(
         [new FeatureFlag { Name = "ai-suggest", Enabled = true, RolloutPct = 75 }]);
 
     var aiSuggest = await context.Flags.AsNoTracking().SingleAsync(f => f.Name == "ai-suggest");

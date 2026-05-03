@@ -276,7 +276,7 @@ public class EphemeralColumnTests
             {
                 entity.Property(e => e.Value)
                     .HasEphemeralExpression()
-                    .HasCodec("ZSTD");
+                    .HasCodec(c => c.ZSTD());
             }));
 
         Assert.Contains("cannot have a compression codec", ex.Message);

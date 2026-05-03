@@ -57,10 +57,11 @@ public class MvMinMergeStateLinqTests
                 e.ToTable("MsMinDaily"); e.HasNoKey();
                 e.UseAggregatingMergeTree(x => x.Bucket);
                 e.Property(x => x.Total).HasAggregateFunction("min", typeof(long));
-                e.AsMaterializedView<DailyRow, HourlyRow>(rows => rows
+
+            });
+            mb.MaterializedView<DailyRow>().From<HourlyRow>().DefinedAs(rows => rows
                     .GroupBy(r => r.Bucket)
                     .Select(g => new DailyRow { Bucket = g.Key, Total = g.MinMergeState(r => r.Total) }));
-            });
         }
     }
 

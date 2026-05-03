@@ -8,15 +8,23 @@ namespace EF.CH.Query.Internal;
 
 /// <summary>
 /// Translates LINQ expressions into ClickHouse SQL for materialized view definitions.
-/// This is a design-time translator that processes expressions during OnModelCreating.
+/// This is a design-time translator that runs during <c>OnModelCreating</c>.
 /// </summary>
-public class MaterializedViewSqlTranslator
+/// <remarks>
+/// The lambda's first parameter (<c>IQueryable&lt;T1&gt;</c>) is the
+/// <strong>INSERT trigger</strong> source: only writes into <c>T1</c> fire
+/// the MV. Additional lambda parameters (<c>IQueryable&lt;T2..Tn&gt;</c>)
+/// are joined sources — they are looked up at trigger time and only
+/// contribute to the SQL when referenced in the lambda body. A declared-but-
+/// unreferenced source is rejected via <see cref="EnsureAllParametersReferenced"/>
+/// to surface the misuse early. The translator itself accepts any arity;
+/// the public <c>MaterializedView&lt;T&gt;().From&lt;...&gt;().Join&lt;...&gt;()</c>
+/// fluent chain caps at five sources by virtue of its hand-rolled stages.
+/// </remarks>
+internal class MaterializedViewSqlTranslator
 {
     private readonly IModel _model;
     private readonly string _sourceTableName;
-    private readonly StringBuilder _sql = new();
-    private readonly List<string> _selectColumns = [];
-    private readonly List<string> _groupByColumns = [];
 
     /// <summary>
     /// Creates a new translator for the given model and source table.
@@ -28,31 +36,61 @@ public class MaterializedViewSqlTranslator
     }
 
     /// <summary>
-    /// Translates a LINQ query expression into a ClickHouse SELECT statement.
+    /// Translates a (one or more source) LINQ query lambda into a ClickHouse
+    /// SELECT statement. The lambda's first parameter is the INSERT trigger;
+    /// subsequent parameters are joined sources that must appear in the body.
     /// </summary>
-    /// <typeparam name="TSource">The source entity type.</typeparam>
-    /// <typeparam name="TResult">The result entity type.</typeparam>
-    /// <param name="queryExpression">The LINQ query expression.</param>
-    /// <returns>The translated SELECT SQL.</returns>
-    public string Translate<TSource, TResult>(
-        Expression<Func<IQueryable<TSource>, IQueryable<TResult>>> queryExpression)
-        where TSource : class
-        where TResult : class
+    public string Translate(LambdaExpression queryExpression)
     {
-        var visitor = new MaterializedViewExpressionVisitor<TSource>(
-            _model,
-            _sourceTableName);
+        EnsureAllParametersReferenced(queryExpression);
 
-        return visitor.Translate(queryExpression);
+        // The first lambda parameter (IQueryable<T1>) is the trigger source.
+        var triggerType = queryExpression.Parameters[0].Type.GetGenericArguments()[0];
+        var visitor = new MaterializedViewExpressionVisitor(_model, _sourceTableName, triggerType);
+        return visitor.TranslateBody(queryExpression.Body);
+    }
+
+    private static void EnsureAllParametersReferenced(LambdaExpression lambda)
+    {
+        if (lambda.Parameters.Count <= 1) return;
+
+        var seen = new HashSet<ParameterExpression>();
+        new ParameterReferenceCollector(seen).Visit(lambda.Body);
+
+        for (var i = 0; i < lambda.Parameters.Count; i++)
+        {
+            var p = lambda.Parameters[i];
+            if (seen.Contains(p)) continue;
+
+            var sourceType = p.Type.IsGenericType
+                ? p.Type.GetGenericArguments()[0]
+                : p.Type;
+            throw new InvalidOperationException(
+                $"MaterializedView source '{sourceType.Name}' (parameter index {i}) " +
+                "declared in the Translate<...> overload was not referenced in the lambda body. " +
+                "Either remove the unused type argument or include the source in the query.");
+        }
+    }
+
+    private sealed class ParameterReferenceCollector : ExpressionVisitor
+    {
+        private readonly HashSet<ParameterExpression> _seen;
+        public ParameterReferenceCollector(HashSet<ParameterExpression> seen) => _seen = seen;
+        protected override Expression VisitParameter(ParameterExpression node)
+        {
+            _seen.Add(node);
+            return base.VisitParameter(node);
+        }
     }
 }
 
 /// <summary>
-/// Visits LINQ expression trees and builds ClickHouse SQL.
+/// Visits LINQ expression trees and builds ClickHouse SQL. Trigger-source-
+/// agnostic: the trigger entity type is supplied at construction time, not
+/// as a generic parameter, so the translator can dispatch any-arity lambda
+/// without reflective <c>MakeGenericType</c>/<c>Activator.CreateInstance</c>.
 /// </summary>
-/// <typeparam name="TSource">The source entity type.</typeparam>
-internal class MaterializedViewExpressionVisitor<TSource> : ExpressionVisitor
-    where TSource : class
+internal class MaterializedViewExpressionVisitor : ExpressionVisitor
 {
     private readonly IModel _model;
     private readonly string _sourceTableName;
@@ -109,24 +147,25 @@ internal class MaterializedViewExpressionVisitor<TSource> : ExpressionVisitor
         public Dictionary<string, MemberRef>? Transparent { get; init; }
     }
 
-    public MaterializedViewExpressionVisitor(IModel model, string sourceTableName)
+    public MaterializedViewExpressionVisitor(IModel model, string sourceTableName, Type triggerType)
     {
         _model = model;
         _sourceTableName = sourceTableName;
-        _sourceEntityType = model.FindEntityType(typeof(TSource));
+        _sourceEntityType = model.FindEntityType(triggerType);
         // Initial row binding — the source table. Alias is only emitted into SQL
         // when joins are present (HasJoins gate keeps single-source SQL untouched).
         _currentRowBinding = new RowBinding { Alias = SourceAlias, Entity = _sourceEntityType };
     }
 
     /// <summary>
-    /// Translates the full query expression to SQL.
+    /// Translates the body of a (possibly multi-arg) LINQ query lambda. The
+    /// trigger source type passed to the constructor is what an unscoped
+    /// reference to the trigger parameter resolves to.
     /// </summary>
-    public string Translate<TResult>(
-        Expression<Func<IQueryable<TSource>, IQueryable<TResult>>> queryExpression)
+    public string TranslateBody(Expression body)
     {
         // The expression body should be a method chain on the IQueryable parameter
-        Visit(queryExpression.Body);
+        Visit(body);
 
         var sql = new StringBuilder();
         sql.Append("SELECT ");
@@ -271,7 +310,7 @@ internal class MaterializedViewExpressionVisitor<TSource> : ExpressionVisitor
 
     private Expression VisitGroupBy(MethodCallExpression node)
     {
-        // Visit the source first (IQueryable<TSource>)
+        // Visit the source first (IQueryable<trigger>)
         Visit(node.Arguments[0]);
 
         // Get the key selector lambda
@@ -1921,6 +1960,11 @@ internal class MaterializedViewExpressionVisitor<TSource> : ExpressionVisitor
             "GroupUniqArrayStateIf" => TranslateGroupUniqArrayStateIf(methodExpr),
             "TopKStateIf" => TranslateTopKStateIf(methodExpr),
             "TopKWeightedStateIf" => TranslateTopKWeightedStateIf(methodExpr),
+
+            // Typed-return aggregates — emit the bare ClickHouse aggregates;
+            // count() returns UInt64, sum() returns the natural numeric type.
+            "CountUInt64" => "count()",
+            "SumUInt64" => TranslateSimpleClickHouseAggregate("sum", methodExpr),
 
             _ => throw new NotSupportedException($"ClickHouse aggregate {methodName} is not supported.")
         };

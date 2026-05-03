@@ -110,10 +110,8 @@ public class ClickHouseMigrationsSplitter
         IReadOnlyList<MigrationOperation> operations,
         IModel? model)
     {
-        if (operations.Count < 2)
-        {
-            return operations.Select((op, idx) => (op, idx)).ToList();
-        }
+        // No early-return for count < 2: a single self-referencing MV is
+        // still a cycle and must reach SortByDependencies for detection.
 
         // 1. Classify operations into phases
         var phaseGroups = new Dictionary<MigrationPhase, List<(MigrationOperation Op, int Index)>>();
@@ -214,7 +212,9 @@ public class ClickHouseMigrationsSplitter
         List<(MigrationOperation Op, int Index)> operations,
         bool reverseForDrops)
     {
-        if (operations.Count < 2)
+        // Don't early-return for count == 1: a single self-referencing
+        // MV is still a cycle and must be detected.
+        if (operations.Count == 0)
             return operations;
 
         // Build dependency graph
@@ -285,12 +285,20 @@ public class ClickHouseMigrationsSplitter
             }
         }
 
-        // Handle cycles or missing entries: add any remaining ops in original order
-        var processedIndices = new HashSet<int>(sortedResult.Select(r => r.Index));
-        foreach (var (op, idx) in operations)
+        // Cycle detection: any node still carrying in-degree > 0 after Kahn's
+        // queue drains is part of a cycle. Surface it loudly — silently
+        // emitting an arbitrary order would let the migration run, then fail
+        // server-side with a less actionable error (or, worse, succeed with
+        // the wrong dependency direction baked in).
+        var unresolved = inDegree.Where(kv => kv.Value > 0).Select(kv => kv.Key).ToList();
+        if (unresolved.Count > 0)
         {
-            if (!processedIndices.Contains(idx))
-                sortedResult.Add((op, idx));
+            var members = string.Join(", ", unresolved.OrderBy(s => s, StringComparer.Ordinal));
+            throw new InvalidOperationException(
+                $"Circular dependency detected between materialized view / dictionary " +
+                $"operations: {members}. Each member depends on another in the cycle, " +
+                "so no valid create / drop ordering exists. Break the cycle by removing " +
+                "one of the cross-references (a joined source, a refresh DependsOn, or a TO target).");
         }
 
         // Reverse for drops (dependents first, then their sources)
@@ -311,6 +319,12 @@ public class ClickHouseMigrationsSplitter
         var mvSource = GetAnnotation<string>(op, ClickHouseAnnotationNames.MaterializedViewSource);
         if (!string.IsNullOrEmpty(mvSource))
             deps.Add(mvSource);
+
+        // Joined sources (T2..Tn for multi-source MVs) — also dependencies.
+        var joined = GetAnnotation<string[]>(op, ClickHouseAnnotationNames.MaterializedViewJoinedSources);
+        if (joined is { Length: > 0 })
+            foreach (var j in joined)
+                if (!string.IsNullOrEmpty(j)) deps.Add(j);
 
         // Check DictionarySource annotation
         var dictSource = GetAnnotation<string>(op, ClickHouseAnnotationNames.DictionarySource);

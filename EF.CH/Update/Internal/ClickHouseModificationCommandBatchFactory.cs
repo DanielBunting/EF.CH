@@ -165,13 +165,39 @@ public class ClickHouseModificationCommandBatch : ModificationCommandBatch
             .Where(c => c.IsWrite)
             .ToList();
 
-        // Build expanded column list (handles Nested columns)
-        var expandedColumns = ExpandColumnsForNested(columns, sqlHelper);
+        // ClickHouse rejects `INSERT INTO X () VALUES (), …` (the syntax EF
+        // Core would emit when an entity's only mapped column is
+        // server-defaulted, e.g. an Id-only entity with HasUuidV4Default /
+        // HasSerialIDDefault). Fall back to listing every column the
+        // server generates and letting CH evaluate the DEFAULT expression
+        // per column.
+        var useDefaultRow = columns.Count == 0;
+        IReadOnlyList<(string QuotedName, IColumnModification? Source)> headerColumns;
 
-        for (var i = 0; i < expandedColumns.Count; i++)
+        if (useDefaultRow)
+        {
+            var allColumnsRaw = firstCommand.ColumnModifications.ToList();
+            if (allColumnsRaw.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    $"Cannot INSERT into '{firstCommand.TableName}': the entity has no mapped columns.");
+            }
+            headerColumns = allColumnsRaw
+                .Select(c => (sqlHelper.DelimitIdentifier(c.ColumnName), (IColumnModification?)null))
+                .ToList();
+        }
+        else
+        {
+            var expandedColumns = ExpandColumnsForNested(columns, sqlHelper);
+            headerColumns = expandedColumns
+                .Select(ec => (ec.QuotedName, (IColumnModification?)null))
+                .ToList();
+        }
+
+        for (var i = 0; i < headerColumns.Count; i++)
         {
             if (i > 0) _sqlBuilder.Append(", ");
-            _sqlBuilder.Append(expandedColumns[i].QuotedName);
+            _sqlBuilder.Append(headerColumns[i].QuotedName);
         }
 
         _sqlBuilder.Append(") VALUES ");
@@ -183,25 +209,37 @@ public class ClickHouseModificationCommandBatch : ModificationCommandBatch
 
             _sqlBuilder.Append("(");
 
-            var rowColumns = commands[rowIndex].ColumnModifications
-                .Where(c => c.IsWrite)
-                .ToList();
-
-            var valueIndex = 0;
-            for (var i = 0; i < rowColumns.Count; i++)
+            if (useDefaultRow)
             {
-                var column = rowColumns[i];
-
-                if (column.TypeMapping is ClickHouseNestedTypeMapping nestedMapping)
+                // Every column is server-defaulted — emit DEFAULT placeholders.
+                for (var i = 0; i < headerColumns.Count; i++)
                 {
-                    // Expand Nested column into parallel arrays
-                    AppendNestedValues(column, nestedMapping, ref valueIndex);
+                    if (i > 0) _sqlBuilder.Append(", ");
+                    _sqlBuilder.Append("DEFAULT");
                 }
-                else
+            }
+            else
+            {
+                var rowColumns = commands[rowIndex].ColumnModifications
+                    .Where(c => c.IsWrite)
+                    .ToList();
+
+                var valueIndex = 0;
+                for (var i = 0; i < rowColumns.Count; i++)
                 {
-                    if (valueIndex > 0) _sqlBuilder.Append(", ");
-                    AppendValue(column);
-                    valueIndex++;
+                    var column = rowColumns[i];
+
+                    if (column.TypeMapping is ClickHouseNestedTypeMapping nestedMapping)
+                    {
+                        // Expand Nested column into parallel arrays
+                        AppendNestedValues(column, nestedMapping, ref valueIndex);
+                    }
+                    else
+                    {
+                        if (valueIndex > 0) _sqlBuilder.Append(", ");
+                        AppendValue(column);
+                        valueIndex++;
+                    }
                 }
             }
 

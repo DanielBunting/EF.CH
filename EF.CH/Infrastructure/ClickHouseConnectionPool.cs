@@ -67,7 +67,13 @@ public class ClickHouseConnectionPool : IClickHouseConnectionPool
     {
         lock (_roundRobinLock)
         {
-            var index = _roundRobinIndex++ % endpoints.Count;
+            // Cast to uint before modulo: a signed `_roundRobinIndex++ % count`
+            // produces a negative result after `int.MaxValue` calls (the post-
+            // increment wraps to int.MinValue, then `% count` is negative), and
+            // List<>.this[int] then throws ArgumentOutOfRangeException. Unsigned
+            // modulo stays in [0, count) across the full range.
+            var raw = unchecked((uint)_roundRobinIndex++);
+            var index = (int)(raw % (uint)endpoints.Count);
             return endpoints[index];
         }
     }

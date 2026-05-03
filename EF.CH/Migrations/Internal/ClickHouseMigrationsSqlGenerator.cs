@@ -187,10 +187,9 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         {
             case CreateTableOperation createOp:
                 // MVs and Dictionaries depend on their source tables
-                var sourceDep = GetSourceTableDependency(createOp, model);
-                if (!string.IsNullOrEmpty(sourceDep))
+                foreach (var src in GetSourceTableDependencies(createOp, model))
                 {
-                    deps.Add(sourceDep);
+                    deps.Add(src);
                 }
                 // Refreshable-MV explicit dependencies
                 var refreshDeps = GetAnnotation<string[]>(createOp, ClickHouseAnnotationNames.MaterializedViewRefreshDependsOn);
@@ -277,39 +276,49 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
     }
 
     /// <summary>
-    /// Gets the source table that a CreateTableOperation depends on, if any.
-    /// Materialized views depend on their source table.
-    /// Dictionaries sourced from ClickHouse tables depend on that table.
+    /// Gets the source tables that a CreateTableOperation depends on.
+    /// Materialized views depend on their trigger source AND any joined sources
+    /// (T2..Tn). Dictionaries sourced from ClickHouse tables depend on that table.
     /// </summary>
-    private string? GetSourceTableDependency(CreateTableOperation operation, IModel? model)
+    private IReadOnlyList<string> GetSourceTableDependencies(CreateTableOperation operation, IModel? model)
     {
+        var sources = new List<string>();
+
         // Get entity type for additional annotation lookup
         var entityType = model?.GetEntityTypes()
             .FirstOrDefault(e => e.GetTableName() == operation.Name
                               && (e.GetSchema() ?? model.GetDefaultSchema()) == operation.Schema);
 
-        // Check for materialized view source
+        // Materialized view trigger source (T1)
         var mvSource = GetAnnotation<string>(operation, ClickHouseAnnotationNames.MaterializedViewSource)
                     ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.MaterializedViewSource);
         if (!string.IsNullOrEmpty(mvSource))
         {
-            return mvSource;
+            sources.Add(mvSource!);
         }
 
-        // Check for dictionary source (only for ClickHouse-sourced dictionaries)
+        // Materialized view joined sources (T2..Tn)
+        var joined = GetAnnotation<string[]>(operation, ClickHouseAnnotationNames.MaterializedViewJoinedSources)
+                  ?? GetEntityAnnotation<string[]>(entityType, ClickHouseAnnotationNames.MaterializedViewJoinedSources);
+        if (joined is { Length: > 0 })
+        {
+            foreach (var j in joined)
+                if (!string.IsNullOrEmpty(j)) sources.Add(j);
+        }
+
+        // Dictionary source (only for ClickHouse-sourced dictionaries)
         var dictSource = GetAnnotation<string>(operation, ClickHouseAnnotationNames.DictionarySource)
                       ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.DictionarySource);
         var sourceProvider = GetAnnotation<string>(operation, ClickHouseAnnotationNames.DictionarySourceProvider)
                           ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.DictionarySourceProvider)
                           ?? "clickhouse";
 
-        // Only consider dependency if dictionary is sourced from a ClickHouse table
         if (!string.IsNullOrEmpty(dictSource) && sourceProvider == "clickhouse")
         {
-            return dictSource;
+            sources.Add(dictSource!);
         }
 
-        return null;
+        return sources;
     }
 
     /// <summary>
@@ -341,22 +350,38 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
             return;
         }
 
+        // Plain views and parameterized views are emitted by the post-pass in
+        // ClickHouseDatabaseCreator (and by EnsureViewsAsync / EnsureParameterizedViewsAsync
+        // for ad-hoc creation). The differ shouldn't produce a CreateTableOperation for
+        // ToView-mapped entities, but suppress it defensively in case any path slips through.
+        var isView = GetAnnotation<bool?>(operation, ClickHouseAnnotationNames.View)
+                  ?? GetEntityAnnotation<bool?>(entityType, ClickHouseAnnotationNames.View)
+                  ?? false;
+        if (isView)
+            return;
+
+        var isParamView = GetAnnotation<bool?>(operation, ClickHouseAnnotationNames.ParameterizedView)
+                       ?? GetEntityAnnotation<bool?>(entityType, ClickHouseAnnotationNames.ParameterizedView)
+                       ?? false;
+        if (isParamView)
+            return;
+
         var deferredMv = GetAnnotation<bool?>(operation, ClickHouseAnnotationNames.MaterializedViewDeferred)
                       ?? GetEntityAnnotation<bool?>(entityType, ClickHouseAnnotationNames.MaterializedViewDeferred)
                       ?? false;
-        var markedAsMaterializedView = GetAnnotation<bool?>(operation, ClickHouseAnnotationNames.MaterializedView)
+        var isMaterializedView = GetAnnotation<bool?>(operation, ClickHouseAnnotationNames.MaterializedView)
                                     ?? GetEntityAnnotation<bool?>(entityType, ClickHouseAnnotationNames.MaterializedView)
                                     ?? false;
 
         // Deferred MV: skip both the MV creation AND the base-table creation. The caller
         // is responsible for issuing CREATE MATERIALIZED VIEW … POPULATE via
         // DatabaseFacade.CreateMaterializedViewAsync<T>().
-        if (deferredMv && markedAsMaterializedView)
+        if (deferredMv && isMaterializedView)
         {
             return;
         }
 
-        if (!deferredMv && markedAsMaterializedView)
+        if (!deferredMv && isMaterializedView)
         {
             var refreshInterval = GetAnnotation<string>(operation, ClickHouseAnnotationNames.MaterializedViewRefreshInterval)
                                ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.MaterializedViewRefreshInterval);
@@ -475,11 +500,18 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         if (string.IsNullOrEmpty(viewQuery))
         {
             throw new InvalidOperationException(
-                $"Materialized view '{operation.Name}' must have a view query defined via AsMaterializedViewRaw() or AsMaterializedView().");
+                $"Materialized view '{operation.Name}' must have a view query defined via modelBuilder.MaterializedView<T>().DefinedAsRaw(...) or .DefinedAs(query).");
         }
 
         // Get ON CLUSTER clause
         var onClusterClause = GetOnClusterClause(operation.Name, operation.Schema, entityType, model, operation);
+
+        // TO <target> takes priority over ENGINE — when set, the MV writes
+        // into an existing target table and skips its own engine clause.
+        // This conditional was previously refreshable-only; lift here so
+        // ToTarget<T>() works on non-refreshable MVs too.
+        var target = GetAnnotation<string>(operation, ClickHouseAnnotationNames.MaterializedViewRefreshTarget)
+                  ?? GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.MaterializedViewRefreshTarget);
 
         builder
             .Append("CREATE MATERIALIZED VIEW IF NOT EXISTS ")
@@ -488,8 +520,15 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
 
         builder.AppendLine();
 
-        // Add ENGINE clause (materialized views need storage engine too)
-        GenerateEngineClauseForView(operation, entityType, model, builder);
+        if (!string.IsNullOrEmpty(target))
+        {
+            builder.Append("TO ").Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(target!));
+        }
+        else
+        {
+            // Add ENGINE clause (materialized views need storage engine too)
+            GenerateEngineClauseForView(operation, entityType, model, builder);
+        }
 
         // POPULATE clause - backfills existing data from source table
         if (populate)
@@ -530,7 +569,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         {
             throw new InvalidOperationException(
                 $"Refreshable materialized view '{operation.Name}' must have a view query defined " +
-                $"via AsRefreshableMaterializedViewRaw() or AsRefreshableMaterializedView().");
+                $"via modelBuilder.MaterializedView<T>()...RefreshEvery(...) or .RefreshAfter(...).");
         }
 
         var kind = GetAnnotation<string>(operation, ClickHouseAnnotationNames.MaterializedViewRefreshKind)
@@ -1240,11 +1279,15 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         builder.AppendLine();
         builder.Append("ENGINE = ");
 
-        // Check if this is a replicated engine
-        var isReplicated = ClickHouseEngineNames.IsReplicated(engine);
+        // Replication is a property of the engine (driven by the IsReplicated annotation),
+        // not a distinct engine type — the engine annotation always holds the base name
+        // (e.g. "ReplacingMergeTree"); we prepend the "Replicated" prefix and the ZK args
+        // here when the flag is set.
+        var isReplicated = GetAnnotation<bool?>(operation, ClickHouseAnnotationNames.IsReplicated)
+                        ?? GetEntityAnnotation<bool?>(entityType, ClickHouseAnnotationNames.IsReplicated)
+                        ?? false;
         var extension = GetOptionsExtension();
 
-        // Get replication parameters for replicated engines
         string? replicationPath = null;
         string? replicaName = null;
         if (isReplicated)
@@ -1252,6 +1295,16 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
             replicationPath = GetReplicationPath(entityType, operation.Name, extension);
             replicaName = GetReplicaName(entityType, extension);
         }
+
+        var quotedVersion = string.IsNullOrEmpty(versionColumn)
+            ? null
+            : Dependencies.SqlGenerationHelper.DelimitIdentifier(versionColumn);
+        var quotedIsDeleted = string.IsNullOrEmpty(isDeletedColumn)
+            ? null
+            : Dependencies.SqlGenerationHelper.DelimitIdentifier(isDeletedColumn);
+        var quotedSign = string.IsNullOrEmpty(signColumn)
+            ? null
+            : Dependencies.SqlGenerationHelper.DelimitIdentifier(signColumn);
 
         // Generate engine with parameters
         switch (engine)
@@ -1264,45 +1317,20 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
                 builder.Append($"{engine}({externalEngineArgs})");
                 break;
 
-            // Replicated engines
-            case ClickHouseEngineNames.ReplicatedReplacingMergeTree when !string.IsNullOrEmpty(versionColumn) && !string.IsNullOrEmpty(isDeletedColumn):
-                builder.Append($"{ClickHouseEngineNames.ReplicatedReplacingMergeTree}({replicationPath}, {replicaName}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(versionColumn)}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(isDeletedColumn)})");
+            // MergeTree family — engine-specific arg lists. Replication is applied uniformly
+            // by AppendMergeTreeFamilyEngine: it prepends "Replicated" and the ZK args when
+            // isReplicated is true.
+            case ClickHouseEngineNames.ReplacingMergeTree when quotedVersion is not null && quotedIsDeleted is not null:
+                AppendMergeTreeFamilyEngine(builder, engine, isReplicated, replicationPath, replicaName, $"{quotedVersion}, {quotedIsDeleted}");
                 break;
-            case ClickHouseEngineNames.ReplicatedReplacingMergeTree when !string.IsNullOrEmpty(versionColumn):
-                builder.Append($"{ClickHouseEngineNames.ReplicatedReplacingMergeTree}({replicationPath}, {replicaName}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(versionColumn)})");
+            case ClickHouseEngineNames.ReplacingMergeTree when quotedVersion is not null:
+                AppendMergeTreeFamilyEngine(builder, engine, isReplicated, replicationPath, replicaName, quotedVersion);
                 break;
-            case ClickHouseEngineNames.ReplicatedReplacingMergeTree:
-                builder.Append($"{ClickHouseEngineNames.ReplicatedReplacingMergeTree}({replicationPath}, {replicaName})");
+            case ClickHouseEngineNames.CollapsingMergeTree when quotedSign is not null:
+                AppendMergeTreeFamilyEngine(builder, engine, isReplicated, replicationPath, replicaName, quotedSign);
                 break;
-            case ClickHouseEngineNames.ReplicatedCollapsingMergeTree when !string.IsNullOrEmpty(signColumn):
-                builder.Append($"{ClickHouseEngineNames.ReplicatedCollapsingMergeTree}({replicationPath}, {replicaName}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(signColumn)})");
-                break;
-            case ClickHouseEngineNames.ReplicatedVersionedCollapsingMergeTree when !string.IsNullOrEmpty(signColumn) && !string.IsNullOrEmpty(versionColumn):
-                builder.Append($"{ClickHouseEngineNames.ReplicatedVersionedCollapsingMergeTree}({replicationPath}, {replicaName}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(signColumn)}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(versionColumn)})");
-                break;
-            case ClickHouseEngineNames.ReplicatedMergeTree:
-                builder.Append($"{ClickHouseEngineNames.ReplicatedMergeTree}({replicationPath}, {replicaName})");
-                break;
-            case ClickHouseEngineNames.ReplicatedSummingMergeTree:
-                builder.Append($"{ClickHouseEngineNames.ReplicatedSummingMergeTree}({replicationPath}, {replicaName})");
-                break;
-            case ClickHouseEngineNames.ReplicatedAggregatingMergeTree:
-                builder.Append($"{ClickHouseEngineNames.ReplicatedAggregatingMergeTree}({replicationPath}, {replicaName})");
-                break;
-
-            // Non-replicated engines
-            case ClickHouseEngineNames.ReplacingMergeTree when !string.IsNullOrEmpty(versionColumn) && !string.IsNullOrEmpty(isDeletedColumn):
-                // ReplacingMergeTree(version, is_deleted) - ClickHouse 23.2+
-                builder.Append($"{ClickHouseEngineNames.ReplacingMergeTree}({Dependencies.SqlGenerationHelper.DelimitIdentifier(versionColumn)}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(isDeletedColumn)})");
-                break;
-            case ClickHouseEngineNames.ReplacingMergeTree when !string.IsNullOrEmpty(versionColumn):
-                builder.Append($"{ClickHouseEngineNames.ReplacingMergeTree}({Dependencies.SqlGenerationHelper.DelimitIdentifier(versionColumn)})");
-                break;
-            case ClickHouseEngineNames.CollapsingMergeTree when !string.IsNullOrEmpty(signColumn):
-                builder.Append($"{ClickHouseEngineNames.CollapsingMergeTree}({Dependencies.SqlGenerationHelper.DelimitIdentifier(signColumn)})");
-                break;
-            case ClickHouseEngineNames.VersionedCollapsingMergeTree when !string.IsNullOrEmpty(signColumn) && !string.IsNullOrEmpty(versionColumn):
-                builder.Append($"{ClickHouseEngineNames.VersionedCollapsingMergeTree}({Dependencies.SqlGenerationHelper.DelimitIdentifier(signColumn)}, {Dependencies.SqlGenerationHelper.DelimitIdentifier(versionColumn)})");
+            case ClickHouseEngineNames.VersionedCollapsingMergeTree when quotedSign is not null && quotedVersion is not null:
+                AppendMergeTreeFamilyEngine(builder, engine, isReplicated, replicationPath, replicaName, $"{quotedSign}, {quotedVersion}");
                 break;
 
             // Distributed engine
@@ -1338,10 +1366,13 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
                 break;
 
             default:
-                builder.Append(engine);
                 if (ClickHouseEngineNames.IsMergeTreeFamily(engine))
                 {
-                    builder.Append("()");
+                    AppendMergeTreeFamilyEngine(builder, engine, isReplicated, replicationPath, replicaName, engineSpecificArgs: null);
+                }
+                else
+                {
+                    builder.Append(engine);
                 }
                 break;
         }
@@ -1900,15 +1931,36 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
     }
 
     /// <summary>
-    /// Throws NotSupportedException for renaming columns.
-    /// ClickHouse doesn't support RENAME COLUMN.
+    /// Generates <c>ALTER TABLE ... RENAME COLUMN ... TO ...</c>. Supported on
+    /// MergeTree-family engines from ClickHouse 22.4 onwards. For engines that
+    /// do not support RENAME COLUMN (e.g. <c>Memory</c>, some <c>Log</c> family
+    /// engines, integration engines) the server returns a clear error at apply
+    /// time — we do not pre-validate the engine here because the migrations sql
+    /// generator does not always have a populated model and the server's error
+    /// message is itself accurate.
     /// </summary>
     protected override void Generate(
         RenameColumnOperation operation,
         IModel? model,
         MigrationCommandListBuilder builder)
     {
-        throw ClickHouseUnsupportedOperationException.RenameColumn(operation.Table, operation.Name);
+        ArgumentNullException.ThrowIfNull(operation);
+        ArgumentNullException.ThrowIfNull(builder);
+
+        var qualifiedTable = Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Table, operation.Schema);
+        var oldColumn = Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name);
+        var newColumn = Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.NewName ?? operation.Name);
+
+        builder
+            .Append("ALTER TABLE ")
+            .Append(qualifiedTable)
+            .Append(" RENAME COLUMN ")
+            .Append(oldColumn)
+            .Append(" TO ")
+            .Append(newColumn)
+            .AppendLine(Dependencies.SqlGenerationHelper.StatementTerminator);
+
+        EndStatement(builder);
     }
 
     /// <summary>
@@ -2049,9 +2101,18 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         var tableName = Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Table, operation.Schema);
         var indexName = Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name);
 
+        // Resolve cluster annotation. Without ON CLUSTER, ALTER TABLE ADD INDEX
+        // only applies to the local replica — silent replication divergence on
+        // multi-replica clusters.
+        var entityType = model?.GetEntityTypes().FirstOrDefault(e =>
+            e.GetTableName() == operation.Table
+            && (e.GetSchema() ?? model.GetDefaultSchema()) == operation.Schema);
+        var onClusterClause = GetOnClusterClause(operation.Table, operation.Schema, entityType, model, operation);
+
         builder
             .Append("ALTER TABLE ")
             .Append(tableName)
+            .Append(onClusterClause)
             .Append(" ADD INDEX IF NOT EXISTS ")
             .Append(indexName)
             .Append(" (");
@@ -2181,45 +2242,23 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
 
     /// <summary>
     /// Translates a stored LINQ expression to ClickHouse SQL for materialized views.
+    /// The translator now accepts any-arity lambdas directly — no reflective
+    /// generic-method dispatch and no <c>TargetInvocationException</c> unwrapping.
     /// </summary>
     private static string? TranslateMaterializedViewExpression(IEntityType entityType, IModel model)
     {
         const string expressionAnnotation = "ClickHouse:MaterializedViewExpression";
 
-        var annotation = entityType.FindAnnotation(expressionAnnotation);
-        if (annotation?.Value is not LambdaExpression expression)
+        if (entityType.FindAnnotation(expressionAnnotation)?.Value is not LambdaExpression expression)
             return null;
 
         var sourceTableName = GetEntityAnnotation<string>(entityType, ClickHouseAnnotationNames.MaterializedViewSource);
         if (string.IsNullOrEmpty(sourceTableName))
             return null;
 
-        // Get the source and result types from the expression
-        var funcType = expression.Type;
-        if (!funcType.IsGenericType || funcType.GetGenericTypeDefinition() != typeof(Func<,>))
-            return null;
-
-        var genericArgs = funcType.GetGenericArguments();
-        // genericArgs[0] = IQueryable<TSource>, genericArgs[1] = IQueryable<TResult>
-        var sourceQueryableType = genericArgs[0];
-        var resultQueryableType = genericArgs[1];
-
-        if (!sourceQueryableType.IsGenericType || !resultQueryableType.IsGenericType)
-            return null;
-
-        var sourceType = sourceQueryableType.GetGenericArguments()[0];
-
-        // Create the translator and translate the expression
-        var translator = new MaterializedViewSqlTranslator(model, sourceTableName);
-
-        // Use reflection to call the generic Translate method
-        var translateMethod = typeof(MaterializedViewSqlTranslator)
-            .GetMethod(nameof(MaterializedViewSqlTranslator.Translate))!
-            .MakeGenericMethod(sourceType, entityType.ClrType);
-
         try
         {
-            return (string?)translateMethod.Invoke(translator, [expression]);
+            return new MaterializedViewSqlTranslator(model, sourceTableName).Translate(expression);
         }
         catch (Exception ex)
         {
@@ -2306,8 +2345,17 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
             operation.Table, operation.Schema);
         var projectionName = Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name);
 
+        // Resolve cluster annotation. Without ON CLUSTER the projection only
+        // applies to one replica — silent replication divergence on multi-
+        // replica clusters.
+        var entityType = model?.GetEntityTypes().FirstOrDefault(e =>
+            e.GetTableName() == operation.Table
+            && (e.GetSchema() ?? model.GetDefaultSchema()) == operation.Schema);
+        var onClusterClause = GetOnClusterClause(operation.Table, operation.Schema, entityType, model, operation);
+
         builder.Append("ALTER TABLE ");
         builder.Append(tableName);
+        builder.Append(onClusterClause);
         builder.Append(" ADD PROJECTION IF NOT EXISTS ");
         builder.Append(projectionName);
         builder.Append(" (");
@@ -2321,6 +2369,7 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
         {
             builder.Append("ALTER TABLE ");
             builder.Append(tableName);
+            builder.Append(onClusterClause);
             builder.Append(" MATERIALIZE PROJECTION ");
             builder.Append(projectionName);
             builder.AppendLine(Dependencies.SqlGenerationHelper.StatementTerminator);
@@ -2479,6 +2528,36 @@ public class ClickHouseMigrationsSqlGenerator : MigrationsSqlGenerator
 
         // 3. Default cluster from extension
         return extension?.ClusterName;
+    }
+
+    /// <summary>
+    /// Emits an <c>ENGINE = …</c> clause for a MergeTree-family engine,
+    /// applying the <c>Replicated</c> prefix and ZooKeeper / replica name
+    /// arguments uniformly when <paramref name="isReplicated"/> is true.
+    /// </summary>
+    private static void AppendMergeTreeFamilyEngine(
+        MigrationCommandListBuilder builder,
+        string baseEngine,
+        bool isReplicated,
+        string? replicationPath,
+        string? replicaName,
+        string? engineSpecificArgs)
+    {
+        if (isReplicated)
+        {
+            var args = engineSpecificArgs is null
+                ? $"{replicationPath}, {replicaName}"
+                : $"{replicationPath}, {replicaName}, {engineSpecificArgs}";
+            builder.Append($"Replicated{baseEngine}({args})");
+        }
+        else if (engineSpecificArgs is not null)
+        {
+            builder.Append($"{baseEngine}({engineSpecificArgs})");
+        }
+        else
+        {
+            builder.Append($"{baseEngine}()");
+        }
     }
 
     /// <summary>

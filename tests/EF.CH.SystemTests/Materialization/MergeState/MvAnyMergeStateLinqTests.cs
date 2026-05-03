@@ -55,10 +55,11 @@ public class MvAnyMergeStateLinqTests
                 e.ToTable("MsAnyDaily"); e.HasNoKey();
                 e.UseAggregatingMergeTree(x => x.Bucket);
                 e.Property(x => x.AnyTag).HasAggregateFunction("any", typeof(string));
-                e.AsMaterializedView<DailyRow, HourlyRow>(rows => rows
+
+            });
+            mb.MaterializedView<DailyRow>().From<HourlyRow>().DefinedAs(rows => rows
                     .GroupBy(r => r.Bucket)
                     .Select(g => new DailyRow { Bucket = g.Key, AnyTag = g.AnyMergeState(r => r.AnyTag) }));
-            });
         }
     }
 

@@ -1,7 +1,11 @@
 using System.Data;
 using System.Data.Common;
 using ClickHouse.Driver.ADO;
+using EF.CH.Infrastructure;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.Extensions.Logging;
 
 namespace EF.CH.Storage.Internal;
 
@@ -10,12 +14,23 @@ namespace EF.CH.Storage.Internal;
 /// </summary>
 public class ClickHouseRelationalConnection : RelationalConnection
 {
+    private readonly IDiagnosticsLogger<DbLoggerCategory.Database.Transaction>? _transactionLogger;
+    private readonly bool _strictTransactions;
+
+    // Track per-connection-instance whether the no-op-transaction warning has fired.
+    // ClickHouse does not support transactions; we want one warning per connection
+    // on first BeginTransaction, regardless of how many transactions get opened.
+    private bool _transactionWarningFired;
+
     /// <summary>
     /// Creates a new instance of <see cref="ClickHouseRelationalConnection"/>.
     /// </summary>
     public ClickHouseRelationalConnection(RelationalConnectionDependencies dependencies)
         : base(dependencies)
     {
+        _transactionLogger = dependencies.TransactionLogger;
+        _strictTransactions = dependencies.ContextOptions
+            .FindExtension<ClickHouseOptionsExtension>()?.StrictTransactions ?? false;
     }
 
     /// <summary>
@@ -35,6 +50,8 @@ public class ClickHouseRelationalConnection : RelationalConnection
     /// </summary>
     public override IDbContextTransaction BeginTransaction()
     {
+        if (_strictTransactions) throw ClickHouseUnsupportedOperationException.Transaction();
+        WarnTransactionsNotSupportedOnce();
         return new ClickHouseNoOpTransaction();
     }
 
@@ -44,6 +61,8 @@ public class ClickHouseRelationalConnection : RelationalConnection
     /// </summary>
     public override IDbContextTransaction BeginTransaction(IsolationLevel isolationLevel)
     {
+        if (_strictTransactions) throw ClickHouseUnsupportedOperationException.Transaction();
+        WarnTransactionsNotSupportedOnce();
         return new ClickHouseNoOpTransaction();
     }
 
@@ -52,6 +71,8 @@ public class ClickHouseRelationalConnection : RelationalConnection
     /// </summary>
     public override Task<IDbContextTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default)
     {
+        if (_strictTransactions) throw ClickHouseUnsupportedOperationException.Transaction();
+        WarnTransactionsNotSupportedOnce();
         return Task.FromResult<IDbContextTransaction>(new ClickHouseNoOpTransaction());
     }
 
@@ -60,7 +81,39 @@ public class ClickHouseRelationalConnection : RelationalConnection
     /// </summary>
     public override Task<IDbContextTransaction> BeginTransactionAsync(IsolationLevel isolationLevel, CancellationToken cancellationToken = default)
     {
+        if (_strictTransactions) throw ClickHouseUnsupportedOperationException.Transaction();
+        WarnTransactionsNotSupportedOnce();
         return Task.FromResult<IDbContextTransaction>(new ClickHouseNoOpTransaction());
+    }
+
+    private void WarnTransactionsNotSupportedOnce()
+    {
+        if (_transactionWarningFired)
+            return;
+        _transactionWarningFired = true;
+
+        ClickHouseConnectionLog.LogTransactionsNotSupported(_transactionLogger);
+    }
+}
+
+/// <summary>
+/// Static logger helpers for <see cref="ClickHouseRelationalConnection"/>.
+/// </summary>
+internal static class ClickHouseConnectionLog
+{
+    private static readonly Action<ILogger, Exception?> _txNotSupported =
+        LoggerMessage.Define(
+            LogLevel.Warning,
+            new EventId(1001, "ClickHouseTransactionsNotSupported"),
+            "BeginTransaction was called on a ClickHouse connection. " +
+            "ClickHouse does not support transactions; commit and rollback are no-ops. " +
+            "This warning is logged once per connection.");
+
+    public static void LogTransactionsNotSupported(
+        IDiagnosticsLogger<DbLoggerCategory.Database.Transaction>? logger)
+    {
+        if (logger is null) return;
+        _txNotSupported(logger.Logger, null);
     }
 }
 

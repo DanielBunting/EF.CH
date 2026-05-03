@@ -53,7 +53,7 @@ Partitioning controls how data is physically organized on disk. Choose partition
 
 ```csharp
 entity.UseMergeTree(x => new { x.Date, x.Id })
-    .HasPartitionByMonth(x => x.CreatedAt);
+    .HasPartitionBy(x => x.CreatedAt, PartitionGranularity.Month);
 ```
 
 ```sql
@@ -65,7 +65,7 @@ ORDER BY ("Date", "Id")
 ### Daily partitioning
 
 ```csharp
-entity.HasPartitionByDay(x => x.EventDate);
+entity.HasPartitionBy(x => x.EventDate, PartitionGranularity.Day);
 ```
 
 ```sql
@@ -75,7 +75,7 @@ PARTITION BY toYYYYMMDD("EventDate")
 ### Yearly partitioning
 
 ```csharp
-entity.HasPartitionByYear(x => x.OrderDate);
+entity.HasPartitionBy(x => x.OrderDate, PartitionGranularity.Year);
 ```
 
 ```sql
@@ -104,12 +104,22 @@ PARTITION BY toYYYYMM(EventTime)
 
 ## PRIMARY KEY
 
-By default, the PRIMARY KEY matches the ORDER BY key. You can override this to use a prefix of the ORDER BY columns, which affects the primary index granularity without changing the sort order.
+By default, the PRIMARY KEY matches the ORDER BY key. You can override this to use a prefix of the ORDER BY columns, which keeps the in-memory sparse index narrower while ORDER BY still controls disk layout, sampling, and (for engines like ReplacingMergeTree / CollapsingMergeTree) row uniqueness or collapse granularity.
 
 ```csharp
-entity.UseMergeTree(x => new { x.Date, x.UserId, x.Id });
-// PRIMARY KEY defaults to ORDER BY if not explicitly set
+entity.UseMergeTree(x => new { x.UserId, x.Timestamp, x.EventId })
+    .WithPrimaryKey(x => new { x.UserId, x.Timestamp });
 ```
+
+The columns passed to `WithPrimaryKey` must form a **prefix** of the `ORDER BY` tuple — this is a ClickHouse rule. EF.CH validates it at model-building time and throws `InvalidOperationException` if the rule is violated, so you don't have to wait for the `CREATE TABLE` statement to fail.
+
+```csharp
+// Throws: PRIMARY KEY columns (Id) must form a prefix of ORDER BY columns (UserId, Timestamp).
+entity.UseMergeTree(x => new { x.UserId, x.Timestamp })
+    .WithPrimaryKey(x => x.Id);
+```
+
+`WithPrimaryKey` is available on every MergeTree-family builder (`UseMergeTree`, `UseReplacingMergeTree`, `UseSummingMergeTree`, `UseAggregatingMergeTree`, `UseCollapsingMergeTree`, `UseVersionedCollapsingMergeTree`) — the API is identical across the family.
 
 > **Note:** ClickHouse PRIMARY KEY is not a uniqueness constraint. It defines which columns appear in the sparse primary index for faster lookups. If not specified, it defaults to the ORDER BY columns.
 
@@ -230,7 +240,7 @@ modelBuilder.Entity<Event>(entity =>
     entity.HasKey(e => e.Id);
 
     entity.UseMergeTree(x => new { x.Date, x.Id })
-        .HasPartitionByMonth(x => x.CreatedAt)
+        .HasPartitionBy(x => x.CreatedAt, PartitionGranularity.Month)
         .HasSampleBy(x => x.UserId)
         .HasTtl(x => x.CreatedAt, TimeSpan.FromDays(30))
         .HasEngineSettings(new Dictionary<string, string>

@@ -153,7 +153,7 @@ modelBuilder.Entity<TrafficAggregates>(entity =>
     entity.HasNoKey();
 
     entity.UseAggregatingMergeTree(x => new { x.Hour, x.Domain })
-        .HasPartitionByMonth(x => x.Hour);
+        .HasPartitionBy(x => x.Hour, PartitionGranularity.Month);
 
     entity.Property(x => x.Hits).HasAggregateFunction("sum", typeof(long));
     entity.Property(x => x.UniqueVisitors).HasAggregateFunction("uniqExact", typeof(Guid));

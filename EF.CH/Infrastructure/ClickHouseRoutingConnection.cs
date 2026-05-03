@@ -179,7 +179,24 @@ public class ClickHouseRoutingConnection : DbConnection
         var host = parts[0];
         var port = parts.Length > 1 ? parts[1] : "8123";
 
-        return $"Host={host};Port={port};Database={_config.Database}";
+        var sb = new System.Text.StringBuilder();
+        sb.Append("Host=").Append(host)
+          .Append(";Port=").Append(port)
+          .Append(";Database=").Append(_config.Database);
+
+        // Carry credentials through to the rebuilt string. Without these, every
+        // reconnect drops auth and falls back to default — silently breaking
+        // locked-down deployments or running queries as the wrong user.
+        if (!string.IsNullOrEmpty(_config.Username))
+        {
+            sb.Append(";User=").Append(_config.Username);
+        }
+        if (!string.IsNullOrEmpty(_config.Password))
+        {
+            sb.Append(";Password=").Append(_config.Password);
+        }
+
+        return sb.ToString();
     }
 
     /// <inheritdoc />

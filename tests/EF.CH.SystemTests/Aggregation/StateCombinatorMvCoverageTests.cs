@@ -45,14 +45,14 @@ public class StateCombinatorMvCoverageTests
             .Select(g => new
             {
                 Count = g.CountMerge(t => t.CountSt),
-                Sum = g.SumMerge<Target, double>(t => t.SumSt),
+                Sum = g.SumMerge<string, Target, double>(t => t.SumSt),
                 Avg = g.AvgMerge(t => t.AvgSt),
-                Min = g.MinMerge<Target, double>(t => t.MinSt),
-                Max = g.MaxMerge<Target, double>(t => t.MaxSt),
+                Min = g.MinMerge<string, Target, double>(t => t.MinSt),
+                Max = g.MaxMerge<string, Target, double>(t => t.MaxSt),
                 Uniq = g.UniqMerge(t => t.UniqSt),
                 UniqExact = g.UniqExactMerge(t => t.UniqExactSt),
-                Any = g.AnyMerge<Target, string>(t => t.AnySt),
-                AnyLast = g.AnyLastMerge<Target, string>(t => t.AnyLastSt),
+                Any = g.AnyMerge<string, Target, string>(t => t.AnySt),
+                AnyLast = g.AnyLastMerge<string, Target, string>(t => t.AnyLastSt),
                 Quantile = g.QuantileMerge(0.5, t => t.QuantileSt),
             })
             .FirstAsync();
@@ -125,7 +125,9 @@ public class StateCombinatorMvCoverageTests
                 e.Property(x => x.AnyLastSt).HasAggregateFunction("anyLast", typeof(string));
                 e.Property(x => x.QuantileSt).HasAggregateFunction("quantile(0.5)", typeof(double));
 
-                e.AsMaterializedView<Target, Event>(src => src
+
+            });
+            mb.MaterializedView<Target>().From<Event>().DefinedAs(src => src
                     .GroupBy(s => s.Region)
                     .Select(g => new Target
                     {
@@ -141,7 +143,6 @@ public class StateCombinatorMvCoverageTests
                         AnyLastSt = g.AnyLastState(s => s.Customer),
                         QuantileSt = g.QuantileState(0.5, s => s.Amount),
                     }));
-            });
         }
     }
 }

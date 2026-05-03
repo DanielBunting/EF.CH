@@ -9,6 +9,7 @@
 using EF.CH.Extensions;
 using Microsoft.EntityFrameworkCore;
 using Testcontainers.ClickHouse;
+using EF.CH.Metadata;
 
 var container = new ClickHouseBuilder()
     .WithImage("clickhouse/clickhouse-server:25.6")
@@ -179,7 +180,7 @@ static async Task DemoSummingMergeTree(string connectionString)
     Console.WriteLine($"Inserted {counters.Count} counter increments.");
 
     // Force merge to trigger summation
-    await context.Database.OptimizeTableFinalAsync<PageCounter>();
+    await context.Database.OptimizeTableAsync<PageCounter>(o => o.WithFinal());
     // Allow time for the merge to complete
     await Task.Delay(500);
 
@@ -210,7 +211,7 @@ static async Task DemoAggregatingMergeTree(string connectionString)
     await using var context = new AggregatingMergeTreeContext(connectionString);
 
     // EnsureCreatedAsync generates the source table, target table, and materialized view.
-    // The AsMaterializedView<TEntity, TSource>(LINQ) in the model wires them together:
+    // The MaterializedView<T>().From<S>().DefinedAs(...) in the model wires them together:
     //   CREATE TABLE RawEventsAgg (...) ENGINE = MergeTree() ORDER BY (EventType, Timestamp)
     //   CREATE TABLE EventStats (...) ENGINE = AggregatingMergeTree() ORDER BY (EventType)
     //   CREATE MATERIALIZED VIEW ... TO EventStats AS SELECT ... FROM RawEventsAgg ...
@@ -241,7 +242,7 @@ static async Task DemoAggregatingMergeTree(string connectionString)
         {
             EventType = g.Key,
             Count = g.CountMerge(s => s.EventCount),
-            Total = g.SumMerge<EventStat, double>(s => s.TotalAmount),
+            Total = g.SumMerge<string, EventStat, double>(s => s.TotalAmount),
         })
         .OrderBy(r => r.EventType)
         .ToListAsync();
@@ -303,7 +304,7 @@ static async Task DemoCollapsingMergeTree(string connectionString)
     }
 
     // Force merge to collapse +1/-1 pairs
-    await context.Database.OptimizeTableFinalAsync<UserBalance>();
+    await context.Database.OptimizeTableAsync<UserBalance>(o => o.WithFinal());
     await Task.Delay(500);
 
     var afterMerge = await context.UserBalances
@@ -346,8 +347,8 @@ public class MergeTreeContext(string connectionString) : DbContext
         modelBuilder.Entity<PageView>(entity =>
         {
             entity.HasNoKey();
-            entity.UseMergeTree(x => new { x.ViewedAt, x.Id })
-                .HasPartitionByMonth(x => x.ViewedAt);
+            entity.UseMergeTree(x => new { x.ViewedAt, x.Id });
+            entity.HasPartitionBy(x => x.ViewedAt, PartitionGranularity.Month);
         });
     }
 }
@@ -374,7 +375,7 @@ public class ReplacingMergeTreeContext(string connectionString) : DbContext
         modelBuilder.Entity<UserProfile>(entity =>
         {
             entity.HasNoKey();
-            entity.UseReplacingMergeTree(x => x.Version, x => new { x.UserId });
+            entity.UseReplacingMergeTree(x => new { x.UserId }).WithVersion(x => x.Version);
         });
     }
 }
@@ -458,7 +459,9 @@ public class AggregatingMergeTreeContext(string connectionString) : DbContext
 
             // Define the materialized view that populates this table from RawEventsAgg
             // using the typed LINQ overload with -State combinators.
-            entity.AsMaterializedView<EventStat, RawEvent>(events => events
+
+        });
+        modelBuilder.MaterializedView<EventStat>().From<RawEvent>().DefinedAs(events => events
                 .GroupBy(x => x.EventType)
                 .Select(g => new EventStat
                 {
@@ -466,7 +469,6 @@ public class AggregatingMergeTreeContext(string connectionString) : DbContext
                     EventCount = g.CountState(),
                     TotalAmount = g.SumState(x => x.Amount),
                 }));
-        });
 
         modelBuilder.Entity<AggResult>(entity =>
         {
@@ -498,7 +500,7 @@ public class CollapsingMergeTreeContext(string connectionString) : DbContext
         modelBuilder.Entity<UserBalance>(entity =>
         {
             entity.HasNoKey();
-            entity.UseCollapsingMergeTree(x => x.Sign, x => new { x.UserId });
+            entity.UseCollapsingMergeTree(x => new { x.UserId }).WithSign(x => x.Sign);
         });
     }
 }

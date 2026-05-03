@@ -65,10 +65,11 @@ public class MvNestedMethodCallTests
             mb.Entity<ComposedTgt>(e =>
             {
                 e.ToTable("MvNestedComposedTarget"); e.HasNoKey(); e.UseSummingMergeTree(x => x.Bucket);
-                e.AsMaterializedView<ComposedTgt, Row>(rows => rows
+
+            });
+            mb.MaterializedView<ComposedTgt>().From<Row>().DefinedAs(rows => rows
                     .GroupBy(r => ClickHouseFunctions.ToStartOfDay(ClickHouseFunctions.ToStartOfHour(r.At)))
                     .Select(g => new ComposedTgt { Bucket = g.Key, Hits = g.Sum(r => r.Hits) }));
-            });
         }
     }
 
@@ -81,10 +82,11 @@ public class MvNestedMethodCallTests
             mb.Entity<AggMemberTgt>(e =>
             {
                 e.ToTable("MvNestedAggMemberTarget"); e.HasNoKey(); e.UseSummingMergeTree(x => x.Bucket);
-                e.AsMaterializedView<AggMemberTgt, Row>(rows => rows
+
+            });
+            mb.MaterializedView<AggMemberTgt>().From<Row>().DefinedAs(rows => rows
                     .GroupBy(_ => 1L)
                     .Select(g => new AggMemberTgt { Bucket = g.Key, MaxYear = g.Max(r => r.At.Year) }));
-            });
         }
     }
 }

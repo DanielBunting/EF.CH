@@ -123,10 +123,11 @@ public class MvClickHouseDateFunctionTests
             mb.Entity<HourTgt>(e =>
             {
                 e.ToTable("MvChDtHourTarget"); e.HasNoKey(); e.UseSummingMergeTree(x => x.Bucket);
-                e.AsMaterializedView<HourTgt, Row>(rows => rows
+
+            });
+            mb.MaterializedView<HourTgt>().From<Row>().DefinedAs(rows => rows
                     .GroupBy(r => ClickHouseFunctions.ToStartOfHour(r.At))
                     .Select(g => new HourTgt { Bucket = g.Key, Hits = g.Sum(r => r.Hits) }));
-            });
         }
     }
 
@@ -139,10 +140,11 @@ public class MvClickHouseDateFunctionTests
             mb.Entity<DayTgt>(e =>
             {
                 e.ToTable("MvChDtDayTarget"); e.HasNoKey(); e.UseSummingMergeTree(x => x.Bucket);
-                e.AsMaterializedView<DayTgt, Row>(rows => rows
+
+            });
+            mb.MaterializedView<DayTgt>().From<Row>().DefinedAs(rows => rows
                     .GroupBy(r => ClickHouseFunctions.ToStartOfDay(r.At))
                     .Select(g => new DayTgt { Bucket = g.Key, Hits = g.Sum(r => r.Hits) }));
-            });
         }
     }
 
@@ -155,10 +157,11 @@ public class MvClickHouseDateFunctionTests
             mb.Entity<YYYYMMTgt>(e =>
             {
                 e.ToTable("MvChDtYyyymmTarget"); e.HasNoKey(); e.UseSummingMergeTree(x => x.YearMonth);
-                e.AsMaterializedView<YYYYMMTgt, Row>(rows => rows
+
+            });
+            mb.MaterializedView<YYYYMMTgt>().From<Row>().DefinedAs(rows => rows
                     .GroupBy(r => ClickHouseFunctions.ToYYYYMM(r.At))
                     .Select(g => new YYYYMMTgt { YearMonth = g.Key, Hits = g.Sum(r => r.Hits) }));
-            });
         }
     }
 
@@ -171,10 +174,11 @@ public class MvClickHouseDateFunctionTests
             mb.Entity<WeekTgt>(e =>
             {
                 e.ToTable("MvChDtWeekTarget"); e.HasNoKey(); e.UseSummingMergeTree(x => x.Bucket);
-                e.AsMaterializedView<WeekTgt, Row>(rows => rows
+
+            });
+            mb.MaterializedView<WeekTgt>().From<Row>().DefinedAs(rows => rows
                     .GroupBy(r => ClickHouseFunctions.ToStartOfWeek(r.At))
                     .Select(g => new WeekTgt { Bucket = g.Key, Hits = g.Sum(r => r.Hits) }));
-            });
         }
     }
 
@@ -187,10 +191,11 @@ public class MvClickHouseDateFunctionTests
             mb.Entity<MonthTgt>(e =>
             {
                 e.ToTable("MvChDtMonthTarget"); e.HasNoKey(); e.UseSummingMergeTree(x => x.Bucket);
-                e.AsMaterializedView<MonthTgt, Row>(rows => rows
+
+            });
+            mb.MaterializedView<MonthTgt>().From<Row>().DefinedAs(rows => rows
                     .GroupBy(r => ClickHouseFunctions.ToStartOfMonth(r.At))
                     .Select(g => new MonthTgt { Bucket = g.Key, Hits = g.Sum(r => r.Hits) }));
-            });
         }
     }
 
@@ -203,10 +208,11 @@ public class MvClickHouseDateFunctionTests
             mb.Entity<YyyymmddTgt>(e =>
             {
                 e.ToTable("MvChDtYyyymmddTarget"); e.HasNoKey(); e.UseSummingMergeTree(x => x.Day);
-                e.AsMaterializedView<YyyymmddTgt, Row>(rows => rows
+
+            });
+            mb.MaterializedView<YyyymmddTgt>().From<Row>().DefinedAs(rows => rows
                     .GroupBy(r => ClickHouseFunctions.ToYYYYMMDD(r.At))
                     .Select(g => new YyyymmddTgt { Day = g.Key, Hits = g.Sum(r => r.Hits) }));
-            });
         }
     }
 }

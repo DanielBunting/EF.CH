@@ -6,7 +6,7 @@ A minimal example showing how to get started with EF.CH, the Entity Framework Co
 
 - Defining an entity (`Event`) and a `DbContext` with ClickHouse configuration
 - Configuring the **MergeTree** engine with `UseMergeTree` for ORDER BY
-- Monthly partitioning with `HasPartitionByMonth`
+- Monthly partitioning with `HasPartitionBy(..., PartitionGranularity.Month)`
 - Creating tables via `EnsureCreatedAsync`
 - Inserting rows with `AddRange` + `SaveChangesAsync`
 - Aggregation queries using `GroupBy`, `Count`, and `Sum`

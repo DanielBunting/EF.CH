@@ -49,4 +49,49 @@ public static class ClickHouseFormatDbFunctionsExtensions
     /// </summary>
     public static DateTime ParseDateTime(this DbFunctions _, string s, string fmt)
         => throw new InvalidOperationException("This method is for LINQ translation only.");
+
+    /// <summary>
+    /// Translates to ClickHouse <c>formatRow(format, columns...)</c>.
+    /// Formats the supplied columns into a single line using the named ClickHouse
+    /// output format (e.g. <c>"CSV"</c>, <c>"TSV"</c>, <c>"JSONEachRow"</c>).
+    /// Provided as fixed-arity overloads (1–4 columns) rather than
+    /// <c>params</c> because EF Core's translator hits the runtime stub
+    /// when it can't unwrap a <c>params</c> array element-by-element.
+    /// </summary>
+    public static string FormatRow(this DbFunctions _, string format, string col1)
+        => throw new InvalidOperationException("This method is for LINQ translation only.");
+
+    /// <inheritdoc cref="FormatRow(DbFunctions, string, string)"/>
+    public static string FormatRow(this DbFunctions _, string format, string col1, string col2)
+        => throw new InvalidOperationException("This method is for LINQ translation only.");
+
+    /// <inheritdoc cref="FormatRow(DbFunctions, string, string)"/>
+    public static string FormatRow(this DbFunctions _, string format, string col1, string col2, string col3)
+        => throw new InvalidOperationException("This method is for LINQ translation only.");
+
+    /// <inheritdoc cref="FormatRow(DbFunctions, string, string)"/>
+    public static string FormatRow(this DbFunctions _, string format, string col1, string col2, string col3, string col4)
+        => throw new InvalidOperationException("This method is for LINQ translation only.");
+
+    /// <summary>
+    /// Translates to ClickHouse <c>format(template, args...)</c>.
+    /// Substitutes positional <c>{0}</c>/<c>{1}</c>/… placeholders in
+    /// <paramref name="template"/> with the supplied arguments. Provided as
+    /// fixed-arity overloads (1–4 args) for the same reason as
+    /// <see cref="FormatRow(DbFunctions, string, string)"/>.
+    /// </summary>
+    public static string FormatString(this DbFunctions _, string template, string arg1)
+        => throw new InvalidOperationException("This method is for LINQ translation only.");
+
+    /// <inheritdoc cref="FormatString(DbFunctions, string, string)"/>
+    public static string FormatString(this DbFunctions _, string template, string arg1, string arg2)
+        => throw new InvalidOperationException("This method is for LINQ translation only.");
+
+    /// <inheritdoc cref="FormatString(DbFunctions, string, string)"/>
+    public static string FormatString(this DbFunctions _, string template, string arg1, string arg2, string arg3)
+        => throw new InvalidOperationException("This method is for LINQ translation only.");
+
+    /// <inheritdoc cref="FormatString(DbFunctions, string, string)"/>
+    public static string FormatString(this DbFunctions _, string template, string arg1, string arg2, string arg3, string arg4)
+        => throw new InvalidOperationException("This method is for LINQ translation only.");
 }

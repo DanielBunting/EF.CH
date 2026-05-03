@@ -124,14 +124,13 @@ public class RefreshableMvIntegrationTests
                 e.ToTable("RefSummary");
                 e.HasNoKey();
                 e.UseMergeTree(x => x.Bucket);
-                e.AsRefreshableMaterializedView<RefSummary, RefSource>(
-                    src => src.GroupBy(s => s.Bucket).Select(g => new RefSummary
+
+            });
+            mb.MaterializedView<RefSummary>().From<RefSource>().DefinedAs(src => src.GroupBy(s => s.Bucket).Select(g => new RefSummary
                     {
                         Bucket = g.Key,
                         Total = g.Count(),
-                    }),
-                    r => r.Every(TimeSpan.FromSeconds(2)));
-            });
+                    })).RefreshEvery(TimeSpan.FromSeconds(2));
         }
     }
 }

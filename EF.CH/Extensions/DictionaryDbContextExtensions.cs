@@ -239,8 +239,13 @@ public static class DictionaryDbContextExtensions
         if (resolver != null)
             return resolver;
 
-        // Fall back to creating one with available IConfiguration
-        var configuration = context.GetService<IConfiguration>();
+        // Fall back to creating one with the application's IConfiguration. EF Core's
+        // internal service provider doesn't register IConfiguration; reach it through
+        // the application service provider exposed by CoreOptionsExtension.
+        var configuration = context.GetService<IDbContextOptions>()
+            .FindExtension<CoreOptionsExtension>()
+            ?.ApplicationServiceProvider
+            ?.GetService<IConfiguration>();
         return new DictionaryConfigResolver(configuration);
     }
 }

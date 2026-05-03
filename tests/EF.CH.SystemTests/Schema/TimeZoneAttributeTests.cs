@@ -40,6 +40,99 @@ public class TimeZoneAttributeTests
         Assert.Matches(@"^DateTime64\(\d+, 'Europe/London'\)$", type);
     }
 
+    /// <summary>
+    /// Spring-forward boundary: at 01:30 local time on 2024-03-31,
+    /// Europe/London jumps from GMT to BST so that local instant doesn't
+    /// exist. The point in time is unambiguous when expressed as a
+    /// DateTimeOffset (UTC=01:30 → BST would be 02:30 local). Round-tripping
+    /// must preserve the absolute instant.
+    /// </summary>
+    [Fact]
+    public async Task HasTimeZone_RoundTripsAcrossSpringForwardBoundary()
+    {
+        await using var ctx = TestContextFactory.Create<Ctx>(Conn);
+        await ctx.Database.EnsureDeletedAsync();
+        await ctx.Database.EnsureCreatedAsync();
+
+        // 2024-03-31 01:30 UTC corresponds to 02:30 BST locally — the hour
+        // 01:00–02:00 local does not exist. Use the UTC instant directly so
+        // there's no .NET-side ambiguity over which local representation to
+        // pick.
+        var instant = new DateTimeOffset(2024, 3, 31, 1, 30, 0, TimeSpan.Zero);
+        ctx.Rows.Add(new Row { Id = 1, At = instant });
+        await ctx.SaveChangesAsync();
+        ctx.ChangeTracker.Clear();
+
+        var read = await ctx.Rows.SingleAsync(r => r.Id == 1);
+        Assert.Equal(instant.UtcDateTime, read.At.UtcDateTime);
+    }
+
+    /// <summary>
+    /// Fall-back boundary: at 01:30 local time on 2024-10-27, Europe/London
+    /// shifts from BST back to GMT and the local instant 01:30 occurs twice.
+    /// The DateTimeOffset carries an explicit UTC offset, so the absolute
+    /// instant is unambiguous in principle; round-trip must preserve it.
+    /// </summary>
+    [Fact]
+    public async Task HasTimeZone_RoundTripsAcrossFallBackBoundary()
+    {
+        await using var ctx = TestContextFactory.Create<Ctx>(Conn);
+        await ctx.Database.EnsureDeletedAsync();
+        await ctx.Database.EnsureCreatedAsync();
+
+        var firstInstance  = new DateTimeOffset(2024, 10, 27, 0, 30, 0, TimeSpan.Zero);
+        var secondInstance = new DateTimeOffset(2024, 10, 27, 1, 30, 0, TimeSpan.Zero);
+        ctx.Rows.Add(new Row { Id = 1, At = firstInstance });
+        ctx.Rows.Add(new Row { Id = 2, At = secondInstance });
+        await ctx.SaveChangesAsync();
+        ctx.ChangeTracker.Clear();
+
+        var rows = await ctx.Rows.OrderBy(r => r.Id).ToListAsync();
+        Assert.Equal(firstInstance.UtcDateTime,  rows[0].At.UtcDateTime);
+        Assert.Equal(secondInstance.UtcDateTime, rows[1].At.UtcDateTime);
+        Assert.NotEqual(rows[0].At.UtcDateTime, rows[1].At.UtcDateTime);
+    }
+
+    /// <summary>
+    /// Spring-forward at microsecond (P=6) precision. Locks in that the literal
+    /// fix applies across the precision range, not just the default P=3.
+    /// </summary>
+    [Fact]
+    public async Task HasTimeZone_RoundTripsAcrossSpringForward_AtMicroPrecision()
+    {
+        await using var ctx = TestContextFactory.Create<MicroCtx>(Conn);
+        await ctx.Database.EnsureDeletedAsync();
+        await ctx.Database.EnsureCreatedAsync();
+
+        // 123.4560 ms — exactly representable at P=6 (µs granularity).
+        var instant = new DateTimeOffset(2024, 3, 31, 1, 30, 0, 123, TimeSpan.Zero).AddTicks(4560);
+        ctx.Rows.Add(new MicroRow { Id = 1, At = instant });
+        await ctx.SaveChangesAsync();
+        ctx.ChangeTracker.Clear();
+
+        var read = await ctx.Rows.SingleAsync(r => r.Id == 1);
+        Assert.Equal(instant.UtcDateTime, read.At.UtcDateTime);
+    }
+
+    /// <summary>
+    /// Spring-forward at nanosecond (P=9) precision.
+    /// </summary>
+    [Fact]
+    public async Task HasTimeZone_RoundTripsAcrossSpringForward_AtNanoPrecision()
+    {
+        await using var ctx = TestContextFactory.Create<NanoCtx>(Conn);
+        await ctx.Database.EnsureDeletedAsync();
+        await ctx.Database.EnsureCreatedAsync();
+
+        var instant = new DateTimeOffset(2024, 3, 31, 1, 30, 0, TimeSpan.Zero).AddTicks(1234567);
+        ctx.Rows.Add(new NanoRow { Id = 1, At = instant });
+        await ctx.SaveChangesAsync();
+        ctx.ChangeTracker.Clear();
+
+        var read = await ctx.Rows.SingleAsync(r => r.Id == 1);
+        Assert.Equal(instant.UtcDateTime, read.At.UtcDateTime);
+    }
+
     public sealed class Row
     {
         public uint Id { get; set; }
@@ -54,6 +147,40 @@ public class TimeZoneAttributeTests
             {
                 e.ToTable("TimeZoneAttr_Rows"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id);
                 e.Property(x => x.At).HasTimeZone("Europe/London");
+            });
+    }
+
+    public sealed class MicroRow
+    {
+        public uint Id { get; set; }
+        public DateTimeOffset At { get; set; }
+    }
+
+    public sealed class MicroCtx(DbContextOptions<MicroCtx> o) : DbContext(o)
+    {
+        public DbSet<MicroRow> Rows => Set<MicroRow>();
+        protected override void OnModelCreating(ModelBuilder mb) =>
+            mb.Entity<MicroRow>(e =>
+            {
+                e.ToTable("TimeZoneAttr_MicroRows"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id);
+                e.Property(x => x.At).HasColumnType("DateTime64(6, 'Europe/London')");
+            });
+    }
+
+    public sealed class NanoRow
+    {
+        public uint Id { get; set; }
+        public DateTimeOffset At { get; set; }
+    }
+
+    public sealed class NanoCtx(DbContextOptions<NanoCtx> o) : DbContext(o)
+    {
+        public DbSet<NanoRow> Rows => Set<NanoRow>();
+        protected override void OnModelCreating(ModelBuilder mb) =>
+            mb.Entity<NanoRow>(e =>
+            {
+                e.ToTable("TimeZoneAttr_NanoRows"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id);
+                e.Property(x => x.At).HasColumnType("DateTime64(9, 'Europe/London')");
             });
     }
 }

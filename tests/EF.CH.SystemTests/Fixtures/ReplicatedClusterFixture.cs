@@ -28,6 +28,26 @@ public sealed class ReplicatedClusterFixture : IAsyncLifetime
 
     public IReadOnlyList<string> AllConnectionStrings => _nodes.Select(c => c.GetConnectionString()).ToArray();
 
+    /// <summary>
+    /// Stops the underlying container for a node. Used by live-failover tests that
+    /// need to exercise the connection pool's recovery path against a real outage.
+    /// Indices are 1-based to match Node1/Node2/Node3 connection-string accessors.
+    /// </summary>
+    public Task StopNodeAsync(int nodeIndex)
+    {
+        if (nodeIndex < 1 || nodeIndex > _nodes.Count)
+            throw new ArgumentOutOfRangeException(nameof(nodeIndex));
+        return _nodes[nodeIndex - 1].StopAsync();
+    }
+
+    /// <summary>Starts a previously-stopped node.</summary>
+    public Task StartNodeAsync(int nodeIndex)
+    {
+        if (nodeIndex < 1 || nodeIndex > _nodes.Count)
+            throw new ArgumentOutOfRangeException(nameof(nodeIndex));
+        return _nodes[nodeIndex - 1].StartAsync();
+    }
+
     public async Task InitializeAsync()
     {
         _network = new NetworkBuilder().WithName($"efch-repl-{_token}").Build();

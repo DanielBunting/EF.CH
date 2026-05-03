@@ -1004,19 +1004,15 @@ public class DateTimeOffsetIntegrationTests : IAsyncLifetime
         Assert.Equal(30, result.EasternTime.Minute);
     }
 
-    [Fact(Skip = "Known limitation: During DST fall-back, UTC times that map to the same local time " +
-                   "may not round-trip correctly when using timezone-aware columns. " +
-                   "Use UTC timezone for precise instant preservation.")]
+    [Fact(Skip = "America/New_York fall-back ambiguous hour cannot be disambiguated on read. " +
+        "Both 5:30 UTC (EDT 01:30) and 6:30 UTC (EST 01:30) round-trip through ClickHouse.Driver " +
+        "as `01:30 Unspecified` with no marker to distinguish them — for TZs where neither " +
+        "ambiguous offset is zero, the read collapses both occurrences to the same local " +
+        "wall-clock. Europe/London round-trips correctly because GMT (offset 0) is flagged via " +
+        "Kind=Utc; see TimeZoneAttributeTests.HasTimeZone_RoundTripsAcrossFallBackBoundary. " +
+        "Workaround: use a UTC column and convert in the application layer.")]
     public async Task DstFallBack_PreservesInstant()
     {
-        // This test documents a known limitation with DST fall-back times.
-        // When we write a UTC time (e.g., 05:30 UTC) as a SQL literal to a timezone-aware column,
-        // ClickHouse interprets the literal as local time in that timezone, not UTC.
-        // This causes the UTC instant to be shifted.
-        //
-        // Workaround: For applications that need precise instant preservation during DST transitions,
-        // use UTC timezone for the column and handle timezone conversion in the application layer.
-
         await using var context = CreateContext<AttributeTimezoneContext>();
         await context.Database.EnsureDeletedAsync();
         await context.Database.EnsureCreatedAsync();
@@ -1056,23 +1052,10 @@ public class DateTimeOffsetIntegrationTests : IAsyncLifetime
         Assert.Equal(TimeSpan.FromHours(1), result2.EasternTime.UtcDateTime - result1.EasternTime.UtcDateTime);
     }
 
-    [Fact(Skip = "Known limitation: During DST fall-back, ClickHouse timezone handling may not preserve " +
-                   "distinct UTC instants for ambiguous local times. The UTC time is written as a literal " +
-                   "which ClickHouse interprets as local time in the column's timezone.")]
+    [Fact(Skip = "Same driver-level read ambiguity as DstFallBack_PreservesInstant — " +
+        "America/New_York fall-back collapses both 01:30 occurrences to the same local on read.")]
     public async Task DstFallBack_AmbiguousTime_PreservesUtc()
     {
-        // This test documents a known limitation with DST fall-back ambiguous times.
-        // During fall back, 1:30 AM occurs twice:
-        // - First occurrence (EDT): 1:30 AM offset -4 = 5:30 AM UTC
-        // - Second occurrence (EST): 1:30 AM offset -5 = 6:30 AM UTC
-        //
-        // When we write 5:30 UTC as '2024-11-03 05:30:00' to a DateTime64(3, 'America/New_York') column,
-        // ClickHouse interprets this as 05:30 AM in New York time, not as 05:30 UTC.
-        // This causes the UTC instant to be shifted.
-        //
-        // Workaround: For applications that need precise DST fall-back handling, use UTC timezone
-        // for the column and handle timezone conversion in the application layer.
-
         await using var context = CreateContext<AttributeTimezoneContext>();
         await context.Database.EnsureDeletedAsync();
         await context.Database.EnsureCreatedAsync();

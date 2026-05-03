@@ -1,10 +1,11 @@
 using EF.CH.Extensions;
 using Microsoft.EntityFrameworkCore;
+using EF.CH.Metadata;
 
 // ============================================================
 // CTE (Common Table Expression) Sample
 // ============================================================
-// Demonstrates ClickHouse CTEs via AsCte():
+// Demonstrates ClickHouse CTEs via AsSingleCte():
 // - Basic CTE with filter
 // - CTE with ordering and limit
 // - CTE for analytical queries
@@ -46,13 +47,13 @@ Console.WriteLine($"Inserted {events.Count} events.\n");
 
 // Basic CTE: filter recent events
 Console.WriteLine("--- Basic CTE: Recent purchases ---");
-Console.WriteLine("Query: .Where(recent).AsCte(\"recent_purchases\").OrderBy().Take()");
+Console.WriteLine("Query: .Where(recent).AsSingleCte(\"recent_purchases\").OrderBy().Take()");
 Console.WriteLine("SQL: WITH \"recent_purchases\" AS (SELECT ... WHERE ...) SELECT ... FROM \"recent_purchases\"\n");
 
 var cutoff = DateTime.UtcNow.AddDays(-7);
 var recentPurchases = await context.Events
     .Where(e => e.EventType == "purchase" && e.CreatedAt > cutoff)
-    .AsCte("recent_purchases")
+    .AsSingleCte("recent_purchases")
     .OrderByDescending(e => e.Amount)
     .Take(10)
     .ToListAsync();
@@ -69,7 +70,7 @@ Console.WriteLine("Wraps complex filter as a named CTE for clarity.\n");
 
 var highValue = await context.Events
     .Where(e => e.Amount > 200 && e.EventType != "logout")
-    .AsCte("high_value")
+    .AsSingleCte("high_value")
     .OrderBy(e => e.Region)
     .ThenByDescending(e => e.Amount)
     .ToListAsync();
@@ -87,7 +88,7 @@ Console.WriteLine("Uses CTE to logically separate data preparation from result s
 
 var analyticsResult = await context.Events
     .Where(e => e.Region == "US")
-    .AsCte("us_events")
+    .AsSingleCte("us_events")
     .OrderByDescending(e => e.CreatedAt)
     .Take(20)
     .ToListAsync();
@@ -103,9 +104,9 @@ if (analyticsResult.Count > 5)
 }
 
 Console.WriteLine("\n--- Notes ---");
-Console.WriteLine("- AsCte() wraps the preceding query as a WITH clause");
-Console.WriteLine("- Operations after AsCte() operate on the CTE reference");
-Console.WriteLine("- Single CTE per query (multi-CTE planned for future)");
+Console.WriteLine("- AsSingleCte() wraps the preceding query as a WITH clause");
+Console.WriteLine("- Operations after AsSingleCte() operate on the CTE reference");
+Console.WriteLine("- Single CTE per query (multi-CTE reserved for AsCte in a future release)");
 Console.WriteLine("- No recursive CTEs (limited ClickHouse support)");
 
 Console.WriteLine("\nDone!");
@@ -143,7 +144,7 @@ public class AnalyticsDbContext : DbContext
             entity.ToTable("AnalyticsEvents");
             entity.HasKey(e => e.Id);
             entity.UseMergeTree(x => new { x.CreatedAt, x.Id });
-            entity.HasPartitionByMonth(x => x.CreatedAt);
+            entity.HasPartitionBy(x => x.CreatedAt, PartitionGranularity.Month);
         });
     }
 }

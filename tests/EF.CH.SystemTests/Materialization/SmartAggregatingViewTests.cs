@@ -125,7 +125,9 @@ public class SmartAggregatingViewTests
                 e.UseAggregatingMergeTree(x => x.Sensor);
                 e.Property(x => x.Lowest).HasAggregateFunction("min", typeof(double));
                 e.Property(x => x.Highest).HasAggregateFunction("max", typeof(double));
-                e.AsMaterializedView<SensorStat, Measurement>(src => src
+
+            });
+            mb.MaterializedView<SensorStat>().From<Measurement>().DefinedAs(src => src
                     .GroupBy(x => x.Sensor)
                     .Select(g => new SensorStat
                     {
@@ -133,7 +135,6 @@ public class SmartAggregatingViewTests
                         Lowest = g.MinState(x => x.Reading),
                         Highest = g.MaxState(x => x.Reading),
                     }));
-            });
         }
     }
 
@@ -152,14 +153,15 @@ public class SmartAggregatingViewTests
                 e.ToTable("GroupQuantiles"); e.HasNoKey();
                 e.UseAggregatingMergeTree(x => x.Group);
                 e.Property(x => x.MedianValue).HasColumnType("AggregateFunction(quantile(0.5), Float64)");
-                e.AsMaterializedView<GroupQuantile, Sample>(src => src
+
+            });
+            mb.MaterializedView<GroupQuantile>().From<Sample>().DefinedAs(src => src
                     .GroupBy(x => x.Group)
                     .Select(g => new GroupQuantile
                     {
                         Group = g.Key,
                         MedianValue = g.QuantileState(0.5, x => x.Value),
                     }));
-            });
         }
     }
 
@@ -178,14 +180,15 @@ public class SmartAggregatingViewTests
                 e.ToTable("PageTopTags"); e.HasNoKey();
                 e.UseAggregatingMergeTree(x => x.Page);
                 e.Property(x => x.TopTags).HasColumnType("AggregateFunction(topK(3), String)");
-                e.AsMaterializedView<PageTopTags, Visit>(src => src
+
+            });
+            mb.MaterializedView<PageTopTags>().From<Visit>().DefinedAs(src => src
                     .GroupBy(x => x.Page)
                     .Select(g => new PageTopTags
                     {
                         Page = g.Key,
                         TopTags = g.TopKState(3, x => x.Tag),
                     }));
-            });
         }
     }
 

@@ -1,6 +1,7 @@
 using EF.CH.Extensions;
 using Microsoft.EntityFrameworkCore;
 using EfClass = Microsoft.EntityFrameworkCore.EF;
+using EF.CH.Metadata;
 
 // ============================================================
 // Text Search Sample
@@ -466,7 +467,7 @@ public class LogDbContext : DbContext
             entity.ToTable("Logs");
             entity.HasKey(e => e.Id);
             entity.UseMergeTree(x => new { x.Timestamp, x.Id });
-            entity.HasPartitionByMonth(x => x.Timestamp);
+            entity.HasPartitionBy(x => x.Timestamp, PartitionGranularity.Month);
 
             // Skip indices to accelerate text search functions
             entity.HasIndex(e => e.Message).UseTokenBF(size: 10240, hashes: 3);

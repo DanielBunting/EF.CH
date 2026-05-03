@@ -66,10 +66,11 @@ public class MvUnaryExpressionTests
             mb.Entity<FilterTarget>(e =>
             {
                 e.ToTable("MvUnaryNotTarget"); e.HasNoKey(); e.UseMergeTree(x => x.Id);
-                e.AsMaterializedView<FilterTarget, Row>(rows => rows
+
+            });
+            mb.MaterializedView<FilterTarget>().From<Row>().DefinedAs(rows => rows
                     .Where(r => !r.IsActive)
                     .Select(r => new FilterTarget { Id = r.Id, N = r.N }));
-            });
         }
     }
 
@@ -82,10 +83,11 @@ public class MvUnaryExpressionTests
             mb.Entity<AggTarget>(e =>
             {
                 e.ToTable("MvUnaryNegTarget"); e.HasNoKey(); e.UseSummingMergeTree(x => x.Bucket);
-                e.AsMaterializedView<AggTarget, Row>(rows => rows
+
+            });
+            mb.MaterializedView<AggTarget>().From<Row>().DefinedAs(rows => rows
                     .GroupBy(_ => 1L)
                     .Select(g => new AggTarget { Bucket = g.Key, NegSum = g.Sum(r => -r.N) }));
-            });
         }
     }
 }

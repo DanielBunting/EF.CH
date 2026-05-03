@@ -1,36 +1,12 @@
 namespace EF.CH.Extensions;
 
 /// <summary>
-/// Fluent builder for constructing window function OVER clauses.
-/// This type exists to build LINQ expression trees that are translated to SQL by the provider.
+/// Internal type used by the window function translator. Public callers use the
+/// lambda-style overloads on <see cref="Window"/> (e.g. <c>Window.RowNumber(w =&gt; ...)</c>);
+/// the lambda receives a <see cref="WindowSpec"/>, not this type.
 /// </summary>
 /// <typeparam name="T">The result type of the window function.</typeparam>
-/// <remarks>
-/// <para>
-/// Example usage in a LINQ query:
-/// <code>
-/// var result = context.Orders.Select(o => new
-/// {
-///     o.Id,
-///     RowNum = Window.RowNumber()
-///         .PartitionBy(o.Region)
-///         .OrderBy(o.OrderDate),
-///     RunningTotal = Window.Sum(o.Amount)
-///         .PartitionBy(o.Region)
-///         .OrderBy(o.OrderDate)
-///         .Rows().UnboundedPreceding().CurrentRow()
-/// });
-/// </code>
-/// </para>
-/// <para>
-/// The methods on this class return <c>this</c> to allow method chaining.
-/// During LINQ translation, the expression tree is analyzed to extract the
-/// partition, order, and frame specifications.
-/// The implicit conversion to <typeparamref name="T"/>? enables the builder to be
-/// used directly in LINQ projections.
-/// </para>
-/// </remarks>
-public sealed class WindowBuilder<T>
+internal sealed class WindowBuilder<T>
 {
     /// <summary>
     /// Gets the SQL function name (e.g., "row_number", "lagInFrame").
@@ -126,24 +102,9 @@ public sealed class WindowBuilder<T>
     public WindowBuilder<T> Following(int n) => this;
 
     /// <summary>
-    /// Builds and returns the window function result value.
-    /// Use this method at the end of the window function chain in LINQ projections
-    /// to ensure the correct result type is used.
+    /// Translator marker — the method name is matched via <c>nameof</c> by the SQL
+    /// translator. Public callers never reach this type; they use the lambda
+    /// overloads on <see cref="Window"/>.
     /// </summary>
-    /// <example>
-    /// <code>
-    /// var query = context.Orders.Select(o => new
-    /// {
-    ///     RowNum = Window.RowNumber()
-    ///         .PartitionBy(o.Region)
-    ///         .OrderBy(o.OrderDate)
-    ///         .Build()
-    /// });
-    /// </code>
-    /// </example>
-    /// <remarks>
-    /// This method returns default(T?) - the actual value is computed by the database.
-    /// The method exists to ensure the correct type is captured in the expression tree.
-    /// </remarks>
-    public T? Build() => default;
+    internal T? Build() => default;
 }

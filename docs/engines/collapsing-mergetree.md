@@ -146,7 +146,7 @@ modelBuilder.Entity<SessionState>(entity =>
     entity.HasNoKey();
 
     entity.UseCollapsingMergeTree(x => x.Sign, x => new { x.UserId })
-        .HasPartitionByMonth(x => x.SessionStart);
+        .HasPartitionBy(x => x.SessionStart, PartitionGranularity.Month);
 });
 ```
 

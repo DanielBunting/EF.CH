@@ -4,7 +4,7 @@
 // 2. SAMPLE         - Probabilistic sampling for approximate results
 // 3. WithSettings   - ClickHouse query-level settings and WithRawFilter
 // 4. LimitBy        - Top-N per group without window functions
-// 5. CTE            - Common Table Expressions via .AsCte()
+// 5. CTE            - Common Table Expressions via .AsSingleCte()
 // 6. Set Operations - UnionAll and UnionDistinct
 // 7. GROUP BY modifiers - WithRollup, WithCube, WithTotals
 // 8. Text Search    - Token-based and fuzzy text search
@@ -168,11 +168,11 @@ static async Task DemoSample(EventsContext context)
 }
 
 // ---------------------------------------------------------------------------
-// 3. WithSettings / WithRawFilter
+// 3. WithSetting / WithRawFilter
 // ---------------------------------------------------------------------------
 static async Task DemoWithSettings(EventsContext context)
 {
-    Console.WriteLine("--- 3. WithSettings / WithRawFilter ---");
+    Console.WriteLine("--- 3. WithSetting / WithRawFilter ---");
     Console.WriteLine("Pass ClickHouse settings to queries, or inject raw SQL conditions.");
     Console.WriteLine();
 
@@ -185,15 +185,12 @@ static async Task DemoWithSettings(EventsContext context)
         .CountAsync();
     Console.WriteLine($"Web events (with max_threads=2 setting): {withSettings}");
 
-    // WithSettings: multiple settings via dictionary
+    // Chain WithSetting calls to apply multiple settings.
     var withMultipleSettings = await context.Events
         .Final()
         .Where(e => e.Score > 50)
-        .WithSettings(new Dictionary<string, object>
-        {
-            ["max_threads"] = "4",
-            ["max_block_size"] = "1000"
-        })
+        .WithSetting("max_threads", "4")
+        .WithSetting("max_block_size", "1000")
         .CountAsync();
     Console.WriteLine($"High-score events (with multiple settings): {withMultipleSettings}");
 
@@ -224,7 +221,7 @@ static async Task DemoLimitBy(EventsContext context)
     var topPerCategory = await context.Events
         .Final()
         .OrderByDescending(e => e.Score)
-        .LimitBy(3, e => e.Category)
+        .LimitBy(e => e.Category, 3)
         .ToListAsync();
 
     Console.WriteLine("Top 3 events per category by score:");
@@ -254,7 +251,7 @@ static async Task DemoCte(EventsContext context)
     var recentHighScorers = await context.Events
         .Final()
         .Where(e => e.Score > 75)
-        .AsCte("high_score_events")
+        .AsSingleCte("high_score_events")
         .OrderByDescending(e => e.Score)
         .Take(5)
         .ToListAsync();
@@ -427,8 +424,8 @@ public class EventsContext(string connectionString) : DbContext
         modelBuilder.Entity<Event>(entity =>
         {
             entity.HasNoKey();
-            entity.UseReplacingMergeTree(x => x.Version, x => new { x.Id })
-                .HasSampleBy("Id");
+            entity.UseReplacingMergeTree(x => new { x.Id }).WithVersion(x => x.Version)
+                .And().HasSampleBy("Id");
         });
     }
 }

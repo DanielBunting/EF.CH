@@ -99,10 +99,11 @@ public class MvDateTimeMemberExpressionTests
             mb.Entity<YearTgt>(e =>
             {
                 e.ToTable("MvDtYearTarget"); e.HasNoKey(); e.UseSummingMergeTree(x => x.Year);
-                e.AsMaterializedView<YearTgt, Row>(rows => rows
+
+            });
+            mb.MaterializedView<YearTgt>().From<Row>().DefinedAs(rows => rows
                     .GroupBy(r => r.At.Year)
                     .Select(g => new YearTgt { Year = g.Key, Hits = g.Count() }));
-            });
         }
     }
 
@@ -115,10 +116,11 @@ public class MvDateTimeMemberExpressionTests
             mb.Entity<MonthTgt>(e =>
             {
                 e.ToTable("MvDtMonthTarget"); e.HasNoKey(); e.UseSummingMergeTree(x => x.Month);
-                e.AsMaterializedView<MonthTgt, Row>(rows => rows
+
+            });
+            mb.MaterializedView<MonthTgt>().From<Row>().DefinedAs(rows => rows
                     .GroupBy(r => r.At.Month)
                     .Select(g => new MonthTgt { Month = g.Key, Hits = g.Count() }));
-            });
         }
     }
 
@@ -131,10 +133,11 @@ public class MvDateTimeMemberExpressionTests
             mb.Entity<DateTgt>(e =>
             {
                 e.ToTable("MvDtDateTarget"); e.HasNoKey(); e.UseSummingMergeTree(x => x.Day);
-                e.AsMaterializedView<DateTgt, Row>(rows => rows
+
+            });
+            mb.MaterializedView<DateTgt>().From<Row>().DefinedAs(rows => rows
                     .GroupBy(r => r.At.Date)
                     .Select(g => new DateTgt { Day = g.Key, Hits = g.Count() }));
-            });
         }
     }
 
@@ -147,9 +150,10 @@ public class MvDateTimeMemberExpressionTests
             mb.Entity<HmsTgt>(e =>
             {
                 e.ToTable("MvDtHmsTarget"); e.HasNoKey(); e.UseMergeTree(x => x.Id);
-                e.AsMaterializedView<HmsTgt, Row>(rows => rows
-                    .Select(r => new HmsTgt { Id = r.Id, Hour = r.At.Hour, Minute = r.At.Minute, Second = r.At.Second }));
+
             });
+            mb.MaterializedView<HmsTgt>().From<Row>().DefinedAs(rows => rows
+                    .Select(r => new HmsTgt { Id = r.Id, Hour = r.At.Hour, Minute = r.At.Minute, Second = r.At.Second }));
         }
     }
 }

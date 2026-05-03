@@ -119,11 +119,13 @@ public class ClickHouseEnumTypeMapping : RelationalTypeMapping
     }
 
     /// <summary>
-    /// Escapes single quotes in string values for SQL literals.
+    /// Escapes a value for embedding inside a single-quoted ClickHouse string literal.
+    /// ClickHouse interprets <c>\</c> as a C-style escape character inside <c>'…'</c>
+    /// literals, so the backslash must be escaped first.
     /// </summary>
     private static string EscapeString(string value)
     {
-        return value.Replace("'", "\\'");
+        return value.Replace("\\", "\\\\").Replace("'", "\\'");
     }
 }
 

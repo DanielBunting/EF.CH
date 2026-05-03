@@ -8,17 +8,17 @@ namespace EF.CH.Extensions;
 /// <para>
 /// These are stub methods - they throw at runtime if accidentally invoked directly.
 /// They are intended for use in:
-/// - Materialized view definitions with <c>AsMaterializedView()</c>
+/// - Materialized view definitions via <c>modelBuilder.MaterializedView&lt;T&gt;().From&lt;S&gt;().DefinedAs(...)</c>
 /// - LINQ queries that will be translated to ClickHouse SQL
 /// </para>
 /// <para>
 /// Example usage in a materialized view:
 /// <code>
-/// entity.AsMaterializedView&lt;HourlySummary, RawEvent&gt;(
-///     source: events => events,
-///     query: events => events
-///         .GroupBy(e => e.EventTime.ToStartOfHour())
-///         .Select(g => new HourlySummary
+/// modelBuilder.MaterializedView&lt;HourlySummary&gt;()
+///     .From&lt;RawEvent&gt;()
+///     .DefinedAs(events =&gt; events
+///         .GroupBy(e =&gt; e.EventTime.ToStartOfHour())
+///         .Select(g =&gt; new HourlySummary
 ///         {
 ///             Hour = g.Key,
 ///             EventCount = g.Count()
@@ -52,66 +52,77 @@ public static class ClickHouseFunctions
     /// Converts a DateTime to an integer in YYYYMM format.
     /// Translates to: toYYYYMM(column)
     /// </summary>
+    /// <example>e.RequestedAt.ToYYYYMM()</example>
     public static int ToYYYYMM(this DateTime dateTime) => Throw<int>();
 
     /// <summary>
     /// Converts a DateTime to an integer in YYYYMMDD format.
     /// Translates to: toYYYYMMDD(column)
     /// </summary>
+    /// <example>e.RequestedAt.ToYYYYMMDD()</example>
     public static int ToYYYYMMDD(this DateTime dateTime) => Throw<int>();
 
     /// <summary>
     /// Truncates DateTime to the start of the hour.
     /// Translates to: toStartOfHour(column)
     /// </summary>
+    /// <example>e.RequestedAt.ToStartOfHour()</example>
     public static DateTime ToStartOfHour(this DateTime dateTime) => Throw<DateTime>();
 
     /// <summary>
     /// Truncates DateTime to the start of the day.
     /// Translates to: toStartOfDay(column)
     /// </summary>
+    /// <example>e.RequestedAt.ToStartOfDay()</example>
     public static DateTime ToStartOfDay(this DateTime dateTime) => Throw<DateTime>();
 
     /// <summary>
     /// Truncates DateTime to the start of the week (Monday).
     /// Translates to: toStartOfWeek(column)
     /// </summary>
+    /// <example>e.RequestedAt.ToStartOfWeek()</example>
     public static DateTime ToStartOfWeek(this DateTime dateTime) => Throw<DateTime>();
 
     /// <summary>
     /// Truncates DateTime to the start of the month.
     /// Translates to: toStartOfMonth(column)
     /// </summary>
+    /// <example>e.RequestedAt.ToStartOfMonth()</example>
     public static DateTime ToStartOfMonth(this DateTime dateTime) => Throw<DateTime>();
 
     /// <summary>
     /// Truncates DateTime to the start of the quarter.
     /// Translates to: toStartOfQuarter(column)
     /// </summary>
+    /// <example>e.RequestedAt.ToStartOfQuarter()</example>
     public static DateTime ToStartOfQuarter(this DateTime dateTime) => Throw<DateTime>();
 
     /// <summary>
     /// Truncates DateTime to the start of the year.
     /// Translates to: toStartOfYear(column)
     /// </summary>
+    /// <example>e.RequestedAt.ToStartOfYear()</example>
     public static DateTime ToStartOfYear(this DateTime dateTime) => Throw<DateTime>();
 
     /// <summary>
     /// Truncates DateTime to the start of the minute.
     /// Translates to: toStartOfMinute(column)
     /// </summary>
+    /// <example>e.RequestedAt.ToStartOfMinute()</example>
     public static DateTime ToStartOfMinute(this DateTime dateTime) => Throw<DateTime>();
 
     /// <summary>
     /// Truncates DateTime to the start of the 5-minute interval.
     /// Translates to: toStartOfFiveMinutes(column)
     /// </summary>
+    /// <example>e.RequestedAt.ToStartOfFiveMinutes()</example>
     public static DateTime ToStartOfFiveMinutes(this DateTime dateTime) => Throw<DateTime>();
 
     /// <summary>
     /// Truncates DateTime to the start of the 15-minute interval.
     /// Translates to: toStartOfFifteenMinutes(column)
     /// </summary>
+    /// <example>e.RequestedAt.ToStartOfFifteenMinutes()</example>
     public static DateTime ToStartOfFifteenMinutes(this DateTime dateTime) => Throw<DateTime>();
 
     #endregion
@@ -231,6 +242,8 @@ public static class ClickHouseFunctions
     public static TSurrogate AggregateSentinelMultiParam<TInput, TSurrogate, TReal>(TInput input, string functionName, double[] parameters) => Throw<TSurrogate>();
     public static TSurrogate AggregateSentinelTwoArg<TArg, TVal, TSurrogate, TReal>(TArg arg, TVal val, string functionName) => Throw<TSurrogate>();
     public static TSurrogate AggregateSentinelTwoArgIntParam<TArg, TVal, TSurrogate, TReal>(TArg arg, TVal val, string functionName, int parameter) => Throw<TSurrogate>();
+    public static TSurrogate AggregateSentinelThreeArg<TArg, TVal, TPred, TSurrogate, TReal>(TArg arg, TVal val, TPred predicate, string functionName) => Throw<TSurrogate>();
+    public static TSurrogate AggregateSentinelThreeArgIntParam<TArg, TVal, TPred, TSurrogate, TReal>(TArg arg, TVal val, TPred predicate, string functionName, int parameter) => Throw<TSurrogate>();
 
     #endregion
 

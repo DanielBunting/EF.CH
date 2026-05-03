@@ -55,13 +55,8 @@ Do you need to store data?
 | **SummingMergeTree** | Counters, running totals | Auto-sums numeric columns on merge | `UseSummingMergeTree(x => new { x.Hour, x.Category })` |
 | **AggregatingMergeTree** | Pre-aggregated dashboards | Stores intermediate aggregate states | `UseAggregatingMergeTree(x => x.Timestamp)` |
 | **CollapsingMergeTree** | Mutable state with ordered writes | +1/-1 sign column for state tracking | `UseCollapsingMergeTree(x => x.Sign, x => new { x.UserId })` |
-| **VersionedCollapsingMergeTree** | Mutable state with unordered writes | Sign + version for out-of-order collapsing | `UseVersionedCollapsingMergeTree(x => x.Sign, x => x.Version, x => new { x.UserId })` |
-| **ReplicatedMergeTree** | Replicated general analytics | MergeTree + ZooKeeper replication | `UseReplicatedMergeTree(x => x.Id)` |
-| **ReplicatedReplacingMergeTree** | Replicated deduplication | ReplacingMergeTree + replication | `UseReplicatedReplacingMergeTree(x => x.Version, x => x.Id)` |
-| **ReplicatedSummingMergeTree** | Replicated counters | SummingMergeTree + replication | `UseReplicatedSummingMergeTree(x => new { x.Hour })` |
-| **ReplicatedAggregatingMergeTree** | Replicated pre-aggregation | AggregatingMergeTree + replication | `UseReplicatedAggregatingMergeTree(x => x.Timestamp)` |
-| **ReplicatedCollapsingMergeTree** | Replicated ordered collapsing | CollapsingMergeTree + replication | `UseReplicatedCollapsingMergeTree(x => x.Sign, x => new { x.UserId })` |
-| **ReplicatedVersionedCollapsingMergeTree** | Replicated unordered collapsing | VersionedCollapsingMergeTree + replication | `UseReplicatedVersionedCollapsingMergeTree(x => x.Sign, x => x.Version, x => new { x.UserId })` |
+| **VersionedCollapsingMergeTree** | Mutable state with unordered writes | Sign + version for out-of-order collapsing | `UseVersionedCollapsingMergeTree(x => new { x.UserId }).WithSign(...).WithVersion(...)` |
+| Replicated MergeTree family | Multi-node replication for any of the above | Add ZooKeeper / Keeper replication | Chain `.WithReplication("/path", "{replica}")` on any `Use*MergeTree` builder |
 | **Memory** | Temporary/lookup tables | RAM-only, lost on restart | `UseMemoryEngine()` |
 | **Log** | Small tables (< 1M rows) | Concurrent reads, sequential writes | `UseLogEngine()` |
 | **TinyLog** | Simplest small tables | Each column in separate file, no concurrency | `UseTinyLogEngine()` |
@@ -80,7 +75,7 @@ The default, general-purpose columnar storage engine. Data is stored sorted by t
 
 ```csharp
 entity.UseMergeTree(x => new { x.Timestamp, x.Id })
-    .HasPartitionByMonth(x => x.Timestamp);
+    .HasPartitionBy(x => x.Timestamp, PartitionGranularity.Month);
 ```
 
 See [MergeTree](mergetree.md) for full configuration options.
@@ -142,46 +137,45 @@ Like CollapsingMergeTree, but adds a version column that allows cancellation row
 **When to use:** State tracking in distributed systems where inserts may arrive out of order (e.g., event sourcing with multiple producers, replicated clusters).
 
 ```csharp
-entity.UseVersionedCollapsingMergeTree(
-    x => x.Sign,
-    x => x.Version,
-    x => new { x.UserId }
-);
+entity.UseVersionedCollapsingMergeTree(x => new { x.UserId })
+    .WithSign(x => x.Sign)
+    .WithVersion(x => x.Version);
 ```
 
 See [VersionedCollapsingMergeTree](versioned-collapsing.md) for version-based collapsing.
 
-## Replicated Variants (6 Engines)
+## Replication
 
-Each MergeTree family engine has a replicated counterpart that adds multi-node data replication via ClickHouse Keeper (or ZooKeeper). Replicated engines ensure data is copied to multiple nodes for fault tolerance.
-
-All replicated variants return a `ReplicatedEngineBuilder<T>` that supports chaining with `.WithCluster()`, `.WithReplication()`, and `.WithTableGroup()`.
+Replication is a property of the engine, not a separate engine type. Call `WithReplication(...)` on any `Use*MergeTree` builder and EF.CH emits the matching `Replicated*` variant at SQL-generation time. The cluster, table-group, and engine-specific knobs (`WithVersion`, `WithSign`, `WithIsDeleted`) all compose freely.
 
 ```csharp
 // Basic replicated MergeTree
-entity.UseReplicatedMergeTree(x => new { x.Timestamp, x.Id })
+entity.UseMergeTree(x => new { x.Timestamp, x.Id })
     .WithCluster("production_cluster")
     .WithReplication("/clickhouse/{database}/{table}", "{replica}");
 
-// Replicated ReplacingMergeTree
-entity.UseReplicatedReplacingMergeTree(x => x.Version, x => new { x.UserId })
-    .WithCluster("production_cluster");
+// Replicated ReplacingMergeTree with version + soft-delete
+entity.UseReplacingMergeTree(x => new { x.UserId })
+    .WithVersion(x => x.Version)
+    .WithIsDeleted(x => x.Deleted)
+    .WithCluster("production_cluster")
+    .WithReplication("/clickhouse/{database}/{table}");
 ```
 
 **When to use:** Any production deployment where you need data redundancy across multiple ClickHouse nodes. Requires ClickHouse Keeper or ZooKeeper for coordination.
 
-> **Note:** The replicated variants have the same merge behavior as their non-replicated counterparts. `ReplicatedReplacingMergeTree` deduplicates the same way as `ReplacingMergeTree`, but across all replicas.
+> **Note:** The replicated form has the same merge behavior as the non-replicated counterpart. `ReplicatedReplacingMergeTree` deduplicates the same way as `ReplacingMergeTree`, but across all replicas.
 
-The six replicated engines are:
+The matching engine variants emitted are:
 
-| Replicated Engine | Base Engine |
-|-------------------|-------------|
-| ReplicatedMergeTree | MergeTree |
-| ReplicatedReplacingMergeTree | ReplacingMergeTree |
-| ReplicatedSummingMergeTree | SummingMergeTree |
-| ReplicatedAggregatingMergeTree | AggregatingMergeTree |
-| ReplicatedCollapsingMergeTree | CollapsingMergeTree |
-| ReplicatedVersionedCollapsingMergeTree | VersionedCollapsingMergeTree |
+| Builder | Engine emitted (replicated) |
+|---------|------------------------------|
+| `UseMergeTree` | ReplicatedMergeTree |
+| `UseReplacingMergeTree` | ReplicatedReplacingMergeTree |
+| `UseSummingMergeTree` | ReplicatedSummingMergeTree |
+| `UseAggregatingMergeTree` | ReplicatedAggregatingMergeTree |
+| `UseCollapsingMergeTree` | ReplicatedCollapsingMergeTree |
+| `UseVersionedCollapsingMergeTree` | ReplicatedVersionedCollapsingMergeTree |
 
 ## Memory Engine
 
@@ -292,7 +286,7 @@ All MergeTree family engines (including replicated variants) support these table
 
 ```csharp
 entity.UseMergeTree(x => new { x.Date, x.Id })           // ORDER BY (required)
-    .HasPartitionByMonth(x => x.Date)                      // PARTITION BY
+    .HasPartitionBy(x => x.Date, PartitionGranularity.Month)                      // PARTITION BY
     .HasSampleBy(x => x.UserId)                            // SAMPLE BY
     .HasTtl(x => x.Date, TimeSpan.FromDays(90))           // TTL
     .HasEngineSettings(new Dictionary<string, string>       // SETTINGS

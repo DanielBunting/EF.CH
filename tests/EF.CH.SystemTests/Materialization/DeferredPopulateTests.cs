@@ -30,7 +30,7 @@ public class DeferredPopulateTests
             new Sale { Id = 3, Region = "us", Amount = 15 });
         await ctx.SaveChangesAsync();
 
-        await ctx.Database.CreateMaterializedViewAsync<RegionSummary>(populate: true);
+        await ctx.Database.CreateMaterializedViewAsync<RegionSummary>(o => o.WithPopulate());
         await RawClickHouse.SettleMaterializationAsync(_fixture.ConnectionString, "RegionSummary");
 
         var rows = await RawClickHouse.RowsAsync(_fixture.ConnectionString,
@@ -56,11 +56,13 @@ public class DeferredPopulateTests
             {
                 e.ToTable("RegionSummary"); e.HasNoKey();
                 e.UseSummingMergeTree(x => x.Region);
-                e.AsMaterializedView<RegionSummary, Sale>(src => src
+
+
+            });
+            mb.MaterializedView<RegionSummary>().From<Sale>().DefinedAs(src => src
                     .GroupBy(s => s.Region)
                     .Select(g => new RegionSummary { Region = g.Key, Total = g.Sum(s => s.Amount) }));
-                e.AsMaterializedViewDeferred();
-            });
+            // TODO: .Deferred() — chain .Deferred() onto the corresponding MaterializedView<RegionSummary>() chain.
         }
     }
 }

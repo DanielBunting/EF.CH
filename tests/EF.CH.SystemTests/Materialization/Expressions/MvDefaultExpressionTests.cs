@@ -59,7 +59,9 @@ public class MvDefaultExpressionTests
             mb.Entity<Tgt>(e =>
             {
                 e.ToTable("MvDefaultTarget"); e.HasNoKey(); e.UseMergeTree(x => x.Id);
-                e.AsMaterializedView<Tgt, Row>(rows => rows
+
+            });
+            mb.MaterializedView<Tgt>().From<Row>().DefinedAs(rows => rows
                     .Select(r => new Tgt
                     {
                         Id = r.Id,
@@ -67,7 +69,6 @@ public class MvDefaultExpressionTests
                         ZeroDouble = default(double),
                         ZeroString = default(string)!,
                     }));
-            });
         }
     }
 }

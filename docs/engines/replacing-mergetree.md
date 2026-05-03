@@ -125,7 +125,7 @@ modelBuilder.Entity<Product>(entity =>
         x => x.Version,
         x => x.IsDeleted,
         x => new { x.Id })
-        .HasPartitionByMonth(x => x.UpdatedAt);
+        .HasPartitionBy(x => x.UpdatedAt, PartitionGranularity.Month);
 });
 ```
 

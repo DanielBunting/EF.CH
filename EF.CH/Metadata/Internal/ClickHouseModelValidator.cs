@@ -200,6 +200,13 @@ public class ClickHouseModelValidator : RelationalModelValidator
                     if (property.FindAnnotation(ClickHouseAnnotationNames.EphemeralExpression) != null)
                         continue;
 
+                    // ALIAS columns are computed on read (HasAliasExpression sets
+                    // ValueGeneratedOnAddOrUpdate, so the OnAdd flag fires the check
+                    // for integer types). The expression supplies the value — there's
+                    // no identity behaviour involved.
+                    if (property.FindAnnotation(ClickHouseAnnotationNames.AliasExpression) != null)
+                        continue;
+
                     // If ValueGeneratedNever was explicitly set, skip (shouldn't have OnAdd flag anyway)
                     // Check if it's a numeric type that would typically expect identity
                     if (IsIntegerType(clrType))

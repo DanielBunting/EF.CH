@@ -50,7 +50,8 @@ public class MvBinaryComparisonExpressionTests
         {
             mb.Entity<Row>(e => { e.ToTable("MvCmpEqSource"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id); });
             mb.Entity<Target>(e => { e.ToTable("MvCmpEqTarget"); e.HasNoKey(); e.UseMergeTree(x => x.Id);
-                e.AsMaterializedView<Target, Row>(rows => rows.Where(r => r.Value == 3).Select(r => new Target { Id = r.Id, Value = r.Value })); });
+ });
+            mb.MaterializedView<Target>().From<Row>().DefinedAs(rows => rows.Where(r => r.Value == 3).Select(r => new Target { Id = r.Id, Value = r.Value }));
         }
     }
     public sealed class NeqCtx(DbContextOptions<NeqCtx> o) : DbContext(o)
@@ -60,7 +61,8 @@ public class MvBinaryComparisonExpressionTests
         {
             mb.Entity<Row>(e => { e.ToTable("MvCmpNeqSource"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id); });
             mb.Entity<Target>(e => { e.ToTable("MvCmpNeqTarget"); e.HasNoKey(); e.UseMergeTree(x => x.Id);
-                e.AsMaterializedView<Target, Row>(rows => rows.Where(r => r.Value != 3).Select(r => new Target { Id = r.Id, Value = r.Value })); });
+ });
+            mb.MaterializedView<Target>().From<Row>().DefinedAs(rows => rows.Where(r => r.Value != 3).Select(r => new Target { Id = r.Id, Value = r.Value }));
         }
     }
     public sealed class LtCtx(DbContextOptions<LtCtx> o) : DbContext(o)
@@ -70,7 +72,8 @@ public class MvBinaryComparisonExpressionTests
         {
             mb.Entity<Row>(e => { e.ToTable("MvCmpLtSource"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id); });
             mb.Entity<Target>(e => { e.ToTable("MvCmpLtTarget"); e.HasNoKey(); e.UseMergeTree(x => x.Id);
-                e.AsMaterializedView<Target, Row>(rows => rows.Where(r => r.Value < 3).Select(r => new Target { Id = r.Id, Value = r.Value })); });
+ });
+            mb.MaterializedView<Target>().From<Row>().DefinedAs(rows => rows.Where(r => r.Value < 3).Select(r => new Target { Id = r.Id, Value = r.Value }));
         }
     }
     public sealed class LeCtx(DbContextOptions<LeCtx> o) : DbContext(o)
@@ -80,7 +83,8 @@ public class MvBinaryComparisonExpressionTests
         {
             mb.Entity<Row>(e => { e.ToTable("MvCmpLeSource"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id); });
             mb.Entity<Target>(e => { e.ToTable("MvCmpLeTarget"); e.HasNoKey(); e.UseMergeTree(x => x.Id);
-                e.AsMaterializedView<Target, Row>(rows => rows.Where(r => r.Value <= 3).Select(r => new Target { Id = r.Id, Value = r.Value })); });
+ });
+            mb.MaterializedView<Target>().From<Row>().DefinedAs(rows => rows.Where(r => r.Value <= 3).Select(r => new Target { Id = r.Id, Value = r.Value }));
         }
     }
     public sealed class GtCtx(DbContextOptions<GtCtx> o) : DbContext(o)
@@ -90,7 +94,8 @@ public class MvBinaryComparisonExpressionTests
         {
             mb.Entity<Row>(e => { e.ToTable("MvCmpGtSource"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id); });
             mb.Entity<Target>(e => { e.ToTable("MvCmpGtTarget"); e.HasNoKey(); e.UseMergeTree(x => x.Id);
-                e.AsMaterializedView<Target, Row>(rows => rows.Where(r => r.Value > 3).Select(r => new Target { Id = r.Id, Value = r.Value })); });
+ });
+            mb.MaterializedView<Target>().From<Row>().DefinedAs(rows => rows.Where(r => r.Value > 3).Select(r => new Target { Id = r.Id, Value = r.Value }));
         }
     }
     public sealed class GeCtx(DbContextOptions<GeCtx> o) : DbContext(o)
@@ -100,7 +105,8 @@ public class MvBinaryComparisonExpressionTests
         {
             mb.Entity<Row>(e => { e.ToTable("MvCmpGeSource"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id); });
             mb.Entity<Target>(e => { e.ToTable("MvCmpGeTarget"); e.HasNoKey(); e.UseMergeTree(x => x.Id);
-                e.AsMaterializedView<Target, Row>(rows => rows.Where(r => r.Value >= 3).Select(r => new Target { Id = r.Id, Value = r.Value })); });
+ });
+            mb.MaterializedView<Target>().From<Row>().DefinedAs(rows => rows.Where(r => r.Value >= 3).Select(r => new Target { Id = r.Id, Value = r.Value }));
         }
     }
 }

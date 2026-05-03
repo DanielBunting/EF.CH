@@ -531,6 +531,12 @@ public class ClickHouseAggregateMethodCallTranslator
             "QuantilesIf" => TranslateMultiQuantileIf("quantilesIf", arguments),
             "QuantilesTDigestIf" => TranslateMultiQuantileIf("quantilesTDigestIf", arguments),
 
+            // Typed-return aggregates — surface the native ClickHouse return type.
+            // count() / sum() in ClickHouse already return UInt64 / Int64; this
+            // path lets users skip the (ulong) cast in their projections.
+            "CountUInt64" => TranslateNoArgAggregate("count", typeof(ulong)),
+            "SumUInt64" => TranslateSimpleAggregate("sum", argument, typeof(ulong)),
+
             _ => null
         };
     }
@@ -1301,22 +1307,25 @@ public class ClickHouseAggregateMethodCallTranslator
     {
         var inv = System.Globalization.CultureInfo.InvariantCulture;
         string functionName = sentinel.FunctionName;
+
         // Decide whether the parametric float is for the `fn(k)(col)` or `fn(0.5)(col)` form.
         // Int-parametric (TopK) was stored as double; we detect via integer-valued doubles.
         if (sentinel.MergeParameter is double p)
         {
             functionName = p == Math.Floor(p) && !double.IsInfinity(p)
-                ? $"{sentinel.FunctionName}({((long)p).ToString(inv)})"
-                : $"{sentinel.FunctionName}({p.ToString(inv)})";
+                ? $"{functionName}({((long)p).ToString(inv)})"
+                : $"{functionName}({p.ToString(inv)})";
         }
         else if (sentinel.Parameters is { Count: > 0 } ps)
         {
-            functionName = $"{sentinel.FunctionName}({string.Join(", ", ps.Select(x => x.ToString(inv)))})";
+            functionName = $"{functionName}({string.Join(", ", ps.Select(x => x.ToString(inv)))})";
         }
 
-        SqlExpression[] funcArgs = sentinel.SecondArg is null
-            ? [sentinel.StateColumn]
-            : [sentinel.StateColumn, sentinel.SecondArg];
+        SqlExpression[] funcArgs = sentinel.ThirdArg is not null
+            ? [sentinel.StateColumn, sentinel.SecondArg!, sentinel.ThirdArg]
+            : sentinel.SecondArg is null
+                ? [sentinel.StateColumn]
+                : [sentinel.StateColumn, sentinel.SecondArg];
         var merge = _sqlExpressionFactory.Function(
             functionName,
             funcArgs,

@@ -81,7 +81,9 @@ public class IfCombinatorRollupTests
                 e.Property(x => x.ErrorCount).HasAggregateFunction("countIf", typeof(ulong));
                 e.Property(x => x.BigSum).HasAggregateFunction("sumIf", typeof(double));
                 e.Property(x => x.UniqErrorUsers).HasAggregateFunction("uniqIf", typeof(long));
-                e.AsMaterializedView<TenantStat, Tx>(src => src
+
+            });
+            mb.MaterializedView<TenantStat>().From<Tx>().DefinedAs(src => src
                     .GroupBy(x => x.Tenant)
                     .Select(g => new TenantStat
                     {
@@ -90,7 +92,6 @@ public class IfCombinatorRollupTests
                         BigSum = g.SumStateIf(x => x.Amount, x => x.Amount > 100),
                         UniqErrorUsers = g.UniqStateIf(x => x.UserId, x => x.IsError),
                     }));
-            });
         }
     }
 

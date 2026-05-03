@@ -43,6 +43,8 @@ public class ClickHouseOptionsExtension : RelationalOptionsExtension
     private ClickHouseConfiguration? _configuration;
     private string? _clusterName;
     private bool _useConnectionRouting;
+    private int? _httpPort;
+    private bool _strictTransactions;
 
     /// <summary>
     /// Creates a new instance of <see cref="ClickHouseOptionsExtension"/>.
@@ -63,6 +65,8 @@ public class ClickHouseOptionsExtension : RelationalOptionsExtension
         _configuration = copyFrom._configuration;
         _clusterName = copyFrom._clusterName;
         _useConnectionRouting = copyFrom._useConnectionRouting;
+        _httpPort = copyFrom._httpPort;
+        _strictTransactions = copyFrom._strictTransactions;
     }
 
     /// <summary>
@@ -90,6 +94,14 @@ public class ClickHouseOptionsExtension : RelationalOptionsExtension
     public virtual ClickHouseDeleteStrategy DeleteStrategy => _deleteStrategy;
 
     /// <summary>
+    /// Gets whether <c>BeginTransaction</c> throws instead of returning a
+    /// no-op transaction. Default: <c>false</c> (warn-once + no-op). Opt-in
+    /// for callers who want to be sure they aren't relying on transactional
+    /// semantics that ClickHouse doesn't provide.
+    /// </summary>
+    public virtual bool StrictTransactions => _strictTransactions;
+
+    /// <summary>
     /// Gets the multi-datacenter configuration for ClickHouse.
     /// </summary>
     public virtual ClickHouseConfiguration? Configuration => _configuration;
@@ -104,6 +116,12 @@ public class ClickHouseOptionsExtension : RelationalOptionsExtension
     /// Gets whether connection routing (read/write splitting) is enabled.
     /// </summary>
     public virtual bool UseConnectionRouting => _useConnectionRouting;
+
+    /// <summary>
+    /// Gets the HTTP port used by the export APIs. When unset, the export code falls back to the
+    /// <c>HttpPort=</c> field of the connection string, then to the <c>Port=</c> field.
+    /// </summary>
+    public virtual int? HttpPort => _httpPort;
 
     /// <summary>
     /// Creates a copy with the specified connection string.
@@ -163,6 +181,16 @@ public class ClickHouseOptionsExtension : RelationalOptionsExtension
     }
 
     /// <summary>
+    /// Creates a copy with strict-transaction mode enabled or disabled.
+    /// </summary>
+    public virtual ClickHouseOptionsExtension WithStrictTransactions(bool strict)
+    {
+        var clone = (ClickHouseOptionsExtension)Clone();
+        clone._strictTransactions = strict;
+        return clone;
+    }
+
+    /// <summary>
     /// Creates a copy with the specified max batch size.
     /// </summary>
     public virtual ClickHouseOptionsExtension WithMaxBatchSize(int maxBatchSize)
@@ -200,6 +228,17 @@ public class ClickHouseOptionsExtension : RelationalOptionsExtension
     {
         var clone = (ClickHouseOptionsExtension)Clone();
         clone._useConnectionRouting = useConnectionRouting;
+        return clone;
+    }
+
+    /// <summary>
+    /// Creates a copy with the specified HTTP port for the export APIs.
+    /// </summary>
+    /// <param name="httpPort">The HTTP port (typically 8123), or <c>null</c> to clear the override.</param>
+    public virtual ClickHouseOptionsExtension WithHttpPort(int? httpPort)
+    {
+        var clone = (ClickHouseOptionsExtension)Clone();
+        clone._httpPort = httpPort;
         return clone;
     }
 
@@ -280,6 +319,11 @@ public class ClickHouseOptionsExtension : RelationalOptionsExtension
                         builder.Append(CultureInfo.InvariantCulture, $"Cluster={Extension.ClusterName} ");
                     }
 
+                    if (Extension.HttpPort.HasValue)
+                    {
+                        builder.Append(CultureInfo.InvariantCulture, $"HttpPort={Extension.HttpPort} ");
+                    }
+
                     builder.Append(CultureInfo.InvariantCulture, $"MaxBatchSize={Extension.MaxBatchSize} ");
 
                     _logFragment = builder.ToString();
@@ -298,6 +342,8 @@ public class ClickHouseOptionsExtension : RelationalOptionsExtension
             hashCode.Add(Extension.DeleteStrategy);
             hashCode.Add(Extension.ClusterName);
             hashCode.Add(Extension.UseConnectionRouting);
+            hashCode.Add(Extension.HttpPort);
+            hashCode.Add(Extension.StrictTransactions);
             // Configuration is reference-compared intentionally - same object = same hash
             hashCode.Add(Extension.Configuration?.GetHashCode() ?? 0);
             return hashCode.ToHashCode();
@@ -311,6 +357,8 @@ public class ClickHouseOptionsExtension : RelationalOptionsExtension
                && Extension.DeleteStrategy == otherInfo.Extension.DeleteStrategy
                && Extension.ClusterName == otherInfo.Extension.ClusterName
                && Extension.UseConnectionRouting == otherInfo.Extension.UseConnectionRouting
+               && Extension.HttpPort == otherInfo.Extension.HttpPort
+               && Extension.StrictTransactions == otherInfo.Extension.StrictTransactions
                && ReferenceEquals(Extension.Configuration, otherInfo.Extension.Configuration);
 
         public override void PopulateDebugInfo(IDictionary<string, string> debugInfo)
@@ -324,6 +372,7 @@ public class ClickHouseOptionsExtension : RelationalOptionsExtension
             debugInfo["ClickHouse:DeleteStrategy"] = Extension.DeleteStrategy.ToString();
             debugInfo["ClickHouse:ClusterName"] = Extension.ClusterName ?? "(null)";
             debugInfo["ClickHouse:ConnectionRouting"] = Extension.UseConnectionRouting.ToString();
+            debugInfo["ClickHouse:HttpPort"] = Extension.HttpPort?.ToString() ?? "(null)";
             debugInfo["ClickHouse:HasConfiguration"] = (Extension.Configuration != null).ToString();
         }
     }
@@ -383,26 +432,21 @@ public static class ClickHouseServiceCollectionExtensions
         builder.TryAddCoreServices();
 
         // Register the evaluatable expression filter plugin to prevent parameterization
-        // of arguments to Sample(), WithSetting(), and WithSettings() methods.
+        // of arguments to Sample() and WithSetting() methods.
         // This must be registered as an enumerable service since multiple plugins can exist.
         services.TryAddEnumerable(
             ServiceDescriptor.Singleton<IEvaluatableExpressionFilterPlugin, ClickHouseEvaluatableExpressionFilterPlugin>());
 
         // Register external config resolver for postgresql() table function support.
-        // Optionally injects IConfiguration for connection profile support.
-        services.TryAddSingleton<IExternalConfigResolver>(sp =>
-        {
-            var configuration = sp.GetService<IConfiguration>();
-            return new ExternalConfigResolver(configuration);
-        });
+        // Scoped so we can read IConfiguration off the per-context IDbContextOptions —
+        // a Singleton would receive a null IDbContextOptions from the root scope.
+        services.TryAddScoped<IExternalConfigResolver>(sp =>
+            new ExternalConfigResolver(ResolveApplicationConfiguration(sp)));
 
         // Register dictionary config resolver for external dictionary sources (PostgreSQL, MySQL, HTTP).
-        // Resolves credentials from environment variables or IConfiguration at runtime.
-        services.TryAddSingleton<IDictionaryConfigResolver>(sp =>
-        {
-            var configuration = sp.GetService<IConfiguration>();
-            return new DictionaryConfigResolver(configuration);
-        });
+        // See lifetime note above.
+        services.TryAddScoped<IDictionaryConfigResolver>(sp =>
+            new DictionaryConfigResolver(ResolveApplicationConfiguration(sp)));
 
         AddClickHouseFeatureServices(services);
 
@@ -415,5 +459,17 @@ public static class ClickHouseServiceCollectionExtensions
         services.TryAddScoped<IClickHouseInsertSelectExecutor, ClickHouseInsertSelectExecutor>();
         services.TryAddScoped<IClickHouseQueryProfiler, ClickHouseQueryProfiler>();
         services.TryAddScoped<IClickHouseTempTableManager, ClickHouseTempTableManager>();
+    }
+
+    // EF Core's internal service provider does not register IConfiguration. The
+    // application's configuration is reachable via CoreOptionsExtension.ApplicationServiceProvider,
+    // which AddDbContext (and friends) populates with the host's IServiceProvider.
+    internal static IConfiguration? ResolveApplicationConfiguration(IServiceProvider efServices)
+    {
+        var appServices = efServices
+            .GetService<IDbContextOptions>()
+            ?.FindExtension<CoreOptionsExtension>()
+            ?.ApplicationServiceProvider;
+        return appServices?.GetService<IConfiguration>();
     }
 }

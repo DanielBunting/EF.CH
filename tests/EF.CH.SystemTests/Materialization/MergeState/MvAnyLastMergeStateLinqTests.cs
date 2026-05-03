@@ -55,10 +55,11 @@ public class MvAnyLastMergeStateLinqTests
                 e.ToTable("MsAnyLastDaily"); e.HasNoKey();
                 e.UseAggregatingMergeTree(x => x.Bucket);
                 e.Property(x => x.LastTag).HasAggregateFunction("anyLast", typeof(string));
-                e.AsMaterializedView<DailyRow, HourlyRow>(rows => rows
+
+            });
+            mb.MaterializedView<DailyRow>().From<HourlyRow>().DefinedAs(rows => rows
                     .GroupBy(r => r.Bucket)
                     .Select(g => new DailyRow { Bucket = g.Key, LastTag = g.AnyLastMergeState(r => r.LastTag) }));
-            });
         }
     }
 

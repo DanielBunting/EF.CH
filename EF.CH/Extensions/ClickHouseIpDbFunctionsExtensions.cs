@@ -42,4 +42,39 @@ public static class ClickHouseIpDbFunctionsExtensions
     /// </summary>
     public static bool IsIPv6String(this DbFunctions _, string s)
         => throw new InvalidOperationException("This method is for LINQ translation only.");
+
+    /// <summary>Translates to <c>IPv6StringToNum(s)</c>.</summary>
+    public static byte[] IPv6StringToNum(this DbFunctions _, string s)
+        => throw new InvalidOperationException("This method is for LINQ translation only.");
+
+    /// <summary>Translates to <c>IPv6NumToString(b)</c>.</summary>
+    public static string IPv6NumToString(this DbFunctions _, byte[] b)
+        => throw new InvalidOperationException("This method is for LINQ translation only.");
+
+    /// <summary>Translates to <c>IPv4CIDRToRange(ip, prefix)</c>.</summary>
+    public static object IPv4CIDRToRange(this DbFunctions _, uint ip, byte prefix)
+        => throw new InvalidOperationException("This method is for LINQ translation only.");
+
+    /// <summary>Translates to <c>IPv6CIDRToRange(ip, prefix)</c>.</summary>
+    public static object IPv6CIDRToRange(this DbFunctions _, byte[] ip, byte prefix)
+        => throw new InvalidOperationException("This method is for LINQ translation only.");
+
+    /// <summary>Translates to <c>IPv4ToIPv6(ip)</c>.</summary>
+    public static byte[] IPv4ToIPv6(this DbFunctions _, uint ip)
+        => throw new InvalidOperationException("This method is for LINQ translation only.");
+
+    /// <summary>
+    /// Translates to <c>cutIPv6(ip, bytesToCutForIPv6, bytesToCutForIPv4)</c>.
+    /// Truncates the trailing bytes of an IPv6 address for log anonymisation.
+    /// </summary>
+    public static string CutIPv6(this DbFunctions _, byte[] ip, int bytesToCutForIPv6, int bytesToCutForIPv4)
+        => throw new InvalidOperationException("This method is for LINQ translation only.");
+
+    /// <summary>Translates to <c>toIPv4(s)</c>.</summary>
+    public static uint ToIPv4(this DbFunctions _, string s)
+        => throw new InvalidOperationException("This method is for LINQ translation only.");
+
+    /// <summary>Translates to <c>toIPv6(s)</c>.</summary>
+    public static byte[] ToIPv6(this DbFunctions _, string s)
+        => throw new InvalidOperationException("This method is for LINQ translation only.");
 }

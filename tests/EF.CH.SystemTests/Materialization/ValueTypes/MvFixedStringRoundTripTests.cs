@@ -58,9 +58,10 @@ public class MvFixedStringRoundTripTests
                 e.ToTable("MvFixedStringTarget"); e.HasNoKey();
                 e.UseMergeTree(x => x.N);
                 e.Property(x => x.Code).HasColumnType("FixedString(8)");
-                e.AsMaterializedView<Tgt, Src>(rows => rows
-                    .Select(r => new Tgt { Code = r.Code, N = r.N }));
+
             });
+            mb.MaterializedView<Tgt>().From<Src>().DefinedAs(rows => rows
+                    .Select(r => new Tgt { Code = r.Code, N = r.N }));
         }
     }
 }

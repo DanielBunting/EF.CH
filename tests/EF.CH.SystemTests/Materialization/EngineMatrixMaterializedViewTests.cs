@@ -158,10 +158,11 @@ public class EngineMatrixMaterializedViewTests
                 {
                     e.ToTable("MergeToSumTarget"); e.HasNoKey();
                     e.UseSummingMergeTree(x => x.Bucket);
-                    e.AsMaterializedView<Target, Row>(rows => rows
+
+                });
+                mb.MaterializedView<Target>().From<Row>().DefinedAs(rows => rows
                         .GroupBy(r => r.Bucket)
                         .Select(g => new Target { Bucket = g.Key, Total = g.Sum(r => r.Value) }));
-                });
             }
         }
         public class Row { public long Id { get; set; } public string Bucket { get; set; } = ""; public long Value { get; set; } }
@@ -183,7 +184,9 @@ public class EngineMatrixMaterializedViewTests
                     e.UseAggregatingMergeTree(x => x.Key);
                     e.Property(x => x.AmountTotal).HasAggregateFunction("sum", typeof(double));
                     e.Property(x => x.UserCount).HasAggregateFunction("uniq", typeof(long));
-                    e.AsMaterializedView<Target, Row>(rows => rows
+
+                });
+                mb.MaterializedView<Target>().From<Row>().DefinedAs(rows => rows
                         .GroupBy(r => r.Key)
                         .Select(g => new Target
                         {
@@ -191,7 +194,6 @@ public class EngineMatrixMaterializedViewTests
                             AmountTotal = g.SumState(r => r.Amount),
                             UserCount = g.UniqState(r => r.UserId),
                         }));
-                });
             }
         }
         public class Row { public long Key { get; set; } public long UserId { get; set; } public double Amount { get; set; } }
@@ -211,10 +213,11 @@ public class EngineMatrixMaterializedViewTests
                 {
                     e.ToTable("NullSumTarget"); e.HasNoKey();
                     e.UseSummingMergeTree(x => x.Region);
-                    e.AsMaterializedView<Target, Row>(rows => rows
+
+                });
+                mb.MaterializedView<Target>().From<Row>().DefinedAs(rows => rows
                         .GroupBy(r => r.Region)
                         .Select(g => new Target { Region = g.Key, Hits = g.Sum(r => r.Hits) }));
-                });
             }
         }
         public class Row { public string Region { get; set; } = ""; public long Hits { get; set; } }
@@ -234,9 +237,10 @@ public class EngineMatrixMaterializedViewTests
                 {
                     e.ToTable("MergeToReplacingTarget"); e.HasNoKey();
                     e.UseReplacingMergeTree("Version", "Id");
-                    e.AsMaterializedView<Target, Row>(rows => rows
-                        .Select(r => new Target { Id = r.Id, Name = r.Name, Version = r.Version }));
+
                 });
+                mb.MaterializedView<Target>().From<Row>().DefinedAs(rows => rows
+                        .Select(r => new Target { Id = r.Id, Name = r.Name, Version = r.Version }));
             }
         }
         public class Row { public long Id { get; set; } public long Version { get; set; } public string Name { get; set; } = ""; }
@@ -256,10 +260,11 @@ public class EngineMatrixMaterializedViewTests
                 {
                     e.ToTable("ErrorsOnly"); e.HasNoKey();
                     e.UseMergeTree(x => x.Id);
-                    e.AsMaterializedView<Target, Row>(rows => rows
+
+                });
+                mb.MaterializedView<Target>().From<Row>().DefinedAs(rows => rows
                         .Where(r => r.Level == "error")
                         .Select(r => new Target { Id = r.Id, Message = r.Message }));
-                });
             }
         }
         public class Row { public long Id { get; set; } public string Level { get; set; } = ""; public string Message { get; set; } = ""; }

@@ -83,7 +83,7 @@ public sealed class ClickHouseBulkInserter : IClickHouseBulkInserter
                 {
                     Interlocked.Add(ref totalRowsInserted, r.rowCount);
                     Interlocked.Increment(ref batchesExecuted);
-                    options.OnBatchCompleted?.Invoke(Interlocked.Read(ref totalRowsInserted));
+                    InvokeBatchCompleted(options, Interlocked.Read(ref totalRowsInserted));
                 },
                 cancellationToken);
         }
@@ -95,11 +95,40 @@ public sealed class ClickHouseBulkInserter : IClickHouseBulkInserter
                 await ExecuteBatchAsync(batch, propertyInfo, settings, options, cancellationToken);
                 totalRowsInserted += batch.Count;
                 batchesExecuted++;
-                options.OnBatchCompleted?.Invoke(totalRowsInserted);
+                InvokeBatchCompleted(options, totalRowsInserted);
             }
         }
 
         return ClickHouseBulkInsertResult.Create(stopwatch, totalRowsInserted, batchesExecuted);
+    }
+
+    /// <summary>
+    /// Invokes the user-supplied <c>OnBatchCompleted</c> callback safely. A throwing
+    /// callback should not abort the bulk operation — in parallel mode an unhandled
+    /// exception would propagate through <c>Task.WhenAll</c>, terminating other
+    /// in-flight batches mid-flight and producing a silent partial insert. We
+    /// swallow the exception (it's the user's bug, not ours) and continue.
+    /// </summary>
+    private static void InvokeBatchCompleted(ClickHouseBulkInsertOptions options, long totalRowsInserted)
+    {
+        if (options.OnBatchCompleted is null) return;
+        try
+        {
+            options.OnBatchCompleted(totalRowsInserted);
+        }
+        catch (Exception ex)
+        {
+            // Intentionally swallow the inner failure — see method summary.
+            // Forward to the user's exception sink if set; that lets them
+            // observe callback bugs without aborting the bulk operation.
+            // The sink's own throws are also swallowed (a misconfigured sink
+            // shouldn't kill in-flight batches either).
+            if (options.OnCallbackException is { } sink)
+            {
+                try { sink(ex); }
+                catch { /* swallow sink failure */ }
+            }
+        }
     }
 
     /// <inheritdoc />
@@ -129,7 +158,7 @@ public sealed class ClickHouseBulkInserter : IClickHouseBulkInserter
                 await ExecuteBatchAsync(currentBatch, propertyInfo, settings, options, cancellationToken);
                 totalRowsInserted += currentBatch.Count;
                 batchesExecuted++;
-                options.OnBatchCompleted?.Invoke(totalRowsInserted);
+                InvokeBatchCompleted(options, totalRowsInserted);
                 currentBatch.Clear();
             }
         }
@@ -140,7 +169,7 @@ public sealed class ClickHouseBulkInserter : IClickHouseBulkInserter
             await ExecuteBatchAsync(currentBatch, propertyInfo, settings, options, cancellationToken);
             totalRowsInserted += currentBatch.Count;
             batchesExecuted++;
-            options.OnBatchCompleted?.Invoke(totalRowsInserted);
+            InvokeBatchCompleted(options, totalRowsInserted);
         }
 
         return ClickHouseBulkInsertResult.Create(stopwatch, totalRowsInserted, batchesExecuted);

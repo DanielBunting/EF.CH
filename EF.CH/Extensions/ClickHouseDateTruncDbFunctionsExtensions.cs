@@ -210,4 +210,37 @@ public static class ClickHouseDateTruncDbFunctionsExtensions
     /// </summary>
     public static DateTime ToStartOfInterval(this DbFunctions _, DateTime dt, int value, [NotParameterized] ClickHouseIntervalUnit unit)
         => throw new InvalidOperationException("This method is for LINQ translation only.");
+
+    /// <summary>
+    /// Translates to ClickHouse <c>dateTrunc(unit, dt)</c>.
+    /// Truncates <paramref name="dt"/> down to the boundary of the specified
+    /// unit. Equivalent to the matching <c>toStartOf*</c> function but takes
+    /// the unit at runtime, allowing parameterised time-bucketing.
+    /// </summary>
+    public static DateTime DateTrunc(this DbFunctions _, [NotParameterized] ClickHouseIntervalUnit unit, DateTime dt)
+        => throw new InvalidOperationException("This method is for LINQ translation only.");
+
+    /// <summary>
+    /// Translates to ClickHouse <c>toTimeZone(dt, tz)</c>. Converts
+    /// <paramref name="dt"/> to the specified IANA timezone for presentation;
+    /// the underlying instant is unchanged.
+    /// </summary>
+    public static DateTime ToTimeZone(this DbFunctions _, DateTime dt, [NotParameterized] string tz)
+        => throw new InvalidOperationException("This method is for LINQ translation only.");
+
+    /// <summary>
+    /// Translates to ClickHouse <c>timeZoneOf(dt)</c>. Returns the IANA
+    /// timezone name attached to a <c>DateTime64(P, 'TZ')</c> value, or the
+    /// server's default zone for naked <c>DateTime</c>.
+    /// </summary>
+    public static string TimeZoneOf(this DbFunctions _, DateTime dt)
+        => throw new InvalidOperationException("This method is for LINQ translation only.");
+
+    /// <summary>
+    /// Translates to ClickHouse <c>now64(precision)</c>. Returns the current
+    /// server time as a <c>DateTime64(P)</c> with the specified sub-second
+    /// precision (0–9; 3 = milliseconds, 6 = microseconds, 9 = nanoseconds).
+    /// </summary>
+    public static DateTime Now64(this DbFunctions _, [NotParameterized] int precision)
+        => throw new InvalidOperationException("This method is for LINQ translation only.");
 }

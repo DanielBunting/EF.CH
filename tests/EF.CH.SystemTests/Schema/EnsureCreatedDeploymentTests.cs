@@ -3,6 +3,7 @@ using EF.CH.SystemTests.Fixtures;
 using EF.CH.SystemTests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
+using EF.CH.Metadata;
 
 namespace EF.CH.SystemTests.Schema;
 
@@ -122,7 +123,7 @@ public class EnsureCreatedDeploymentTests
                 e.ToTable("Orders");
                 e.HasKey(x => x.Id);
                 e.UseMergeTree(x => new { x.OrderDate, x.Id });
-                e.HasPartitionByMonth(x => x.OrderDate);
+                e.HasPartitionBy(x => x.OrderDate, PartitionGranularity.Month);
             });
     }
 

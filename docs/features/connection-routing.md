@@ -279,14 +279,15 @@ public class AppDbContext : DbContext
     {
         modelBuilder.Entity<User>(entity =>
         {
-            entity.UseReplicatedReplacingMergeTree(x => x.Version, x => x.Id)
+            entity.UseReplacingMergeTree(x => x.Id)
+                  .WithVersion(x => x.Version)
                   .WithCluster("main_cluster")
                   .WithReplication("/clickhouse/tables/{database}/{table}");
         });
 
         modelBuilder.Entity<Event>(entity =>
         {
-            entity.UseReplicatedMergeTree(x => new { x.Timestamp, x.Id })
+            entity.UseMergeTree(x => new { x.Timestamp, x.Id })
                   .WithCluster("main_cluster")
                   .WithReplication("/clickhouse/tables/{database}/{table}");
         });
