@@ -155,7 +155,7 @@ public class ClickHouseUtilityMethodTranslator : IMethodCallTranslator
 
         // Keeper-backed scalar functions
         [(typeof(ClickHouseKeeperDbFunctionsExtensions), nameof(ClickHouseKeeperDbFunctionsExtensions.GenerateSerialID))] = "generateSerialID",
-        [(typeof(ClickHouseKeeperDbFunctionsExtensions), nameof(ClickHouseKeeperDbFunctionsExtensions.ZooKeeperPath))] = "zooKeeperPath",
+        [(typeof(ClickHouseKeeperDbFunctionsExtensions), nameof(ClickHouseKeeperDbFunctionsExtensions.GetMacro))] = "getMacro",
 
         // Conditional functions (Tier 1a)
         [(typeof(ClickHouseConditionalDbFunctionsExtensions), nameof(ClickHouseConditionalDbFunctionsExtensions.MultiIf))] = "multiIf",

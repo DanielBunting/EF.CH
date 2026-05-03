@@ -19,11 +19,12 @@ public static class ClickHouseKeeperDbFunctionsExtensions
         => throw new InvalidOperationException("This method is for LINQ translation only.");
 
     /// <summary>
-    /// Returns the resolved root path for the given Keeper-relative
-    /// <paramref name="path"/>, applying any configured ZooKeeper base path
-    /// macros. Errors when no Keeper is configured for the server.
+    /// Translates to ClickHouse <c>getMacro(name)</c>. Returns the value of a
+    /// server-config macro (typically <c>shard</c>, <c>replica</c>, <c>cluster</c>,
+    /// or any custom macro defined in <c>config.xml</c>). Errors on the server
+    /// when the named macro is not defined.
     /// </summary>
-    public static string ZooKeeperPath(this DbFunctions _, string path)
+    public static string GetMacro(this DbFunctions _, string name)
         => throw new InvalidOperationException("This method is for LINQ translation only.");
 
     /// <summary>

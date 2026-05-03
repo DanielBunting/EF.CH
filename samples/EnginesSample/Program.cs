@@ -347,8 +347,8 @@ public class MergeTreeContext(string connectionString) : DbContext
         modelBuilder.Entity<PageView>(entity =>
         {
             entity.HasNoKey();
-            entity.UseMergeTree(x => new { x.ViewedAt, x.Id })
-                .HasPartitionBy(x => x.ViewedAt, PartitionGranularity.Month);
+            entity.UseMergeTree(x => new { x.ViewedAt, x.Id });
+            entity.HasPartitionBy(x => x.ViewedAt, PartitionGranularity.Month);
         });
     }
 }

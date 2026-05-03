@@ -295,15 +295,15 @@ public class BulkOpsContext(string connectionString) : DbContext
         modelBuilder.Entity<SensorReading>(entity =>
         {
             entity.HasNoKey();
-            entity.UseMergeTree(x => new { x.SensorId, x.ReadingAt })
-                .HasPartitionBy(x => x.ReadingAt, PartitionGranularity.Month);
+            entity.UseMergeTree(x => new { x.SensorId, x.ReadingAt });
+            entity.HasPartitionBy(x => x.ReadingAt, PartitionGranularity.Month);
         });
 
         modelBuilder.Entity<SensorArchiveEntry>(entity =>
         {
             entity.HasNoKey();
-            entity.UseMergeTree(x => new { x.SensorId, x.ReadingAt })
-                .HasPartitionBy(x => x.ReadingAt, PartitionGranularity.Month);
+            entity.UseMergeTree(x => new { x.SensorId, x.ReadingAt });
+            entity.HasPartitionBy(x => x.ReadingAt, PartitionGranularity.Month);
         });
     }
 }

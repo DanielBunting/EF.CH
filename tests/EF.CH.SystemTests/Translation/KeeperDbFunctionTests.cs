@@ -32,18 +32,6 @@ public class KeeperDbFunctionTests
     }
 
     [Fact]
-    public async Task ZooKeeperPath_ResolvesAgainstKeeper()
-    {
-        await using var ctx = await SeededAsync();
-        var s = await ctx.Rows.Select(x =>
-            EfClass.Functions.ZooKeeperPath("/clickhouse/tables/{shard}/test")).FirstAsync();
-        // The exact resolved path depends on the server's macros; assert the
-        // path is non-empty and starts with `/clickhouse` after macro expansion.
-        Assert.False(string.IsNullOrEmpty(s));
-        Assert.StartsWith("/clickhouse", s);
-    }
-
-    [Fact]
     public async Task HasZooKeeperConfig_ReturnsTrueOnReplicatedFixture()
     {
         await using var ctx = await SeededAsync();

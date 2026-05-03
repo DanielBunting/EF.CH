@@ -46,18 +46,6 @@ public class TimeZoneAttributeTests
     /// exist. The point in time is unambiguous when expressed as a
     /// DateTimeOffset (UTC=01:30 → BST would be 02:30 local). Round-tripping
     /// must preserve the absolute instant.
-    /// <para>
-    /// EXPECTED TO FAIL TODAY: ClickHouse.Driver 1.0.0's bind path renders
-    /// DateTime values as a wall-clock string in the column's timezone via
-    /// <c>FormatDateTime64InTargetTimezone</c>. On the spring-forward day
-    /// the wall-clock string for the UTC instant lands in the "skipped"
-    /// hour; CH then parses the ambiguous local string with the GMT offset,
-    /// shifting the stored instant by one hour. Provider-side fix would
-    /// require either driver-level UTC-binding (DateTime64UTC route) or
-    /// SQL-level wrapping of every parameter binding with
-    /// <c>fromUnixTimestamp64Milli(?, 'TZ')</c>. Tracked in
-    /// <c>.tmp/notes/known-issues.md</c>.
-    /// </para>
     /// </summary>
     [Fact]
     public async Task HasTimeZone_RoundTripsAcrossSpringForwardBoundary()
@@ -105,6 +93,46 @@ public class TimeZoneAttributeTests
         Assert.NotEqual(rows[0].At.UtcDateTime, rows[1].At.UtcDateTime);
     }
 
+    /// <summary>
+    /// Spring-forward at microsecond (P=6) precision. Locks in that the literal
+    /// fix applies across the precision range, not just the default P=3.
+    /// </summary>
+    [Fact]
+    public async Task HasTimeZone_RoundTripsAcrossSpringForward_AtMicroPrecision()
+    {
+        await using var ctx = TestContextFactory.Create<MicroCtx>(Conn);
+        await ctx.Database.EnsureDeletedAsync();
+        await ctx.Database.EnsureCreatedAsync();
+
+        // 123.4560 ms — exactly representable at P=6 (µs granularity).
+        var instant = new DateTimeOffset(2024, 3, 31, 1, 30, 0, 123, TimeSpan.Zero).AddTicks(4560);
+        ctx.Rows.Add(new MicroRow { Id = 1, At = instant });
+        await ctx.SaveChangesAsync();
+        ctx.ChangeTracker.Clear();
+
+        var read = await ctx.Rows.SingleAsync(r => r.Id == 1);
+        Assert.Equal(instant.UtcDateTime, read.At.UtcDateTime);
+    }
+
+    /// <summary>
+    /// Spring-forward at nanosecond (P=9) precision.
+    /// </summary>
+    [Fact]
+    public async Task HasTimeZone_RoundTripsAcrossSpringForward_AtNanoPrecision()
+    {
+        await using var ctx = TestContextFactory.Create<NanoCtx>(Conn);
+        await ctx.Database.EnsureDeletedAsync();
+        await ctx.Database.EnsureCreatedAsync();
+
+        var instant = new DateTimeOffset(2024, 3, 31, 1, 30, 0, TimeSpan.Zero).AddTicks(1234567);
+        ctx.Rows.Add(new NanoRow { Id = 1, At = instant });
+        await ctx.SaveChangesAsync();
+        ctx.ChangeTracker.Clear();
+
+        var read = await ctx.Rows.SingleAsync(r => r.Id == 1);
+        Assert.Equal(instant.UtcDateTime, read.At.UtcDateTime);
+    }
+
     public sealed class Row
     {
         public uint Id { get; set; }
@@ -119,6 +147,40 @@ public class TimeZoneAttributeTests
             {
                 e.ToTable("TimeZoneAttr_Rows"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id);
                 e.Property(x => x.At).HasTimeZone("Europe/London");
+            });
+    }
+
+    public sealed class MicroRow
+    {
+        public uint Id { get; set; }
+        public DateTimeOffset At { get; set; }
+    }
+
+    public sealed class MicroCtx(DbContextOptions<MicroCtx> o) : DbContext(o)
+    {
+        public DbSet<MicroRow> Rows => Set<MicroRow>();
+        protected override void OnModelCreating(ModelBuilder mb) =>
+            mb.Entity<MicroRow>(e =>
+            {
+                e.ToTable("TimeZoneAttr_MicroRows"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id);
+                e.Property(x => x.At).HasColumnType("DateTime64(6, 'Europe/London')");
+            });
+    }
+
+    public sealed class NanoRow
+    {
+        public uint Id { get; set; }
+        public DateTimeOffset At { get; set; }
+    }
+
+    public sealed class NanoCtx(DbContextOptions<NanoCtx> o) : DbContext(o)
+    {
+        public DbSet<NanoRow> Rows => Set<NanoRow>();
+        protected override void OnModelCreating(ModelBuilder mb) =>
+            mb.Entity<NanoRow>(e =>
+            {
+                e.ToTable("TimeZoneAttr_NanoRows"); e.HasKey(x => x.Id); e.UseMergeTree(x => x.Id);
+                e.Property(x => x.At).HasColumnType("DateTime64(9, 'Europe/London')");
             });
     }
 }
