@@ -30,6 +30,17 @@ public class ClickHouseUtilityMethodTranslator : IMethodCallTranslator
         typeof(ClickHouseStringSplitDbFunctionsExtensions),
         typeof(ClickHouseUuidDbFunctionsExtensions),
         typeof(ClickHouseKeeperDbFunctionsExtensions),
+        typeof(ClickHouseConditionalDbFunctionsExtensions),
+        typeof(ClickHouseStringPatternDbFunctionsExtensions),
+        typeof(ClickHouseSafeCastDbFunctionsExtensions),
+        typeof(ClickHouseBitDbFunctionsExtensions),
+        typeof(ClickHouseJsonExtractDbFunctionsExtensions),
+        typeof(ClickHouseRandomDbFunctionsExtensions),
+        typeof(ClickHouseServerDbFunctionsExtensions),
+        typeof(ClickHouseTupleDbFunctionsExtensions),
+        typeof(ClickHouseStringExtraDbFunctionsExtensions),
+        typeof(ClickHouseMathDbFunctionsExtensions),
+        typeof(ClickHouseArrayDbFunctionsExtensions),
     ];
 
     /// <summary>
@@ -145,6 +156,181 @@ public class ClickHouseUtilityMethodTranslator : IMethodCallTranslator
         // Keeper-backed scalar functions
         [(typeof(ClickHouseKeeperDbFunctionsExtensions), nameof(ClickHouseKeeperDbFunctionsExtensions.GenerateSerialID))] = "generateSerialID",
         [(typeof(ClickHouseKeeperDbFunctionsExtensions), nameof(ClickHouseKeeperDbFunctionsExtensions.ZooKeeperPath))] = "zooKeeperPath",
+
+        // Conditional functions (Tier 1a)
+        [(typeof(ClickHouseConditionalDbFunctionsExtensions), nameof(ClickHouseConditionalDbFunctionsExtensions.MultiIf))] = "multiIf",
+
+        // String pattern matching (Tier 1b)
+        [(typeof(ClickHouseStringPatternDbFunctionsExtensions), nameof(ClickHouseStringPatternDbFunctionsExtensions.ILike))] = "ilike",
+        [(typeof(ClickHouseStringPatternDbFunctionsExtensions), nameof(ClickHouseStringPatternDbFunctionsExtensions.NotLike))] = "notLike",
+        [(typeof(ClickHouseStringPatternDbFunctionsExtensions), nameof(ClickHouseStringPatternDbFunctionsExtensions.NotILike))] = "notILike",
+        [(typeof(ClickHouseStringPatternDbFunctionsExtensions), nameof(ClickHouseStringPatternDbFunctionsExtensions.Match))] = "match",
+        [(typeof(ClickHouseStringPatternDbFunctionsExtensions), nameof(ClickHouseStringPatternDbFunctionsExtensions.ReplaceRegex))] = "replaceRegexpOne",
+        [(typeof(ClickHouseStringPatternDbFunctionsExtensions), nameof(ClickHouseStringPatternDbFunctionsExtensions.ReplaceRegexAll))] = "replaceRegexpAll",
+        [(typeof(ClickHouseStringPatternDbFunctionsExtensions), nameof(ClickHouseStringPatternDbFunctionsExtensions.MatchAll))] = "extractAllGroupsHorizontal",
+        [(typeof(ClickHouseStringPatternDbFunctionsExtensions), nameof(ClickHouseStringPatternDbFunctionsExtensions.Position))] = "position",
+        [(typeof(ClickHouseStringPatternDbFunctionsExtensions), nameof(ClickHouseStringPatternDbFunctionsExtensions.PositionCaseInsensitive))] = "positionCaseInsensitiveUTF8",
+
+        // Safe type conversion (Tier 1c)
+        [(typeof(ClickHouseSafeCastDbFunctionsExtensions), nameof(ClickHouseSafeCastDbFunctionsExtensions.ToInt8OrNull))] = "toInt8OrNull",
+        [(typeof(ClickHouseSafeCastDbFunctionsExtensions), nameof(ClickHouseSafeCastDbFunctionsExtensions.ToInt16OrNull))] = "toInt16OrNull",
+        [(typeof(ClickHouseSafeCastDbFunctionsExtensions), nameof(ClickHouseSafeCastDbFunctionsExtensions.ToInt32OrNull))] = "toInt32OrNull",
+        [(typeof(ClickHouseSafeCastDbFunctionsExtensions), nameof(ClickHouseSafeCastDbFunctionsExtensions.ToInt64OrNull))] = "toInt64OrNull",
+        [(typeof(ClickHouseSafeCastDbFunctionsExtensions), nameof(ClickHouseSafeCastDbFunctionsExtensions.ToUInt8OrNull))] = "toUInt8OrNull",
+        [(typeof(ClickHouseSafeCastDbFunctionsExtensions), nameof(ClickHouseSafeCastDbFunctionsExtensions.ToUInt16OrNull))] = "toUInt16OrNull",
+        [(typeof(ClickHouseSafeCastDbFunctionsExtensions), nameof(ClickHouseSafeCastDbFunctionsExtensions.ToUInt32OrNull))] = "toUInt32OrNull",
+        [(typeof(ClickHouseSafeCastDbFunctionsExtensions), nameof(ClickHouseSafeCastDbFunctionsExtensions.ToUInt64OrNull))] = "toUInt64OrNull",
+        [(typeof(ClickHouseSafeCastDbFunctionsExtensions), nameof(ClickHouseSafeCastDbFunctionsExtensions.ToInt8OrZero))] = "toInt8OrZero",
+        [(typeof(ClickHouseSafeCastDbFunctionsExtensions), nameof(ClickHouseSafeCastDbFunctionsExtensions.ToInt16OrZero))] = "toInt16OrZero",
+        [(typeof(ClickHouseSafeCastDbFunctionsExtensions), nameof(ClickHouseSafeCastDbFunctionsExtensions.ToInt32OrZero))] = "toInt32OrZero",
+        [(typeof(ClickHouseSafeCastDbFunctionsExtensions), nameof(ClickHouseSafeCastDbFunctionsExtensions.ToInt64OrZero))] = "toInt64OrZero",
+        [(typeof(ClickHouseSafeCastDbFunctionsExtensions), nameof(ClickHouseSafeCastDbFunctionsExtensions.ToUInt8OrZero))] = "toUInt8OrZero",
+        [(typeof(ClickHouseSafeCastDbFunctionsExtensions), nameof(ClickHouseSafeCastDbFunctionsExtensions.ToUInt16OrZero))] = "toUInt16OrZero",
+        [(typeof(ClickHouseSafeCastDbFunctionsExtensions), nameof(ClickHouseSafeCastDbFunctionsExtensions.ToUInt32OrZero))] = "toUInt32OrZero",
+        [(typeof(ClickHouseSafeCastDbFunctionsExtensions), nameof(ClickHouseSafeCastDbFunctionsExtensions.ToUInt64OrZero))] = "toUInt64OrZero",
+        [(typeof(ClickHouseSafeCastDbFunctionsExtensions), nameof(ClickHouseSafeCastDbFunctionsExtensions.ToFloat32OrNull))] = "toFloat32OrNull",
+        [(typeof(ClickHouseSafeCastDbFunctionsExtensions), nameof(ClickHouseSafeCastDbFunctionsExtensions.ToFloat64OrNull))] = "toFloat64OrNull",
+        [(typeof(ClickHouseSafeCastDbFunctionsExtensions), nameof(ClickHouseSafeCastDbFunctionsExtensions.ToFloat32OrZero))] = "toFloat32OrZero",
+        [(typeof(ClickHouseSafeCastDbFunctionsExtensions), nameof(ClickHouseSafeCastDbFunctionsExtensions.ToFloat64OrZero))] = "toFloat64OrZero",
+        [(typeof(ClickHouseSafeCastDbFunctionsExtensions), nameof(ClickHouseSafeCastDbFunctionsExtensions.ToDateOrNull))] = "toDateOrNull",
+        [(typeof(ClickHouseSafeCastDbFunctionsExtensions), nameof(ClickHouseSafeCastDbFunctionsExtensions.ToDateTimeOrNull))] = "toDateTimeOrNull",
+        [(typeof(ClickHouseSafeCastDbFunctionsExtensions), nameof(ClickHouseSafeCastDbFunctionsExtensions.ParseDateTimeBestEffort))] = "parseDateTimeBestEffort",
+        [(typeof(ClickHouseSafeCastDbFunctionsExtensions), nameof(ClickHouseSafeCastDbFunctionsExtensions.ParseDateTimeBestEffortOrNull))] = "parseDateTimeBestEffortOrNull",
+        [(typeof(ClickHouseSafeCastDbFunctionsExtensions), nameof(ClickHouseSafeCastDbFunctionsExtensions.ParseDateTimeBestEffortOrZero))] = "parseDateTimeBestEffortOrZero",
+
+        // DateTime extras (Tier 1d) — DateTrunc, ToTimeZone, TimeZoneOf, Now64.
+        // ToStartOfInterval has special handling further below (it needs an INTERVAL literal).
+        [(typeof(ClickHouseDateTruncDbFunctionsExtensions), nameof(ClickHouseDateTruncDbFunctionsExtensions.DateTrunc))] = "dateTrunc",
+        [(typeof(ClickHouseDateTruncDbFunctionsExtensions), nameof(ClickHouseDateTruncDbFunctionsExtensions.ToTimeZone))] = "toTimeZone",
+        [(typeof(ClickHouseDateTruncDbFunctionsExtensions), nameof(ClickHouseDateTruncDbFunctionsExtensions.TimeZoneOf))] = "timeZoneOf",
+        [(typeof(ClickHouseDateTruncDbFunctionsExtensions), nameof(ClickHouseDateTruncDbFunctionsExtensions.Now64))] = "now64",
+
+        // Bit functions (Tier 2a)
+        [(typeof(ClickHouseBitDbFunctionsExtensions), nameof(ClickHouseBitDbFunctionsExtensions.BitAnd))] = "bitAnd",
+        [(typeof(ClickHouseBitDbFunctionsExtensions), nameof(ClickHouseBitDbFunctionsExtensions.BitOr))] = "bitOr",
+        [(typeof(ClickHouseBitDbFunctionsExtensions), nameof(ClickHouseBitDbFunctionsExtensions.BitXor))] = "bitXor",
+        [(typeof(ClickHouseBitDbFunctionsExtensions), nameof(ClickHouseBitDbFunctionsExtensions.BitNot))] = "bitNot",
+        [(typeof(ClickHouseBitDbFunctionsExtensions), nameof(ClickHouseBitDbFunctionsExtensions.BitShiftLeft))] = "bitShiftLeft",
+        [(typeof(ClickHouseBitDbFunctionsExtensions), nameof(ClickHouseBitDbFunctionsExtensions.BitShiftRight))] = "bitShiftRight",
+        [(typeof(ClickHouseBitDbFunctionsExtensions), nameof(ClickHouseBitDbFunctionsExtensions.BitRotateLeft))] = "bitRotateLeft",
+        [(typeof(ClickHouseBitDbFunctionsExtensions), nameof(ClickHouseBitDbFunctionsExtensions.BitRotateRight))] = "bitRotateRight",
+        [(typeof(ClickHouseBitDbFunctionsExtensions), nameof(ClickHouseBitDbFunctionsExtensions.BitCount))] = "bitCount",
+        [(typeof(ClickHouseBitDbFunctionsExtensions), nameof(ClickHouseBitDbFunctionsExtensions.BitTest))] = "bitTest",
+        [(typeof(ClickHouseBitDbFunctionsExtensions), nameof(ClickHouseBitDbFunctionsExtensions.BitTestAll))] = "bitTestAll",
+        [(typeof(ClickHouseBitDbFunctionsExtensions), nameof(ClickHouseBitDbFunctionsExtensions.BitTestAny))] = "bitTestAny",
+        [(typeof(ClickHouseBitDbFunctionsExtensions), nameof(ClickHouseBitDbFunctionsExtensions.BitSlice))] = "bitSlice",
+        [(typeof(ClickHouseBitDbFunctionsExtensions), nameof(ClickHouseBitDbFunctionsExtensions.BitHammingDistance))] = "bitHammingDistance",
+
+        // JSON typed extraction (Tier 2c)
+        [(typeof(ClickHouseJsonExtractDbFunctionsExtensions), nameof(ClickHouseJsonExtractDbFunctionsExtensions.JSONExtractInt))] = "JSONExtractInt",
+        [(typeof(ClickHouseJsonExtractDbFunctionsExtensions), nameof(ClickHouseJsonExtractDbFunctionsExtensions.JSONExtractUInt))] = "JSONExtractUInt",
+        [(typeof(ClickHouseJsonExtractDbFunctionsExtensions), nameof(ClickHouseJsonExtractDbFunctionsExtensions.JSONExtractFloat))] = "JSONExtractFloat",
+        [(typeof(ClickHouseJsonExtractDbFunctionsExtensions), nameof(ClickHouseJsonExtractDbFunctionsExtensions.JSONExtractBool))] = "JSONExtractBool",
+        [(typeof(ClickHouseJsonExtractDbFunctionsExtensions), nameof(ClickHouseJsonExtractDbFunctionsExtensions.JSONExtractString))] = "JSONExtractString",
+        [(typeof(ClickHouseJsonExtractDbFunctionsExtensions), nameof(ClickHouseJsonExtractDbFunctionsExtensions.JSONExtractRaw))] = "JSONExtractRaw",
+        [(typeof(ClickHouseJsonExtractDbFunctionsExtensions), nameof(ClickHouseJsonExtractDbFunctionsExtensions.JSONHas))] = "JSONHas",
+        [(typeof(ClickHouseJsonExtractDbFunctionsExtensions), nameof(ClickHouseJsonExtractDbFunctionsExtensions.JSONLength))] = "JSONLength",
+        [(typeof(ClickHouseJsonExtractDbFunctionsExtensions), nameof(ClickHouseJsonExtractDbFunctionsExtensions.JSONType))] = "JSONType",
+        [(typeof(ClickHouseJsonExtractDbFunctionsExtensions), nameof(ClickHouseJsonExtractDbFunctionsExtensions.IsValidJSON))] = "isValidJSON",
+
+        // Random functions (Tier 2d)
+        [(typeof(ClickHouseRandomDbFunctionsExtensions), nameof(ClickHouseRandomDbFunctionsExtensions.Rand))] = "rand",
+        [(typeof(ClickHouseRandomDbFunctionsExtensions), nameof(ClickHouseRandomDbFunctionsExtensions.Rand64))] = "rand64",
+        [(typeof(ClickHouseRandomDbFunctionsExtensions), nameof(ClickHouseRandomDbFunctionsExtensions.RandCanonical))] = "randCanonical",
+        [(typeof(ClickHouseRandomDbFunctionsExtensions), nameof(ClickHouseRandomDbFunctionsExtensions.RandomString))] = "randomString",
+        [(typeof(ClickHouseRandomDbFunctionsExtensions), nameof(ClickHouseRandomDbFunctionsExtensions.RandomFixedString))] = "randomFixedString",
+        [(typeof(ClickHouseRandomDbFunctionsExtensions), nameof(ClickHouseRandomDbFunctionsExtensions.RandomPrintableASCII))] = "randomPrintableASCII",
+        [(typeof(ClickHouseRandomDbFunctionsExtensions), nameof(ClickHouseRandomDbFunctionsExtensions.RandUniform))] = "randUniform",
+        [(typeof(ClickHouseRandomDbFunctionsExtensions), nameof(ClickHouseRandomDbFunctionsExtensions.RandNormal))] = "randNormal",
+
+        // Server / session metadata (Tier 2e)
+        [(typeof(ClickHouseServerDbFunctionsExtensions), nameof(ClickHouseServerDbFunctionsExtensions.Version))] = "version",
+        [(typeof(ClickHouseServerDbFunctionsExtensions), nameof(ClickHouseServerDbFunctionsExtensions.HostName))] = "hostName",
+        [(typeof(ClickHouseServerDbFunctionsExtensions), nameof(ClickHouseServerDbFunctionsExtensions.CurrentDatabase))] = "currentDatabase",
+        [(typeof(ClickHouseServerDbFunctionsExtensions), nameof(ClickHouseServerDbFunctionsExtensions.CurrentUser))] = "currentUser",
+        [(typeof(ClickHouseServerDbFunctionsExtensions), nameof(ClickHouseServerDbFunctionsExtensions.ServerTimezone))] = "serverTimezone",
+        [(typeof(ClickHouseServerDbFunctionsExtensions), nameof(ClickHouseServerDbFunctionsExtensions.ServerUUID))] = "serverUUID",
+        [(typeof(ClickHouseServerDbFunctionsExtensions), nameof(ClickHouseServerDbFunctionsExtensions.Uptime))] = "uptime",
+
+        // Tuple ops (Tier 3a)
+        [(typeof(ClickHouseTupleDbFunctionsExtensions), nameof(ClickHouseTupleDbFunctionsExtensions.TupleElement))] = "tupleElement",
+        [(typeof(ClickHouseTupleDbFunctionsExtensions), nameof(ClickHouseTupleDbFunctionsExtensions.DotProduct))] = "dotProduct",
+        [(typeof(ClickHouseTupleDbFunctionsExtensions), nameof(ClickHouseTupleDbFunctionsExtensions.TupleHammingDistance))] = "tupleHammingDistance",
+        [(typeof(ClickHouseTupleDbFunctionsExtensions), nameof(ClickHouseTupleDbFunctionsExtensions.TuplePlus))] = "tuplePlus",
+        [(typeof(ClickHouseTupleDbFunctionsExtensions), nameof(ClickHouseTupleDbFunctionsExtensions.TupleMinus))] = "tupleMinus",
+        [(typeof(ClickHouseTupleDbFunctionsExtensions), nameof(ClickHouseTupleDbFunctionsExtensions.TupleMultiply))] = "tupleMultiply",
+        [(typeof(ClickHouseTupleDbFunctionsExtensions), nameof(ClickHouseTupleDbFunctionsExtensions.TupleDivide))] = "tupleDivide",
+        [(typeof(ClickHouseTupleDbFunctionsExtensions), nameof(ClickHouseTupleDbFunctionsExtensions.TupleNegate))] = "tupleNegate",
+        [(typeof(ClickHouseTupleDbFunctionsExtensions), nameof(ClickHouseTupleDbFunctionsExtensions.FlattenTuple))] = "flattenTuple",
+
+        // IPv6 + IP additions (Tier 3b)
+        [(typeof(ClickHouseIpDbFunctionsExtensions), nameof(ClickHouseIpDbFunctionsExtensions.IPv6StringToNum))] = "IPv6StringToNum",
+        [(typeof(ClickHouseIpDbFunctionsExtensions), nameof(ClickHouseIpDbFunctionsExtensions.IPv6NumToString))] = "IPv6NumToString",
+        [(typeof(ClickHouseIpDbFunctionsExtensions), nameof(ClickHouseIpDbFunctionsExtensions.IPv4CIDRToRange))] = "IPv4CIDRToRange",
+        [(typeof(ClickHouseIpDbFunctionsExtensions), nameof(ClickHouseIpDbFunctionsExtensions.IPv6CIDRToRange))] = "IPv6CIDRToRange",
+        [(typeof(ClickHouseIpDbFunctionsExtensions), nameof(ClickHouseIpDbFunctionsExtensions.IPv4ToIPv6))] = "IPv4ToIPv6",
+        [(typeof(ClickHouseIpDbFunctionsExtensions), nameof(ClickHouseIpDbFunctionsExtensions.CutIPv6))] = "cutIPv6",
+        [(typeof(ClickHouseIpDbFunctionsExtensions), nameof(ClickHouseIpDbFunctionsExtensions.ToIPv4))] = "toIPv4",
+        [(typeof(ClickHouseIpDbFunctionsExtensions), nameof(ClickHouseIpDbFunctionsExtensions.ToIPv6))] = "toIPv6",
+
+        // UUID v7 helpers (Tier 3c). DateTimeToUUIDv7 is intentionally NOT mapped
+        // here — it's evaluated client-side via Guid.CreateVersion7(DateTimeOffset)
+        // and bound as a parameter, so older CH servers that lack the
+        // dateTimeToUUIDv7 builder still work.
+        [(typeof(ClickHouseUuidDbFunctionsExtensions), nameof(ClickHouseUuidDbFunctionsExtensions.ToUUIDOrZero))] = "toUUIDOrZero",
+        [(typeof(ClickHouseUuidDbFunctionsExtensions), nameof(ClickHouseUuidDbFunctionsExtensions.UUIDv7ToDateTime))] = "UUIDv7ToDateTime",
+
+        // Math specials (Tier 3d)
+        [(typeof(ClickHouseMathDbFunctionsExtensions), nameof(ClickHouseMathDbFunctionsExtensions.Pi))] = "pi",
+        [(typeof(ClickHouseMathDbFunctionsExtensions), nameof(ClickHouseMathDbFunctionsExtensions.E))] = "e",
+        [(typeof(ClickHouseMathDbFunctionsExtensions), nameof(ClickHouseMathDbFunctionsExtensions.Degrees))] = "degrees",
+        [(typeof(ClickHouseMathDbFunctionsExtensions), nameof(ClickHouseMathDbFunctionsExtensions.Radians))] = "radians",
+        [(typeof(ClickHouseMathDbFunctionsExtensions), nameof(ClickHouseMathDbFunctionsExtensions.Factorial))] = "factorial",
+        [(typeof(ClickHouseMathDbFunctionsExtensions), nameof(ClickHouseMathDbFunctionsExtensions.Erf))] = "erf",
+        [(typeof(ClickHouseMathDbFunctionsExtensions), nameof(ClickHouseMathDbFunctionsExtensions.Erfc))] = "erfc",
+        [(typeof(ClickHouseMathDbFunctionsExtensions), nameof(ClickHouseMathDbFunctionsExtensions.Lgamma))] = "lgamma",
+        [(typeof(ClickHouseMathDbFunctionsExtensions), nameof(ClickHouseMathDbFunctionsExtensions.Tgamma))] = "tgamma",
+        [(typeof(ClickHouseMathDbFunctionsExtensions), nameof(ClickHouseMathDbFunctionsExtensions.RoundBankers))] = "roundBankers",
+        [(typeof(ClickHouseMathDbFunctionsExtensions), nameof(ClickHouseMathDbFunctionsExtensions.WidthBucket))] = "widthBucket",
+        [(typeof(ClickHouseMathDbFunctionsExtensions), nameof(ClickHouseMathDbFunctionsExtensions.Hypot))] = "hypot",
+        [(typeof(ClickHouseMathDbFunctionsExtensions), nameof(ClickHouseMathDbFunctionsExtensions.Log1P))] = "log1p",
+        [(typeof(ClickHouseMathDbFunctionsExtensions), nameof(ClickHouseMathDbFunctionsExtensions.Sigmoid))] = "sigmoid",
+
+        // String extras (Tier 3e)
+        [(typeof(ClickHouseStringExtraDbFunctionsExtensions), nameof(ClickHouseStringExtraDbFunctionsExtensions.Left))] = "leftUTF8",
+        [(typeof(ClickHouseStringExtraDbFunctionsExtensions), nameof(ClickHouseStringExtraDbFunctionsExtensions.Right))] = "rightUTF8",
+        [(typeof(ClickHouseStringExtraDbFunctionsExtensions), nameof(ClickHouseStringExtraDbFunctionsExtensions.LeftPad))] = "leftPad",
+        [(typeof(ClickHouseStringExtraDbFunctionsExtensions), nameof(ClickHouseStringExtraDbFunctionsExtensions.RightPad))] = "rightPad",
+        [(typeof(ClickHouseStringExtraDbFunctionsExtensions), nameof(ClickHouseStringExtraDbFunctionsExtensions.Repeat))] = "repeat",
+        [(typeof(ClickHouseStringExtraDbFunctionsExtensions), nameof(ClickHouseStringExtraDbFunctionsExtensions.Reverse))] = "reverseUTF8",
+        [(typeof(ClickHouseStringExtraDbFunctionsExtensions), nameof(ClickHouseStringExtraDbFunctionsExtensions.InitCap))] = "initcapUTF8",
+        [(typeof(ClickHouseStringExtraDbFunctionsExtensions), nameof(ClickHouseStringExtraDbFunctionsExtensions.Space))] = "space",
+        [(typeof(ClickHouseStringExtraDbFunctionsExtensions), nameof(ClickHouseStringExtraDbFunctionsExtensions.ConcatWithSeparator))] = "concatWithSeparator",
+
+        // Array helpers, no-lambda (Tier 2b-step-1)
+        [(typeof(ClickHouseArrayDbFunctionsExtensions), nameof(ClickHouseArrayDbFunctionsExtensions.ArrayDistinct))] = "arrayDistinct",
+        [(typeof(ClickHouseArrayDbFunctionsExtensions), nameof(ClickHouseArrayDbFunctionsExtensions.ArrayUniq))] = "arrayUniq",
+        [(typeof(ClickHouseArrayDbFunctionsExtensions), nameof(ClickHouseArrayDbFunctionsExtensions.ArrayCompact))] = "arrayCompact",
+        [(typeof(ClickHouseArrayDbFunctionsExtensions), nameof(ClickHouseArrayDbFunctionsExtensions.ArrayConcat))] = "arrayConcat",
+        [(typeof(ClickHouseArrayDbFunctionsExtensions), nameof(ClickHouseArrayDbFunctionsExtensions.ArraySlice))] = "arraySlice",
+        [(typeof(ClickHouseArrayDbFunctionsExtensions), nameof(ClickHouseArrayDbFunctionsExtensions.ArraySort))] = "arraySort",
+        [(typeof(ClickHouseArrayDbFunctionsExtensions), nameof(ClickHouseArrayDbFunctionsExtensions.ArrayReverseSort))] = "arrayReverseSort",
+        [(typeof(ClickHouseArrayDbFunctionsExtensions), nameof(ClickHouseArrayDbFunctionsExtensions.ArrayProduct))] = "arrayProduct",
+        [(typeof(ClickHouseArrayDbFunctionsExtensions), nameof(ClickHouseArrayDbFunctionsExtensions.ArrayCumSum))] = "arrayCumSum",
+        [(typeof(ClickHouseArrayDbFunctionsExtensions), nameof(ClickHouseArrayDbFunctionsExtensions.ArrayDifference))] = "arrayDifference",
+        [(typeof(ClickHouseArrayDbFunctionsExtensions), nameof(ClickHouseArrayDbFunctionsExtensions.IndexOf))] = "indexOf",
+        [(typeof(ClickHouseArrayDbFunctionsExtensions), nameof(ClickHouseArrayDbFunctionsExtensions.CountEqual))] = "countEqual",
+        [(typeof(ClickHouseArrayDbFunctionsExtensions), nameof(ClickHouseArrayDbFunctionsExtensions.ArrayElement))] = "arrayElement",
+        [(typeof(ClickHouseArrayDbFunctionsExtensions), nameof(ClickHouseArrayDbFunctionsExtensions.ArrayPushBack))] = "arrayPushBack",
+        [(typeof(ClickHouseArrayDbFunctionsExtensions), nameof(ClickHouseArrayDbFunctionsExtensions.ArrayPushFront))] = "arrayPushFront",
+        [(typeof(ClickHouseArrayDbFunctionsExtensions), nameof(ClickHouseArrayDbFunctionsExtensions.ArrayPopBack))] = "arrayPopBack",
+        [(typeof(ClickHouseArrayDbFunctionsExtensions), nameof(ClickHouseArrayDbFunctionsExtensions.ArrayPopFront))] = "arrayPopFront",
+        [(typeof(ClickHouseArrayDbFunctionsExtensions), nameof(ClickHouseArrayDbFunctionsExtensions.ArrayResize))] = "arrayResize",
+        [(typeof(ClickHouseArrayDbFunctionsExtensions), nameof(ClickHouseArrayDbFunctionsExtensions.ArrayZip))] = "arrayZip",
+        [(typeof(ClickHouseArrayDbFunctionsExtensions), nameof(ClickHouseArrayDbFunctionsExtensions.ArrayReverse))] = "arrayReverse",
+        [(typeof(ClickHouseArrayDbFunctionsExtensions), nameof(ClickHouseArrayDbFunctionsExtensions.ArrayFlatten))] = "arrayFlatten",
+        [(typeof(ClickHouseArrayDbFunctionsExtensions), nameof(ClickHouseArrayDbFunctionsExtensions.ArrayIntersect))] = "arrayIntersect",
+        [(typeof(ClickHouseArrayDbFunctionsExtensions), nameof(ClickHouseArrayDbFunctionsExtensions.ArrayEnumerate))] = "arrayEnumerate",
     };
 
     // Md5 and Sha256 need special nested handling: hex(MD5(x)), hex(SHA256(x))
@@ -239,6 +425,31 @@ public class ClickHouseUtilityMethodTranslator : IMethodCallTranslator
                 typeMapping: null)!;
         }
 
+        // ToStartOfInterval(dt, value, unit) → toStartOfInterval(dt, toIntervalUnit(value)).
+        // CH's toStartOfInterval expects an INTERVAL value as its second argument,
+        // not separate value+unit args.
+        if (method.DeclaringType == typeof(ClickHouseDateTruncDbFunctionsExtensions)
+            && method.Name == nameof(ClickHouseDateTruncDbFunctionsExtensions.ToStartOfInterval)
+            && functionArguments.Length == 3
+            && TryExtractKnownIntervalUnit(functionArguments[2], out var startOfIntervalUnit))
+        {
+            var intervalFn = "toInterval"
+                + char.ToUpperInvariant(startOfIntervalUnit.ToString()[0])
+                + startOfIntervalUnit.ToString().Substring(1);
+            var interval = _sqlExpressionFactory.Function(
+                intervalFn,
+                new[] { functionArguments[1] },
+                nullable: true,
+                argumentsPropagateNullability: new[] { true },
+                typeof(object));
+            return _sqlExpressionFactory.Function(
+                "toStartOfInterval",
+                new[] { functionArguments[0], interval },
+                nullable: true,
+                argumentsPropagateNullability: new[] { true, true },
+                method.ReturnType);
+        }
+
         // Convert ClickHouseIntervalUnit enum args to lowercase string constants for SQL
         if (method.DeclaringType == typeof(ClickHouseDateTruncDbFunctionsExtensions))
         {
@@ -287,6 +498,22 @@ public class ClickHouseUtilityMethodTranslator : IMethodCallTranslator
         "toRelativeMinuteNum",
         "toRelativeSecondNum",
         "yandexConsistentHash",
+        // Tier 2-3: CH returns UInt8/UInt32/UInt64 while our C# methods declare
+        // a wider/signed type — wrap with a CH cast so the row reader sees the
+        // declared CLR type.
+        "bitCount",
+        "bitTest",
+        "bitHammingDistance",
+        "factorial",
+        "indexOf",
+        "countEqual",
+        "arrayUniq",
+        "JSONLength",
+        "JSONExtractInt",
+        "JSONExtractUInt",
+        "uptime",
+        "position",
+        "positionCaseInsensitiveUTF8",
     };
 
     private SqlExpression[] ConvertIntervalUnitArgs(SqlExpression[] args)
