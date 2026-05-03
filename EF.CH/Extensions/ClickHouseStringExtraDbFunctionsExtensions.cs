@@ -18,10 +18,28 @@ public static class ClickHouseStringExtraDbFunctionsExtensions
     /// <summary>Translates to <c>rightUTF8(s, n)</c>.</summary>
     public static string Right(this DbFunctions _, string s, int n) => throw NotSupported();
 
-    /// <summary>Translates to <c>leftPad(s, length, pad)</c>.</summary>
+    /// <summary>
+    /// Translates to <c>leftPad(s, length, pad)</c>.
+    /// </summary>
+    /// <remarks>
+    /// ClickHouse's <c>leftPad</c> measures both <paramref name="length"/> and
+    /// the <paramref name="pad"/> string in BYTES, not Unicode code points. A
+    /// multi-byte UTF-8 pad character (e.g. <c>"·"</c>, which is 2 bytes) will
+    /// be split mid-codepoint when copied to satisfy <paramref name="length"/>,
+    /// producing malformed UTF-8 in the output. Use single-byte ASCII pad
+    /// characters (<c>" "</c>, <c>"0"</c>, <c>"."</c>, <c>"*"</c>, etc.) unless
+    /// you've verified your <paramref name="length"/> aligns to whole pad
+    /// characters. There is no UTF-8-aware <c>leftPadUTF8</c> in ClickHouse.
+    /// </remarks>
     public static string LeftPad(this DbFunctions _, string s, int length, string pad) => throw NotSupported();
 
-    /// <summary>Translates to <c>rightPad(s, length, pad)</c>.</summary>
+    /// <summary>
+    /// Translates to <c>rightPad(s, length, pad)</c>.
+    /// </summary>
+    /// <remarks>
+    /// Same byte-vs-codepoint caveat as <see cref="LeftPad"/> — pass single-byte
+    /// ASCII <paramref name="pad"/> characters to avoid mid-codepoint splits.
+    /// </remarks>
     public static string RightPad(this DbFunctions _, string s, int length, string pad) => throw NotSupported();
 
     /// <summary>Translates to <c>repeat(s, n)</c>.</summary>

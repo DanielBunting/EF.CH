@@ -276,7 +276,9 @@ var strings = await ctx.Events.Select(e => new
     Last5 = EfClass.Functions.Right(e.Message, 5),
     Title = EfClass.Functions.InitCap(e.Message),
     Repeat3 = EfClass.Functions.Repeat("ab", 3),
-    Padded = EfClass.Functions.LeftPad(e.UserName, 10, "·"),
+    // CH leftPad is byte-oriented; use single-byte ASCII pad chars or you'll
+    // split a UTF-8 codepoint mid-byte. See xmldoc on LeftPad.
+    Padded = EfClass.Functions.LeftPad(e.UserName, 10, "."),
 }).ToListAsync();
 foreach (var r in strings)
     Console.WriteLine($"  {r.UserName,-10} first5='{r.First5}', last5='{r.Last5}', title='{r.Title}', repeat='{r.Repeat3}', padded='{r.Padded}'");
